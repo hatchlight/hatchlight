@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LocalEyes, lookPrompt } from "./eyes";
+import { CAPTION_PROMPT, cleanCaption, LocalEyes, lookPrompt } from "./eyes";
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -77,4 +77,22 @@ test("from WSL, the Windows program is given Windows paths", async () => {
 	expect(argv?.[argv.indexOf("-p") + 1]).toStartWith(
 		"The person asked for a picture.",
 	);
+});
+
+test("a training picture is captioned in one line of phrases", async () => {
+	const { looking, runs, scratch } = await eyes();
+	const caption = await looking.caption(fox, new AbortController().signal);
+	const [argv] = runs;
+	expect(argv?.[argv.indexOf("-p") + 1]).toBe(CAPTION_PROMPT);
+	expect(caption).toBe("A fox in snow. No scarf");
+	expect(await readdir(scratch)).toEqual([]);
+});
+
+test("what a model adds around a caption is taken off", () => {
+	expect(
+		cleanCaption('Caption: "standing in snow, soft light, close-up."'),
+	).toBe("standing in snow, soft light, close-up");
+	const long = cleanCaption(Array(100).fill("a short phrase").join(", "));
+	expect(long.length).toBeLessThanOrEqual(400);
+	expect(long).toEndWith("a short phrase");
 });

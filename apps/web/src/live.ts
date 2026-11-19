@@ -121,6 +121,8 @@ export function useLiveJobs(): void {
 			// Installed models can be picked in the composer.
 			void client.invalidateQueries({ queryKey: ["models"] });
 			void client.invalidateQueries({ queryKey: ["checkpoints"] });
+			// The model that captions training pictures may have come or gone.
+			void client.invalidateQueries({ queryKey: ["captioner"] });
 		});
 		source.addEventListener("trainer.changed", (message) => {
 			const event = JSON.parse(message.data) as TrainerEvent;

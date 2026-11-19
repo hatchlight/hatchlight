@@ -588,10 +588,25 @@ test("the trainer reports itself, and nothing trains before it is installed", as
 			trigger: "qzx",
 			steps: 800,
 			pictures: [],
+			consent: true,
 		}),
 	});
 	expect(train.status).toBe(400);
 	expect(await train.json()).toMatchObject({ code: "trainerMissing" });
+	// Nothing trains unless the person says the pictures are theirs to use.
+	const unconfirmed = await call("/api/trainings", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({
+			name: "x",
+			trigger: "qzx",
+			steps: 800,
+			pictures: [],
+		}),
+	});
+	expect(await unconfirmed.json()).toMatchObject({
+		code: "trainingNeedsConsent",
+	});
 	const bad = await call("/api/trainings", {
 		method: "POST",
 		headers: { "content-type": "application/json" },
@@ -600,9 +615,60 @@ test("the trainer reports itself, and nothing trains before it is installed", as
 			trigger: "qzx",
 			steps: 800,
 			pictures: [{}],
+			consent: true,
 		}),
 	});
 	expect(bad.status).toBe(400);
+	// No training, so no samples and nothing to keep.
+	expect((await call("/api/trainings/x/samples/100")).status).toBe(404);
+	const finish = await call("/api/trainings/finish", { method: "POST" });
+	expect(await finish.json()).toMatchObject({ code: "trainingNothingSaved" });
+});
+
+test("training pictures are described by the model that looks at pictures", async () => {
+	const { call, runtime } = await setup();
+	const upload = await call("/api/assets", {
+		method: "POST",
+		headers: { "content-type": "image/png" },
+		body: PNG,
+	});
+	const asset = (await upload.json()) as { id: string };
+	const caption = (path: string, body: unknown) =>
+		app.request(`http://localhost:4096${path}`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		});
+	// Without the model, it says what to install.
+	let app = createApp({ ...runtime, captioner: undefined });
+	expect(
+		await (await app.request("http://localhost:4096/api/captioner")).json(),
+	).toEqual({ ready: false });
+	const missing = await caption("/api/captions", { assetId: asset.id });
+	expect(await missing.json()).toMatchObject({ code: "captionNeedsModel" });
+
+	const seen: string[] = [];
+	app = createApp({
+		...runtime,
+		captioner: {
+			ready: async () => true,
+			caption: async (picture) => {
+				seen.push(picture.mimeType);
+				return "standing on a table, soft light";
+			},
+		},
+	});
+	expect(
+		await (await app.request("http://localhost:4096/api/captioner")).json(),
+	).toEqual({ ready: true });
+	const described = await caption("/api/captions", { assetId: asset.id });
+	expect(await described.json()).toEqual({
+		caption: "standing on a table, soft light",
+	});
+	expect(seen).toEqual(["image/png"]);
+	expect((await caption("/api/captions", { assetId: "nope" })).status).toBe(
+		404,
+	);
 });
 
 test("a model's demo is served from this origin, and never as a page", async () => {

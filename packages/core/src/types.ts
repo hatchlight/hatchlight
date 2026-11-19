@@ -111,6 +111,15 @@ export interface TrainingView {
 	freeMemoryBytes: number | null;
 	/** The LoRA it made, on the shelf. */
 	loraId: string | null;
+	/**
+	 * Pictures the LoRA made along the way, the latest last, each named by
+	 * the step it was made at: they show whether it is learning.
+	 */
+	samples: number[];
+	/** The latest step whose LoRA is saved: training can stop there and keep it. */
+	savedStep: number | null;
+	/** The step it was stopped at to keep what it had learned, if it was. */
+	keptStep: number | null;
 	error: {
 		message: string;
 		code: string | null;

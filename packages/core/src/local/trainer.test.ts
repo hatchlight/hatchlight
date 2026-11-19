@@ -10,6 +10,8 @@ import { safetensors } from "./testing";
 import {
 	type BaseModel,
 	type RunProgram,
+	sampleEvery,
+	samplePrompt,
 	Trainer,
 	type TrainingRequest,
 	trainingProgress,
@@ -53,6 +55,16 @@ describe("reading the trainer's output", () => {
 		);
 		expect(trainingStage("epoch 1/5")).toBeNull();
 	});
+
+	test("samples come four times a training, from the trigger and a caption", () => {
+		expect(sampleEvery(800)).toBe(200);
+		expect(sampleEvery(1000)).toBe(250);
+		expect(sampleEvery(100)).toBe(100);
+		expect(samplePrompt("qzfox", ["", "a fox -- on a  table"])).toBe(
+			"qzfox, a fox - on a table --w 768 --h 768 --s 20 --l 6 --d 42 --n blurry, low quality",
+		);
+		expect(samplePrompt("qzfox", [""])).toStartWith("qzfox --w");
+	});
 });
 
 /** A trainer whose downloads and programs are fakes. */
@@ -62,6 +74,7 @@ async function setup(
 		freeMemory?: () => Promise<number>;
 		ready?: boolean;
 		baseModel?: () => Promise<BaseModel>;
+		letGo?: () => Promise<void>;
 	} = {},
 ) {
 	const dir = await temp();
@@ -84,6 +97,7 @@ async function setup(
 		run: options.run ?? (() => fakeProgram([], 0)),
 		freeMemory: options.freeMemory ?? (async () => 8 * 2 ** 30),
 		memoryCheckMs: 5,
+		letGo: options.letGo,
 	});
 	trainer.subscribe((event) => events.push(event));
 	if (options.ready !== false) {
@@ -389,4 +403,147 @@ describe("installing", () => {
 			await Bun.sleep(5);
 		}
 	});
+});
+
+/** A LoRA file as the scripts write it. */
+const loraFile = (which = "final") =>
+	safetensors(["lora_unet_input_blocks_4_1_proj_in.alpha"], {
+		"modelspec.title": "Porcelain",
+		which,
+	});
+
+/**
+ * The scripts at work: a sample and a saved LoRA every 200 of 800 steps,
+ * then the last one, unless they are stopped first.
+ */
+function trainingWithSamples(args: string[], pause = false) {
+	const out = args[args.indexOf("--output_dir") + 1] as string;
+	const lines: string[] = [];
+	for (const step of [200, 201, 400, 401, 600, 601, 800]) {
+		lines.push(`steps: ${step / 8}%| | ${step}/800 [01:00<01:00, 1.3it/s]`);
+		if (pause && step === 401)
+			lines.push("WAIT", "WAIT", "WAIT", "WAIT", "WAIT", "WAIT");
+	}
+	let written = 0;
+	const program = fakeProgram(lines, 0, async () => {
+		await Bun.write(join(out, "lora.safetensors"), loraFile());
+	});
+	// Each sample and save lands as its step's line goes by.
+	const output = (async function* () {
+		for await (const line of program.output) {
+			const step = Number(line.match(/\| (\d+)\/800/)?.[1]);
+			if (step % 200 === 0 && step > written) {
+				written = step;
+				const name = String(step).padStart(6, "0");
+				await Bun.write(
+					join(out, "sample", `lora_${name}_00_20261119160000_42.png`),
+					`sample ${step}`,
+				);
+				await Bun.write(
+					join(out, `lora-step${String(step).padStart(8, "0")}.safetensors`),
+					loraFile(`step ${step}`),
+				);
+			}
+			yield line;
+		}
+	})();
+	return { ...program, output };
+}
+
+describe("watching a training", () => {
+	test("samples show how it learns, and stay after it ends", async () => {
+		let argv: string[] = [];
+		let let_go = 0;
+		const { trainer } = await setup({
+			letGo: async () => {
+				let_go++;
+			},
+			run: (args) => {
+				argv = args;
+				return trainingWithSamples(args);
+			},
+		});
+		const view = await trainer.train(request());
+		const done = await settled(trainer);
+		expect(done).toMatchObject({
+			state: "done",
+			samples: [200, 400, 600, 800],
+		});
+		expect(argv[argv.indexOf("--sample_every_n_steps") + 1]).toBe("200");
+		expect(argv[argv.indexOf("--save_every_n_steps") + 1]).toBe("200");
+		const prompts = argv[argv.indexOf("--sample_prompts") + 1] as string;
+		expect(prompts).toEndWith("samples.txt");
+		// What was kept loaded let go first.
+		expect(let_go).toBe(1);
+		const file = trainer.sampleFile(view.id, 400);
+		expect(await Bun.file(file as string).text()).toBe("sample 400");
+		expect(trainer.sampleFile(view.id, 300)).toBeNull();
+		expect(trainer.sampleFile("another", 400)).toBeNull();
+	});
+
+	test("a training stopped at a saved step keeps that LoRA", async () => {
+		const { trainer, loras } = await setup({
+			run: (args) => trainingWithSamples(args, true),
+		});
+		expect(() => trainer.finishTraining()).toThrow("Nothing is saved");
+		await trainer.train(request());
+		// Step 400 is whole once the steps go past it.
+		for (;;) {
+			const { training } = await trainer.status();
+			if (training?.savedStep === 400) break;
+			await Bun.sleep(5);
+		}
+		trainer.finishTraining();
+		const done = await settled(trainer);
+		expect(done).toMatchObject({
+			state: "done",
+			keptStep: 400,
+			loraId: "porcelain",
+		});
+		// The step's own LoRA, not the last one.
+		const kept = await Bun.file(loras.path("porcelain")).text();
+		expect(kept).toContain("step 400");
+	});
+
+	test("asked to keep a step at the very end, it keeps the whole LoRA", async () => {
+		let trainer!: Trainer;
+		const made = await setup({
+			run: (args) => {
+				const program = trainingWithSamples(args);
+				const output = (async function* () {
+					for await (const line of program.output) {
+						yield line;
+						// The last step's line: it is saving the whole LoRA now.
+						if (line.includes("800/800")) trainer.finishTraining();
+					}
+				})();
+				return { ...program, output };
+			},
+		});
+		trainer = made.trainer;
+		await trainer.train(request());
+		const done = await settled(trainer);
+		expect(done).toMatchObject({ state: "done", keptStep: null });
+		expect(await Bun.file(made.loras.path("porcelain")).text()).toContain(
+			"final",
+		);
+	});
+});
+
+test("running out of graphics memory before the first step is tried once more", async () => {
+	let runs = 0;
+	const { trainer } = await setup({
+		run: (args) => {
+			runs++;
+			return runs === 1
+				? fakeProgram(
+						["INFO caching latents.", "Returning 2 (CUDA_ERROR_OUT_OF_MEMORY)"],
+						1,
+					)
+				: trainingWithSamples(args);
+		},
+	});
+	await trainer.train(request());
+	expect(await settled(trainer)).toMatchObject({ state: "done" });
+	expect(runs).toBe(2);
 });

@@ -1,4 +1,5 @@
 import {
+	type Captioner,
 	CodedError,
 	type ErrorCode,
 	IMPROVE_WITH,
@@ -41,6 +42,8 @@ export interface AppOptions {
 	agents?: Agents;
 	/** Trains LoRAs on this computer; absent where it cannot. */
 	trainer?: Trainer;
+	/** Captions training pictures; absent where no model can see. */
+	captioner?: Captioner;
 	/** Makes and changes pictures by talking; absent where it cannot. */
 	assistant?: Assistant;
 	/** What a person's assistant thinks with now. */
@@ -515,6 +518,8 @@ export function createApp(options: AppOptions): Hono {
 		await models.checkpoints.remove(c.req.param("id"));
 		return c.body(null, 204);
 	});
+	// Pictures being described now: no training starts beside them.
+	let captioning = 0;
 	// The LoRA trainer, shared like the models it trains on.
 	const trainer = () => {
 		if (!options.trainer) throw new NotFoundError("No trainer here");
@@ -535,7 +540,13 @@ export function createApp(options: AppOptions): Hono {
 	});
 	app.post("/api/trainings", async (c) => {
 		const body = await json(c);
-		const { name, trigger, steps, pictures } = body;
+		const { name, trigger, steps, pictures, consent } = body;
+		if (consent !== true) {
+			throw new ValidationError(
+				"Confirm the pictures are yours to use, and that anyone in them agreed",
+				"trainingNeedsConsent",
+			);
+		}
 		if (typeof name !== "string" || typeof trigger !== "string") {
 			throw new ValidationError("name and trigger must be text");
 		}
@@ -547,6 +558,10 @@ export function createApp(options: AppOptions): Hono {
 		}
 		// Before reading up to 200 pictures for nothing.
 		await trainer().assertCanTrain();
+		// Describing a picture holds the memory training needs.
+		if (captioning > 0) {
+			throw new ValidationError("The trainer is busy", "trainerBusy");
+		}
 		const read = [];
 		for (const picture of pictures) {
 			const { assetId, caption } = (picture ?? {}) as Record<string, unknown>;
@@ -581,6 +596,62 @@ export function createApp(options: AppOptions): Hono {
 	app.post("/api/trainings/cancel", (c) => {
 		trainer().cancelTraining();
 		return c.body(null, 204);
+	});
+	app.post("/api/trainings/finish", (c) => {
+		trainer().finishTraining();
+		return c.body(null, 204);
+	});
+	app.get("/api/trainings/:id/samples/:step", async (c) => {
+		const file = trainer().sampleFile(
+			c.req.param("id"),
+			Number(c.req.param("step")),
+		);
+		const blob = file ? Bun.file(file) : null;
+		if (!blob || !(await blob.exists())) {
+			throw new NotFoundError("Sample not found");
+		}
+		return serveFile(c, blob, "image/png");
+	});
+	// Captions for training pictures, from the model that looks at pictures.
+	app.get("/api/captioner", async (c) =>
+		c.json({ ready: (await options.captioner?.ready()) ?? false }),
+	);
+	app.post("/api/captions", async (c) => {
+		const { assetId } = await json(c);
+		if (typeof assetId !== "string") {
+			throw new ValidationError("assetId must be text");
+		}
+		const captioner = options.captioner;
+		if (!captioner || !(await captioner.ready())) {
+			throw new ValidationError(
+				"Install Qwen2.5-VL in Models to describe pictures",
+				"captionNeedsModel",
+			);
+		}
+		// It needs gigabytes of memory that training needs too.
+		if ((await options.trainer?.status())?.training?.state === "running") {
+			throw new ValidationError("The trainer is busy", "trainerBusy");
+		}
+		const { asset, blob } = await service.getAssetFile(user(c), assetId);
+		if (!TRAINING_TYPES[asset.mime]) {
+			throw new ValidationError(
+				"Only PNG, JPEG and WebP pictures can be trained on",
+				"uploadType",
+			);
+		}
+		captioning++;
+		try {
+			const caption = await captioner.caption(
+				{
+					data: Buffer.from(await blob.arrayBuffer()).toString("base64"),
+					mimeType: asset.mime,
+				},
+				c.req.raw.signal,
+			);
+			return c.json({ caption });
+		} finally {
+			captioning--;
+		}
 	});
 	app.get("/api/local-models/:id/demos/:index", async (c) => {
 		const index = Number(c.req.param("index"));

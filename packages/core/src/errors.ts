@@ -7,6 +7,7 @@ export type ErrorParams = Record<string, string | number>;
 export const ERROR_CODES = [
 	"assetNotFound",
 	"assistantBusy",
+	"captionNeedsModel",
 	"checkpointMissing",
 	"checkpointNeedsEngine",
 	"checkpointSettingsInvalid",
@@ -79,7 +80,9 @@ export const ERROR_CODES = [
 	"trainingBadTrigger",
 	"trainingFailed",
 	"trainingNeedsBase",
+	"trainingNeedsConsent",
 	"trainingNeedsPictures",
+	"trainingNothingSaved",
 	"trainingOutOfMemory",
 	"unknownLocalModel",
 	"unknownModel",
