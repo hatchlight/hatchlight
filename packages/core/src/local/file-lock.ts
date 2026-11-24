@@ -125,9 +125,12 @@ function keepAlive(lock: string, owner: string, everyMs: number): () => void {
  */
 export function tryFileLock(
 	lock: string,
-	options: Pick<FileLockOptions, "staleMs" | "heartbeatMs"> = {},
+	options: Pick<FileLockOptions, "staleMs" | "heartbeatMs"> & {
+		/** What the lock says, to tell who holds it; unique to this taking. */
+		owner?: string;
+	} = {},
 ): (() => void) | null {
-	const owner = crypto.randomUUID();
+	const owner = options.owner ?? crypto.randomUUID();
 	if (!take(lock, owner, options.staleMs ?? LOCK_STALE_MS)) return null;
 	return keepAlive(lock, owner, options.heartbeatMs ?? HEARTBEAT_MS);
 }

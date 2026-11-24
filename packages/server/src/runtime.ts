@@ -41,6 +41,7 @@ import {
 	Trainer,
 	type TrainerOptions,
 	type Translator,
+	tryFileLock,
 	type UserContext,
 	ValidationError,
 	writerChoice,
@@ -163,12 +164,45 @@ export class DataDirInUseError extends Error {}
 
 /**
  * Two processes on one data directory would each run the other's jobs, so the
- * directory is claimed with a lock file saying which process owns it.
+ * directory is claimed with a lock file the owner rewrites every few seconds:
+ * one not rewritten for 30 seconds, on the folder's own clock, belongs to a
+ * process that died. Process ids say nothing in containers, where every
+ * server is process 1, nor across machines sharing a volume.
  */
-function lockDataDir(dataDir: string): () => void {
+export function lockDataDir(
+	dataDir: string,
+	options: { staleMs?: number; heartbeatMs?: number } = {},
+): () => void {
 	const name = "hatchlight.lock";
 	const path = resolve(dataDir, name);
-	const replaced = takeLock(path, JSON.stringify(lockOwner()));
+	if (heldLocks.has(path)) {
+		throw new DataDirInUseError(
+			`Hatchlight is already running on this data directory (process ${process.pid})`,
+		);
+	}
+	// A lock from a version without the heartbeat is judged as it would be.
+	const previous = readLock(path);
+	let replaced: LockOwner | null = null;
+	if (previous && !previous.heartbeat) {
+		if (!isStale(previous, null)) throw inUse(previous);
+		rmSync(path, { force: true });
+		replaced = previous;
+	}
+	const release = tryFileLock(path, {
+		owner: JSON.stringify({
+			...lockOwner(),
+			heartbeat: true,
+			token: crypto.randomUUID(),
+		}),
+		...options,
+	});
+	if (!release) {
+		const owner = readLock(path);
+		throw inUse(owner ?? { pid: Number.NaN });
+	}
+	heldLocks.add(path);
+	// The old twin of a heartbeat lock that went stale is stale too.
+	replaced ??= previous;
 	// A version from before the rename locks the directory under the old
 	// name, and only looks there: both are held, so neither starts beside
 	// the other. That file keeps the bare process id older versions read.
@@ -176,13 +210,41 @@ function lockDataDir(dataDir: string): () => void {
 	try {
 		takeLock(legacy, String(process.pid), replaced);
 	} catch (error) {
-		releaseLock(path);
+		heldLocks.delete(path);
+		release();
 		throw error;
 	}
 	return () => {
 		releaseLock(legacy);
-		releaseLock(path);
+		heldLocks.delete(path);
+		release();
 	};
+}
+
+function readLock(path: string): (LockOwner & { heartbeat?: boolean }) | null {
+	try {
+		const text = readFileSync(path, "utf8");
+		const owner = readOwner(text);
+		try {
+			const parsed = JSON.parse(text) as { heartbeat?: unknown };
+			return { ...owner, heartbeat: parsed?.heartbeat === true };
+		} catch {
+			return owner;
+		}
+	} catch {
+		return null;
+	}
+}
+
+function inUse(owner: LockOwner): DataDirInUseError {
+	const where =
+		owner.host && owner.host !== osHostname() ? ` on ${owner.host}` : "";
+	const who = Number.isFinite(owner.pid)
+		? ` (process ${owner.pid}${where})`
+		: "";
+	return new DataDirInUseError(
+		`Hatchlight is already running on this data directory${who}. If it stopped, start again in 30 seconds`,
+	);
 }
 
 /** Who holds a lock: older versions wrote only the process id. */

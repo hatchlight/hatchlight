@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat, utimes } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -18,6 +18,7 @@ import {
 	createRuntime,
 	DataDirInUseError,
 	databaseFile,
+	lockDataDir,
 	type Runtime,
 	type RuntimeOptions,
 } from "./index";
@@ -405,6 +406,57 @@ test("a live owner on another machine keeps its lock", async () => {
 	await expect(
 		createRuntime({ dataDir: root, providers: [new FakeProvider()] }),
 	).rejects.toThrow("on elsewhere");
+});
+
+test("a live lock is kept even when its process id is this one's", async () => {
+	// Two containers on one volume: both servers are process 1.
+	const root = await mkdtemp(join(tmpdir(), "hatchlight-lock-"));
+	cleanups.push(() => rm(root, { recursive: true }));
+	await Bun.write(
+		join(root, "hatchlight.lock"),
+		JSON.stringify({
+			pid: process.pid,
+			host: "another-container",
+			heartbeat: true,
+			token: "theirs",
+		}),
+	);
+	await expect(
+		createRuntime({ dataDir: root, providers: [new FakeProvider()] }),
+	).rejects.toThrow("on another-container");
+});
+
+test("a lock whose heartbeat stopped is taken over", async () => {
+	const root = await mkdtemp(join(tmpdir(), "hatchlight-lock-"));
+	cleanups.push(() => rm(root, { recursive: true }));
+	const lock = join(root, "hatchlight.lock");
+	await Bun.write(
+		lock,
+		JSON.stringify({ pid: 1, host: "gone", heartbeat: true, token: "x" }),
+	);
+	// Last rewritten a minute ago.
+	const old = new Date(Date.now() - 60_000);
+	await utimes(lock, old, old);
+	await Bun.write(join(root, `${LEGACY_NAME}.lock`), "1");
+	const runtime = await createRuntime({
+		dataDir: root,
+		providers: [new FakeProvider()],
+	});
+	expect(JSON.parse(await Bun.file(lock).text()).pid).toBe(process.pid);
+	runtime.close();
+	expect(await Bun.file(lock).exists()).toBe(false);
+});
+
+test("the lock is rewritten while the directory is held", async () => {
+	const root = await mkdtemp(join(tmpdir(), "hatchlight-lock-"));
+	cleanups.push(() => rm(root, { recursive: true }));
+	const release = lockDataDir(root, { heartbeatMs: 20 });
+	const lock = join(root, "hatchlight.lock");
+	const old = new Date(Date.now() - 60_000);
+	await utimes(lock, old, old);
+	await Bun.sleep(80);
+	expect((await stat(lock)).mtimeMs).toBeGreaterThan(Date.now() - 10_000);
+	release();
 });
 
 test("a process from before the rename keeps its data directory", async () => {
