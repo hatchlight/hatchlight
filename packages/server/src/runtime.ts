@@ -27,6 +27,7 @@ import {
 	LocalTranslator,
 	legacyName,
 	mayUsePaid,
+	type PaidRefusal,
 	type ProviderAdapter,
 	ProviderRegistry,
 	promptStyle,
@@ -55,6 +56,8 @@ export interface Runtime {
 	service: ReelService;
 	/** The people of a server; unused on a personal install. */
 	accounts: AccountService;
+	/** Why a person may not spend on paid models now; servers only. */
+	paidRefusal?: (userId: string) => PaidRefusal | null;
 	engine: JobEngine;
 	models: LocalModelStore;
 	/** Trains LoRAs on this computer. */
@@ -413,17 +416,24 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		// What the install had becomes the first owner's; its keys, the server's.
 		adoptLocal: async (ownerId) => {
 			await settings.moveUser(LOCAL_USER.userId, ownerId);
+			await assets.moveUser(LOCAL_USER.userId, ownerId);
 			await fileKeys.moveUser(LOCAL_USER.userId, SERVER_KEYS.userId);
 		},
 	});
-	const paidAllowed = (userId: string) => {
+	// On a server, spending is for those allowed, up to their monthly limit.
+	const paidRefusal = (userId: string): PaidRefusal | null => {
 		const user = accounts.getUser(userId);
-		return user != null && user.disabledAt == null && mayUsePaid(user);
+		if (!user || user.disabledAt != null || !mayUsePaid(user)) {
+			return "paidNotAllowed";
+		}
+		return user.monthlyLimitUsd != null &&
+			accounts.spentThisMonth(userId) >= user.monthlyLimitUsd
+			? "monthlyLimitReached"
+			: null;
 	};
-	const mayPay = options.server ? paidAllowed : undefined;
-	const keys = options.server
-		? new SharedKeyStore(fileKeys, paidAllowed)
-		: fileKeys;
+	const refusePaid = options.server ? paidRefusal : undefined;
+	const mayPay = (userId: string) => !refusePaid?.(userId);
+	const keys = options.server ? new SharedKeyStore(fileKeys, mayPay) : fileKeys;
 	// Puts prompts into English for the models that read only English, once
 	// its model is installed.
 	const translatorModel = catalog.find((m) =>
@@ -455,7 +465,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	const keyFor = async (ctx: UserContext, service: CloudTranslatorId) => {
 		const adapter = registry.adapter(service);
 		// A key from the environment is the server's too.
-		if (mayPay?.(ctx.userId) === false) return undefined;
+		if (!mayPay(ctx.userId)) return undefined;
 		return (
 			(await keys.get(ctx, service)) ??
 			(adapter?.keyEnv ? process.env[adapter.keyEnv] : undefined)
@@ -527,7 +537,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		assets,
 		registry,
 		keys,
-		mayUsePaid: mayPay,
+		paidRefusal: refusePaid,
 		translator: translatorFor,
 	});
 	const service = new ReelService({ repo, assets, registry, keys, engine });
@@ -555,6 +565,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	return {
 		service,
 		accounts,
+		paidRefusal: refusePaid,
 		engine,
 		models,
 		trainer,

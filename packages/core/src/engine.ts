@@ -57,10 +57,10 @@ export interface JobEngineDeps {
 	registry: ProviderRegistry;
 	keys: KeyStore;
 	/**
-	 * Whether a person may use models that need a key, which spend money.
-	 * Everyone may when absent, as on a personal install.
+	 * Why a person may not use models that need a key, which spend money, or
+	 * null when they may. Everyone may when absent, as on a personal install.
 	 */
-	mayUsePaid?: (userId: string) => boolean;
+	paidRefusal?: (userId: string) => PaidRefusal | null;
 	/** Jobs running at once per provider. Defaults to 4. */
 	concurrencyPerProvider?: number;
 	/** The wait before the first try again; it doubles each time. */
@@ -73,6 +73,18 @@ export interface JobEngineDeps {
 	translator?: (
 		userId: string,
 	) => Translator | null | Promise<Translator | null>;
+}
+
+/** Why someone may not spend on paid models. */
+export type PaidRefusal = "paidNotAllowed" | "monthlyLimitReached";
+
+export function paidError(refusal: PaidRefusal): CodedError {
+	return new CodedError(
+		refusal === "paidNotAllowed"
+			? "This account cannot use paid models"
+			: "This month's limit for paid models is reached",
+		refusal,
+	);
 }
 
 /** A translation that takes longer is given up on; the prompt goes as written. */
@@ -330,13 +342,10 @@ export class JobEngine {
 					{ model: job.modelId },
 				);
 			}
-			if (adapter.requiresKey && this.deps.mayUsePaid?.(job.userId) === false) {
-				throw new CodedError(
-					`Paid models are not allowed for this account: ${adapter.name}`,
-					"paidNotAllowed",
-					{ provider: adapter.name },
-				);
-			}
+			const refusal = adapter.requiresKey
+				? this.deps.paidRefusal?.(job.userId)
+				: null;
+			if (refusal) throw paidError(refusal);
 			const apiKey =
 				(await keys.get(ctx, adapter.id)) ??
 				(adapter.keyEnv ? process.env[adapter.keyEnv] : undefined);

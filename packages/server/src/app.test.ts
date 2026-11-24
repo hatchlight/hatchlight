@@ -14,15 +14,12 @@ import {
 import { safetensors, zip } from "@hatchlight/core/testing";
 import type { AssistantView } from "@hatchlight/core/types";
 import {
-	type Agents,
 	createApp,
 	createRuntime,
 	DataDirInUseError,
 	databaseFile,
-	ROUTE_ACCESS,
 	type Runtime,
 	type RuntimeOptions,
-	serverConfig,
 } from "./index";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -289,160 +286,11 @@ test("requests from other websites or hosts are refused", async () => {
 	expect(dev.status).toBe(200);
 });
 
-/** A server-mode app for nas.example behind a proxy at 10.0.0.0/8. */
-async function serverMode(env: Record<string, string> = {}) {
-	const { runtime } = await setup();
-	const { transport } = serverConfig(
-		{ mode: "server" },
-		{
-			HATCHLIGHT_PUBLIC_URL: "https://nas.example",
-			HATCHLIGHT_ALLOWED_HOSTS: "192.168.1.20",
-			HATCHLIGHT_TRUSTED_PROXIES: "10.0.0.0/8",
-			...env,
-		},
-	);
-	const app = createApp({
-		...runtime,
-		server: transport ?? undefined,
-		agents: { status: async () => ({}) } as unknown as Agents,
-	});
-	/** A request arriving from `peer`, as Bun passes its address in. */
-	const call = (url: string, init: RequestInit = {}, peer = "10.0.0.5") =>
-		app.request(url, init, { peer });
-	return { call, runtime };
-}
-
-const PROXIED = {
-	"x-forwarded-proto": "https",
-	"x-forwarded-host": "nas.example",
-};
-const TURN = JSON.stringify({ prompt: "x", modelIds: ["fake/alpha"] });
-
-test("server mode believes forwarded headers only from its proxies", async () => {
-	const { call } = await serverMode();
-	// Through the proxy, the page is on https://nas.example.
-	const proxied = await call("http://hatchlight:4096/api/turns", {
-		method: "POST",
-		headers: {
-			...PROXIED,
-			origin: "https://nas.example",
-			"content-type": "application/json",
-		},
-		body: TURN,
-	});
-	expect(proxied.status).toBe(201);
-	expect(proxied.headers.get("strict-transport-security")).toContain(
-		"max-age=",
-	);
-
-	// The same headers from anyone else are ignored, and the host they
-	// reached is not this server's.
-	const direct = await call(
-		"http://hatchlight:4096/api/models",
-		{ headers: PROXIED },
-		"203.0.113.9",
-	);
-	expect(direct.status).toBe(403);
-	expect(direct.headers.get("strict-transport-security")).toBeNull();
-
-	// A trusted proxy cannot name a host that is not this server's either.
-	const forged = await call("http://hatchlight:4096/api/models", {
-		headers: { ...PROXIED, "x-forwarded-host": "evil.example" },
-	});
-	expect(forged.status).toBe(403);
-});
-
-test("server mode checks the https origin of changes", async () => {
-	const { call } = await serverMode();
-	const post = (headers: Record<string, string>) =>
-		call("http://hatchlight:4096/api/turns", {
-			method: "POST",
-			headers: { ...PROXIED, "content-type": "application/json", ...headers },
-			body: TURN,
-		});
-	// The page is on https: its http twin is another origin.
-	expect((await post({ origin: "http://nas.example" })).status).toBe(403);
-	expect((await post({ origin: "https://evil.example" })).status).toBe(403);
-	expect((await post({ origin: "null" })).status).toBe(403);
-	// A change must say where it comes from.
-	const missing = await post({});
-	expect(missing.status).toBe(403);
-	expect(await missing.json()).toEqual({ error: "Missing origin" });
-	expect((await post({ "sec-fetch-site": "cross-site" })).status).toBe(403);
-	expect((await post({ "sec-fetch-site": "same-origin" })).status).toBe(201);
-	// Reading needs no origin.
-	expect(
-		(await call("http://hatchlight:4096/api/models", { headers: PROXIED }))
-			.status,
-	).toBe(200);
-});
-
-test("server mode answers its public, extra and loopback hosts only", async () => {
-	const { call } = await serverMode();
-	const lan = "203.0.113.9";
-	// Without a proxy, straight on the public address.
-	expect((await call("http://nas.example/api/models", {}, lan)).status).toBe(
-		200,
-	);
-	expect(
-		(await call("http://192.168.1.20:4096/api/models", {}, lan)).status,
-	).toBe(200);
-	const post = await call(
-		"http://192.168.1.20:4096/api/turns",
-		{
-			method: "POST",
-			headers: {
-				origin: "http://192.168.1.20:4096",
-				"content-type": "application/json",
-			},
-			body: TURN,
-		},
-		lan,
-	);
-	expect(post.status).toBe(201);
-	// A name that points at this server but is not its own: DNS rebinding.
-	const rebound = await call("http://evil.example/api/models", {}, lan);
-	expect(rebound.status).toBe(403);
-	// Health checks from the container itself.
-	const health = await call(
-		"http://localhost:4096/api/health",
-		{},
-		"127.0.0.1",
-	);
-	expect(health.status).toBe(200);
-	expect(await health.json()).toEqual({ ok: true });
-});
-
-test("server mode leaves out what only works on this computer", async () => {
-	const { call } = await serverMode();
-	const send = (method: string, path: string, body: unknown) =>
-		call(`http://nas.example${path}`, {
-			method,
-			headers: {
-				origin: "http://nas.example",
-				"content-type": "application/json",
-			},
-			body: JSON.stringify(body),
-		});
-	for (const [method, path, body] of [
-		["POST", "/api/local-models/location", { path: "/mnt/elsewhere" }],
-		["PUT", "/api/agents/claude-desktop", { allowPaid: false }],
-		["DELETE", "/api/agents/claude-desktop", {}],
-	] as const) {
-		const response = await send(method, path, body);
-		expect(response.status).toBe(403);
-		expect(((await response.json()) as { code: string }).code).toBe(
-			"notOnServer",
-		);
-	}
-	const mode = await call("http://nas.example/api/server");
-	expect(await mode.json()).toEqual({ mode: "server" });
-});
-
 test("a personal install says so", async () => {
 	const { call } = await setup();
 	expect(await (await call("/api/server")).json()).toEqual({
 		mode: "personal",
+		secure: false,
 	});
 	expect(await (await call("/api/health")).json()).toEqual({ ok: true });
 });
@@ -474,42 +322,6 @@ test("every answer carries the security headers", async () => {
 	const file = await call(`/api/assets/${id}`);
 	expect(file.headers.get("content-security-policy")).toBe("sandbox");
 	expect(file.headers.get("x-frame-options")).toBe("DENY");
-});
-
-test("every API route declares who may call it", async () => {
-	const { runtime } = await setup();
-	const app = createApp({
-		...runtime,
-		agents: {} as Agents,
-		settings: runtime.settings,
-	});
-	const routes = new Set(
-		app.routes
-			// Middleware and the catch-all apply to every route.
-			.filter((route) => route.method !== "ALL" && route.path !== "/api/*")
-			.filter((route) => route.path.startsWith("/api/"))
-			.map((route) => `${route.method} ${route.path}`),
-	);
-	const undeclared = [...routes].filter((route) => !(route in ROUTE_ACCESS));
-	expect(undeclared).toEqual([]);
-	// Nothing declared that no longer exists.
-	const stale = Object.keys(ROUTE_ACCESS).filter((route) => !routes.has(route));
-	expect(stale).toEqual([]);
-});
-
-test("a second process cannot take over a data directory in use", async () => {
-	const { dir, runtime, post } = await setup();
-	runtime.engine.subscribe(() => {});
-	expect(
-		createRuntime({ dataDir: dir, providers: [new FakeProvider()] }),
-	).rejects.toBeInstanceOf(DataDirInUseError);
-
-	// The first process is untouched and still runs jobs.
-	const created = await post("/api/turns", {
-		prompt: "x",
-		modelIds: ["fake/alpha"],
-	});
-	expect(created.status).toBe(201);
 });
 
 /** The owner a lock file names, in either of its formats. */

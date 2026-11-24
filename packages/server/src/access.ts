@@ -1,19 +1,45 @@
 /**
- * Who may call a route once a server has accounts:
+ * Who may call a route on a server:
  *
- * - `public`: anyone who reaches the server, signed in or not;
- * - `member`: any signed-in person, on their own sessions and pictures;
- * - `owner`: whoever runs the server. Installing, keys, folders and anything
- *   that changes the machine or what everyone shares.
+ * - `public`: anyone who reaches it, signed in or not;
+ * - `account`: a signed-in person in a browser, about their own account,
+ *   even before they changed a temporary password;
+ * - `member`: any signed-in person or API token, on their own sessions,
+ *   pictures and assistant, and making pictures with what is installed;
+ * - `train`: a member allowed to train LoRAs and add them;
+ * - `admin`: admins and owners: installing models, the trainer, people;
+ * - `owner`: owners only: the server's own settings, such as its keys.
  *
- * A personal install has one person, who is all three.
+ * A personal install has one person, who may do everything.
  */
-export type Access = "public" | "member" | "owner";
+export type Access =
+	| "public"
+	| "account"
+	| "member"
+	| "train"
+	| "admin"
+	| "owner";
 
 /** Every API route, as `METHOD /path` with Hono's route pattern. */
 export const ROUTE_ACCESS: Readonly<Record<string, Access>> = {
 	"GET /api/health": "public",
 	"GET /api/server": "public",
+	"GET /api/setup": "public",
+	"POST /api/setup": "public",
+	"POST /api/login": "public",
+	"GET /api/invites/:token": "public",
+	"POST /api/invites/:token/accept": "public",
+
+	// One's own account.
+	"POST /api/logout": "account",
+	"GET /api/account": "account",
+	"PUT /api/account/password": "account",
+	"GET /api/account/sessions": "account",
+	"DELETE /api/account/sessions": "account",
+	"DELETE /api/account/sessions/:id": "account",
+	"POST /api/account/totp": "account",
+	"PUT /api/account/totp": "account",
+	"DELETE /api/account/totp": "account",
 
 	// Making pictures, and a person's own sessions, gallery and assistant.
 	"GET /api/models": "member",
@@ -46,33 +72,41 @@ export const ROUTE_ACCESS: Readonly<Record<string, Access>> = {
 	"GET /api/trainer": "member",
 	"GET /api/captioner": "member",
 
-	// Keys spend the owner's money.
+	// Training holds the GPU for long and adds a LoRA everyone sees.
+	"POST /api/loras": "train",
+	"POST /api/trainings": "train",
+	"POST /api/trainings/cancel": "train",
+	"POST /api/trainings/finish": "train",
+	"GET /api/trainings/:id/samples/:step": "train",
+	"POST /api/captions": "train",
+
+	// What is installed is shared by everyone.
+	"POST /api/local-models/:id/install": "admin",
+	"POST /api/local-models/:id/cancel": "admin",
+	"DELETE /api/local-models/:id": "admin",
+	"DELETE /api/loras/:id": "admin",
+	"POST /api/checkpoints": "admin",
+	"PATCH /api/checkpoints/:id": "admin",
+	"DELETE /api/checkpoints/:id": "admin",
+	"POST /api/trainer/install": "admin",
+	"POST /api/trainer/install/cancel": "admin",
+	"DELETE /api/trainer": "admin",
+	// The people of the server.
+	"GET /api/users": "admin",
+	"PATCH /api/users/:id": "admin",
+	"POST /api/users/:id/password": "admin",
+	"GET /api/invites": "admin",
+	"POST /api/invites": "admin",
+	"DELETE /api/invites/:id": "admin",
+
+	// The server's own settings. Keys spend the owner's money.
 	"PUT /api/providers/:id/key": "owner",
 	"DELETE /api/providers/:id/key": "owner",
 	// Agents are set up on the machine that runs the server.
 	"GET /api/agents": "owner",
 	"PUT /api/agents/claude-desktop": "owner",
 	"DELETE /api/agents/claude-desktop": "owner",
-	// What is installed, and where, is shared by everyone.
-	"POST /api/local-models/:id/install": "owner",
-	"POST /api/local-models/:id/cancel": "owner",
-	"DELETE /api/local-models/:id": "owner",
 	"POST /api/local-models/location": "owner",
-	"POST /api/loras": "owner",
-	"DELETE /api/loras/:id": "owner",
-	"POST /api/checkpoints": "owner",
-	"PATCH /api/checkpoints/:id": "owner",
-	"DELETE /api/checkpoints/:id": "owner",
-	// Training installs a trainer, holds the GPU for long, and adds a LoRA
-	// everyone sees.
-	"POST /api/trainer/install": "owner",
-	"POST /api/trainer/install/cancel": "owner",
-	"DELETE /api/trainer": "owner",
-	"POST /api/trainings": "owner",
-	"POST /api/trainings/cancel": "owner",
-	"POST /api/trainings/finish": "owner",
-	"GET /api/trainings/:id/samples/:step": "owner",
-	"POST /api/captions": "owner",
 };
 
 /**

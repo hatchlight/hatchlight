@@ -1,4 +1,6 @@
 import {
+	AccessError,
+	type AccountService,
 	type Captioner,
 	CodedError,
 	type ErrorCode,
@@ -12,10 +14,14 @@ import {
 	MAX_CHECKPOINT_BYTES,
 	MAX_LORA_BYTES,
 	NotFoundError,
+	type PaidRefusal,
+	paidError,
 	type ReelService,
 	type SettingsStore,
 	TRANSLATE_WITH,
 	type Trainer,
+	type TrainerEvent,
+	type TrainerStatus,
 	type UserContext,
 	ValidationError,
 } from "@hatchlight/core";
@@ -23,7 +29,9 @@ import type { Assistant } from "@hatchlight/tools";
 import { type Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
+import { mountAccounts } from "./accounts-routes";
 import type { Agents } from "./agents";
+import { requireAccess } from "./auth";
 import type { AssistantBrain, ImproveRequest } from "./runtime";
 import { hostName, requestOrigin, type ServerTransport } from "./transport";
 
@@ -43,6 +51,10 @@ export interface AppOptions {
 	 * computer.
 	 */
 	server?: ServerTransport;
+	/** The people of a server, who sign in; needed in server mode. */
+	accounts?: AccountService;
+	/** Why a person may not spend on paid models now, or null; servers only. */
+	paidRefusal?: (userId: string) => PaidRefusal | null;
 	/** Maps a request to its user. Local installs have a single user. */
 	resolveUser?: (c: Context) => UserContext;
 	/** Connects AI agents to this installation; absent where it cannot. */
@@ -134,9 +146,6 @@ const SECURITY_HEADERS: Record<string, string> = {
 const peerOf = (c: Context): string | null =>
 	(c.env as { peer?: string } | undefined)?.peer ?? null;
 
-/** Requests that reached this server over https, through its proxy. */
-const httpsRequests = new WeakSet<Request>();
-
 /** Answer for what a server reached over the network must not do. */
 const notOnServer = (c: Context) =>
 	c.json(
@@ -204,25 +213,30 @@ function serveFile(c: Context, blob: Blob, mime: string): Response {
 
 export function createApp(options: AppOptions): Hono {
 	const { service, engine, models } = options;
-	const user = options.resolveUser ?? (() => LOCAL_USER);
+	const server = options.server;
+	// A personal install has no accounts, even when given them.
+	const accounts = server ? options.accounts : undefined;
+	if (server && !accounts) throw new Error("Server mode needs accounts");
+	const user =
+		options.resolveUser ??
+		(server
+			? (c: Context): UserContext => ({ userId: c.get("viewer").user.id })
+			: () => LOCAL_USER);
 	const app = new Hono();
 
 	// Every answer, the page included, keeps to what the interface needs.
 	app.use("*", async (c, next) => {
-		// Later middleware may replace the request, as the body limit does.
-		const request = c.req.raw;
 		await next();
 		const headers = c.res.headers;
 		for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
 			// Stored files keep their stricter sandbox.
 			if (!headers.has(name)) headers.set(name, value);
 		}
-		if (httpsRequests.has(request)) {
+		if (c.get("https")) {
 			headers.set("strict-transport-security", "max-age=31536000");
 		}
 	});
 
-	const server = options.server;
 	// The server holds API keys and spends money, and browsers let any website
 	// send requests to localhost. Refuse anything that is not same-origin.
 	app.use(
@@ -244,7 +258,8 @@ export function createApp(options: AppOptions): Hono {
 					) {
 						return c.json({ error: "Forbidden host" }, 403);
 					}
-					if (seen.scheme === "https") httpsRequests.add(c.req.raw);
+					c.set("https", seen.scheme === "https");
+					c.set("client", seen.client);
 					const origin = c.req.header("origin");
 					const own = new URL(`${seen.scheme}://${seen.host}`).origin;
 					if (origin) {
@@ -253,7 +268,9 @@ export function createApp(options: AppOptions): Hono {
 						}
 					} else if (
 						UNSAFE_METHODS.has(c.req.method) &&
-						c.req.header("sec-fetch-site") !== "same-origin"
+						c.req.header("sec-fetch-site") !== "same-origin" &&
+						// Programs sign with a token, which no other site can send.
+						!/^Bearer\s/i.test(c.req.header("authorization") ?? "")
 					) {
 						// Browsers name the origin of every such request; without
 						// it, nothing shows it comes from this site.
@@ -282,9 +299,13 @@ export function createApp(options: AppOptions): Hono {
 
 	// For container and proxy health checks: says nothing but that it is up.
 	app.get("/api/health", (c) => c.json({ ok: true }));
-	// Lets the interface leave out what only works on this computer.
+	// Lets the interface leave out what only works on this computer, and warn
+	// when passwords would cross the network unencrypted.
 	app.get("/api/server", (c) =>
-		c.json({ mode: server ? "server" : "personal" }),
+		c.json({
+			mode: server ? "server" : "personal",
+			secure: c.get("https") === true,
+		}),
 	);
 
 	// Bodies are small JSON, except for the routes that take files, which
@@ -307,6 +328,7 @@ export function createApp(options: AppOptions): Hono {
 			...(e.code && { code: e.code, params: e.params }),
 		});
 		if (error instanceof ValidationError) return c.json(body(error), 400);
+		if (error instanceof AccessError) return c.json(body(error), error.status);
 		if (error instanceof NotFoundError) return c.json(body(error), 404);
 		// Something the server relies on failed in a way a person can be told.
 		if (error instanceof CodedError && error.code) {
@@ -327,11 +349,27 @@ export function createApp(options: AppOptions): Hono {
 		return body;
 	};
 
+	if (accounts) {
+		// On a server, every route but the public ones needs a signed-in person.
+		app.use("/api/*", requireAccess(accounts));
+		mountAccounts(app, accounts, json);
+	}
+
+	/** Why the person asking may not spend on paid models now, if they may not. */
+	const paidRefusal = (c: Context) =>
+		server ? (options.paidRefusal?.(user(c).userId) ?? null) : null;
+
 	app.get("/api/models", (c) => c.json(service.listModels()));
 
-	app.get("/api/providers", async (c) =>
-		c.json(await service.listProviders(user(c))),
-	);
+	app.get("/api/providers", async (c) => {
+		const providers = await service.listProviders(user(c));
+		// A key from the environment is not theirs to use either.
+		return c.json(
+			paidRefusal(c)
+				? providers.map((p) => (p.requiresKey ? { ...p, hasKey: false } : p))
+				: providers,
+		);
+	});
 
 	// Connecting agents writes to their settings, on the person's request.
 	const agents = options.agents;
@@ -399,6 +437,23 @@ export function createApp(options: AppOptions): Hono {
 		}
 		if (body.sessionId != null && typeof body.sessionId !== "string") {
 			throw new ValidationError("sessionId must be a string");
+		}
+		const refusal = paidRefusal(c);
+		if (refusal) {
+			const paid = new Set(
+				(await service.listProviders(user(c)))
+					.filter((p) => p.requiresKey)
+					.map((p) => p.id),
+			);
+			const byId = new Map(service.listModels().map((m) => [m.id, m]));
+			if (
+				(body.modelIds as string[]).some((id) =>
+					paid.has(byId.get(id)?.providerId ?? ""),
+				)
+			) {
+				const { message, code } = paidError(refusal);
+				throw new AccessError(message, code as ErrorCode, 403);
+			}
 		}
 		// The remaining fields are validated by the service's schema.
 		const result = await service.createTurn(user(c), body as never);
@@ -645,7 +700,32 @@ export function createApp(options: AppOptions): Hono {
 		if (!options.trainer) throw new NotFoundError("No trainer here");
 		return options.trainer;
 	};
-	app.get("/api/trainer", async (c) => c.json(await trainer().status()));
+	// On a server, a training shows only to who started it: its name and
+	// samples are theirs.
+	const trainingOwners = new Map<string, string>();
+	const mayManageTraining = (c: Context, id: string) =>
+		!server ||
+		trainingOwners.get(id) === user(c).userId ||
+		["owner", "admin"].includes(c.get("viewer").user.role);
+	const forViewer = (userId: string, status: TrainerStatus): TrainerStatus =>
+		server &&
+		status.training &&
+		trainingOwners.get(status.training.id) !== userId
+			? { ...status, training: null }
+			: status;
+	const assertMayManageTraining = async (c: Context) => {
+		const training = (await trainer().status()).training;
+		if (training && !mayManageTraining(c, training.id)) {
+			throw new AccessError(
+				"Only who started this training can stop it",
+				"forbidden",
+				403,
+			);
+		}
+	};
+	app.get("/api/trainer", async (c) =>
+		c.json(forViewer(user(c).userId, await trainer().status())),
+	);
 	app.post("/api/trainer/install", async (c) => {
 		await trainer().install();
 		return c.body(null, 202);
@@ -708,20 +788,29 @@ export function createApp(options: AppOptions): Hono {
 				caption: typeof caption === "string" ? caption.slice(0, 500) : "",
 			});
 		}
-		return c.json(
-			await trainer().train({ name, trigger, steps, pictures: read }),
-			202,
-		);
+		const training = await trainer().train({
+			name,
+			trigger,
+			steps,
+			pictures: read,
+		});
+		trainingOwners.set(training.id, user(c).userId);
+		return c.json(training, 202);
 	});
-	app.post("/api/trainings/cancel", (c) => {
+	app.post("/api/trainings/cancel", async (c) => {
+		await assertMayManageTraining(c);
 		trainer().cancelTraining();
 		return c.body(null, 204);
 	});
-	app.post("/api/trainings/finish", (c) => {
+	app.post("/api/trainings/finish", async (c) => {
+		await assertMayManageTraining(c);
 		trainer().finishTraining();
 		return c.body(null, 204);
 	});
 	app.get("/api/trainings/:id/samples/:step", async (c) => {
+		if (!mayManageTraining(c, c.req.param("id"))) {
+			throw new NotFoundError("Sample not found");
+		}
 		const file = trainer().sampleFile(
 			c.req.param("id"),
 			Number(c.req.param("step")),
@@ -888,7 +977,7 @@ export function createApp(options: AppOptions): Hono {
 	app.get("/api/events", (c) => {
 		const { userId } = user(c);
 		return streamSSE(c, async (stream) => {
-			const send = (event: { type: string }) =>
+			const send = (event: { type: string } | TrainerEvent) =>
 				void stream.writeSSE({
 					event: event.type,
 					data: JSON.stringify(event),
@@ -897,7 +986,10 @@ export function createApp(options: AppOptions): Hono {
 				if (target === userId) send(event);
 			});
 			const unsubscribeModels = models.subscribe(send);
-			const unsubscribeTrainer = options.trainer?.subscribe(send);
+			const unsubscribeTrainer = options.trainer?.subscribe((event) => {
+				const trainer = forViewer(userId, event.trainer);
+				send({ ...event, trainer } satisfies TrainerEvent);
+			});
 			const unsubscribeAssistant = options.assistant?.subscribe(
 				(target, event) => {
 					if (target === userId) send(event);
