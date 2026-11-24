@@ -1,0 +1,31 @@
+# Advisories osv-scanner (and so OpenSSF Scorecard) reports that this project
+# cannot fix itself. Each comes with Tauri's own dependencies; drop an entry
+# once Tauri moves past it. Anything not listed here must be fixed.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0429"
+reason = "glib 0.18 comes with Tauri's GTK 3 on Linux; the fix is in glib 0.20, which needs GTK 4. Hatchlight's own code does not use glib."
+
+[[IgnoredVulns]]
+id = "GHSA-wrw7-89jp-8q8g"
+reason = "The same glib 0.18 advisory as RUSTSEC-2024-0429."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0370"
+reason = "proc-macro-error is unmaintained, not vulnerable; it builds glib 0.18's macros for Tauri's GTK 3 on Linux."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0543"
+reason = "chrono is unmaintained, not vulnerable. Cargo.lock lists it as an optional dependency of serde_with (from tauri-utils), but it is not built."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0371"
+reason = "zbus_names is unmaintained, not vulnerable; it comes with zbus, which tauri-plugin-opener and tauri-plugin-single-instance use on Linux."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0370"
+reason = "zvariant is unmaintained, not vulnerable; it comes with zbus, which tauri-plugin-opener and tauri-plugin-single-instance use on Linux."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0372"
+reason = "zvariant_derive is unmaintained, not vulnerable; it comes with zbus, which tauri-plugin-opener and tauri-plugin-single-instance use on Linux."
