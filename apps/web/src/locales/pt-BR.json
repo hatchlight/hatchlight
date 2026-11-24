@@ -624,7 +624,7 @@
 	"signin.title": "Entrar",
 	"training.addPictures": "Deste computador",
 	"training.adding": "Adicionando…",
-	"training.askAdmin": "Um admin deste servidor pode instalar o treinador.",
+	"training.askOwner": "O dono do servidor pode instalar o treinador.",
 	"training.cancel": "Parar o treino",
 	"training.canceled": "O treino de {name} foi parado.",
 	"training.captionOf": "O que a imagem {n} mostra",

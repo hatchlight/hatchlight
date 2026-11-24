@@ -21,6 +21,7 @@ import {
 	createApp,
 	createRuntime,
 	DataDirInUseError,
+	localUrl,
 	serverConfig,
 	serveWeb,
 } from "@hatchlight/server";
@@ -209,7 +210,7 @@ const url = server?.publicOrigin ?? `http://localhost:${listener.port}`;
 // Other processes, such as `hatchlight mcp`, find this server here.
 await writeServerInfo(dataDir, {
 	pid: process.pid,
-	url: `http://127.0.0.1:${listener.port}`,
+	url: localUrl(config.host, listener.port as number),
 }).catch((error) => {
 	console.error(`Agents will not find this server: ${error.message}`);
 });

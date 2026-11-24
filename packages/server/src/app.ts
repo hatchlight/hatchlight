@@ -269,8 +269,12 @@ export function createApp(options: AppOptions): Hono {
 					} else if (
 						UNSAFE_METHODS.has(c.req.method) &&
 						c.req.header("sec-fetch-site") !== "same-origin" &&
-						// Programs sign with a token, which no other site can send.
-						!/^Bearer\s/i.test(c.req.header("authorization") ?? "")
+						// Programs sign with a token, which no other site can send;
+						// with a cookie beside it, it could be a browser.
+						!(
+							/^Bearer\s/i.test(c.req.header("authorization") ?? "") &&
+							c.req.header("cookie") === undefined
+						)
 					) {
 						// Browsers name the origin of every such request; without
 						// it, nothing shows it comes from this site.

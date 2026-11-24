@@ -280,3 +280,16 @@ export function requestOrigin(
 		client,
 	};
 }
+
+/**
+ * Where processes on this machine reach a server listening on `host`: over
+ * loopback when it listens everywhere, else at the address it listens on.
+ */
+export function localUrl(host: string, port: number): string {
+	const bare = host.replace(/^\[(.*)\]$/, "$1");
+	if (bare === "0.0.0.0" || bare === "") return `http://127.0.0.1:${port}`;
+	if (bare === "::") return `http://[::1]:${port}`;
+	return bare.includes(":")
+		? `http://[${bare}]:${port}`
+		: `http://${bare}:${port}`;
+}

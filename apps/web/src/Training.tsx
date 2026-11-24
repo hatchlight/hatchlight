@@ -789,16 +789,16 @@ export function TrainPanel() {
 			{status.error && (
 				<p className="text-sm text-danger">{explain(status.error)}</p>
 			)}
-			{data && data.state !== "ready" && can.admin && <Install status={data} />}
-			{data && data.state !== "ready" && !can.admin && (
-				<p className="text-sm text-dim">{t("training.askAdmin")}</p>
+			{data && data.state !== "ready" && can.owner && <Install status={data} />}
+			{data && data.state !== "ready" && !can.owner && (
+				<p className="text-sm text-dim">{t("training.askOwner")}</p>
 			)}
 			{data?.state === "ready" && (
 				<>
 					{data.training && <Progress training={data.training} />}
 					{/* Kept while it trains: after a failure the pictures are still here. */}
 					<Form hidden={data.training?.state === "running"} />
-					{data.training?.state !== "running" && can.admin && <Remove />}
+					{data.training?.state !== "running" && can.owner && <Remove />}
 				</>
 			)}
 		</section>

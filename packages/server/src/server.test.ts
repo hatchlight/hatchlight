@@ -702,6 +702,15 @@ test("an API token acts for its person, and only to use the server", async () =>
 		body: { prompt: "x", modelIds: ["fake/alpha"] },
 	});
 	expect(turn.status).toBe(201);
+	// With a cookie beside it, it could be a browser: the origin is checked.
+	const withCookie = await call("/api/turns", {
+		method: "POST",
+		who: { token },
+		headers: { origin: "", cookie: "hatchlight_session=anything" },
+		body: { prompt: "x", modelIds: ["fake/alpha"] },
+	});
+	expect(withCookie.status).toBe(403);
+	expect(await withCookie.json()).toEqual({ error: "Missing origin" });
 	// Not for managing the server or accounts, even an owner's.
 	expect((await call("/api/users", { who: { token } })).status).toBe(403);
 	expect((await call("/api/account", { who: { token } })).status).toBe(403);

@@ -3,6 +3,7 @@ import {
 	ConfigError,
 	hostName,
 	inBlocks,
+	localUrl,
 	parseIp,
 	requestOrigin,
 	serverConfig,
@@ -179,4 +180,14 @@ test("forwarded headers count only from a trusted proxy", () => {
 	// Only http and https are schemes a browser can be on here.
 	const odd = new Headers({ "x-forwarded-proto": "gopher" });
 	expect(requestOrigin(url, odd, "10.0.0.5", proxies).scheme).toBe("http");
+});
+
+test("local processes find the server where it really listens", () => {
+	expect(localUrl("127.0.0.1", 4096)).toBe("http://127.0.0.1:4096");
+	expect(localUrl("0.0.0.0", 4096)).toBe("http://127.0.0.1:4096");
+	expect(localUrl("::", 4096)).toBe("http://[::1]:4096");
+	expect(localUrl("::1", 4096)).toBe("http://[::1]:4096");
+	expect(localUrl("localhost", 4096)).toBe("http://localhost:4096");
+	expect(localUrl("10.0.0.2", 4096)).toBe("http://10.0.0.2:4096");
+	expect(localUrl("fd00::2", 4096)).toBe("http://[fd00::2]:4096");
 });

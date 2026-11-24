@@ -624,7 +624,7 @@
 	"signin.title": "Sign in",
 	"training.addPictures": "From this computer",
 	"training.adding": "Adding…",
-	"training.askAdmin": "An admin of this server can install the trainer.",
+	"training.askOwner": "The server's owner can install the trainer.",
 	"training.cancel": "Stop training",
 	"training.canceled": "Training {name} was stopped.",
 	"training.captionOf": "What picture {n} shows",

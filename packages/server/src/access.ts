@@ -7,8 +7,9 @@
  * - `member`: any signed-in person or API token, on their own sessions,
  *   pictures and assistant, and making pictures with what is installed;
  * - `train`: a member allowed to train LoRAs and add them;
- * - `admin`: admins and owners: installing models, the trainer, people;
- * - `owner`: owners only: the server's own settings, such as its keys.
+ * - `admin`: admins and owners: installing models, and people;
+ * - `owner`: owners only: the server's own settings and software, such as
+ *   its keys and the trainer.
  *
  * A personal install has one person, who may do everything.
  */
@@ -88,9 +89,6 @@ export const ROUTE_ACCESS: Readonly<Record<string, Access>> = {
 	"POST /api/checkpoints": "admin",
 	"PATCH /api/checkpoints/:id": "admin",
 	"DELETE /api/checkpoints/:id": "admin",
-	"POST /api/trainer/install": "admin",
-	"POST /api/trainer/install/cancel": "admin",
-	"DELETE /api/trainer": "admin",
 	// The people of the server.
 	"GET /api/users": "admin",
 	"PATCH /api/users/:id": "admin",
@@ -107,6 +105,10 @@ export const ROUTE_ACCESS: Readonly<Record<string, Access>> = {
 	"PUT /api/agents/claude-desktop": "owner",
 	"DELETE /api/agents/claude-desktop": "owner",
 	"POST /api/local-models/location": "owner",
+	// The trainer is software installed on the machine.
+	"POST /api/trainer/install": "owner",
+	"POST /api/trainer/install/cancel": "owner",
+	"DELETE /api/trainer": "owner",
 };
 
 /**
