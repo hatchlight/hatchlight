@@ -755,7 +755,7 @@ test("the assistant answers in a session, and asks before paying", async () => {
 		400,
 	);
 	const sent = await post("/api/assistant/messages", {
-		text: "uma raposa",
+		text: "uma raposa com o fake/alpha",
 		language: "pt-BR",
 	});
 	expect(sent.status).toBe(200);

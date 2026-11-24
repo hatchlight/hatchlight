@@ -398,6 +398,35 @@ describe("job engine", () => {
 		await app.engine.idle();
 	});
 
+	test("a job waiting in line is told its place, and moves up", async () => {
+		const provider = Object.assign(new FakeProvider(), { maxConcurrency: 1 });
+		const app = boot(await tempDir(), provider, 4);
+		const places: string[] = [];
+		app.engine.subscribe((_, event) => {
+			if (event.type === "job.progress" && event.stage === "queued") {
+				places.push(`${event.jobId}@${event.position}`);
+			}
+		});
+		const g = gate();
+		provider.gate = g.promise;
+		const first = await app.service.createTurn(LOCAL_USER, {
+			prompt: "x",
+			modelIds: ["fake/alpha", "fake/beta"],
+		});
+		const later = await app.service.createTurn(LOCAL_USER, {
+			prompt: "y",
+			modelIds: ["fake/alpha"],
+		});
+		await settle();
+		const second = first.turn.jobs[1]?.id;
+		const third = later.turn.jobs[0]?.id;
+		expect(places.slice(-2)).toEqual([`${second}@1`, `${third}@2`]);
+		g.open();
+		await app.engine.idle();
+		// Once the first finished, the last one was next.
+		expect(places).toContain(`${third}@1`);
+	});
+
 	test("a provider's lines each run their own jobs", async () => {
 		const provider = Object.assign(
 			new FakeProvider("fake", ["alpha", "beta", "gamma"]),

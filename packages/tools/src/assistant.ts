@@ -236,6 +236,65 @@ const withoutPictures = (message: ChatMessage): ChatMessage =>
 				content: message.content.filter((part) => part.type === "text"),
 			};
 
+/** Words too common in model names to say which model a person meant. */
+const COMMON_WORDS = new Set([
+	"base",
+	"image",
+	"lightning",
+	"local",
+	"model",
+	"turbo",
+	"video",
+]);
+
+/** Whether a person's words name a model: by its id, its name or a word of it. */
+export function namesModel(words: string, model: ModelSpec): boolean {
+	const said = words.toLowerCase();
+	const name = model.name.toLowerCase();
+	const tail = model.id.slice(model.id.indexOf("/") + 1).toLowerCase();
+	const long = (word: string) => word.length >= 3;
+	if (
+		(long(name) && said.includes(name)) ||
+		(long(tail) && said.includes(tail))
+	)
+		return true;
+	const own = `${name} ${tail} ${model.providerId}`
+		.split(/[^\p{L}\p{N}]+/u)
+		.filter(
+			(word) =>
+				(long(word) || word === name || word === tail) &&
+				!COMMON_WORDS.has(word),
+		);
+	const spoken = new Set(said.split(/[^\p{L}\p{N}]+/u));
+	return own.some((word) => spoken.has(word));
+}
+
+/**
+ * The models a generate call keeps: the ones the person named, or all of
+ * them when the person asked to compare. Small language models tend to
+ * pick several models nobody asked for, and each one makes the person
+ * wait; without a named one, the tool picks the best free model.
+ */
+export function keptModels(
+	call: ToolCall,
+	words: string,
+	models: ModelSpec[],
+): ToolCall {
+	const asked = call.arguments.models;
+	if (call.name !== "generate" || !Array.isArray(asked)) return call;
+	if (/compar/i.test(words)) return call;
+	const named = asked.filter((id) => {
+		const model = models.find((m) => m.id === id);
+		// An id the person typed, even an unknown one, is theirs to keep.
+		return model ? namesModel(words, model) : words.includes(String(id));
+	});
+	const { models: _, ...rest } = call.arguments;
+	return {
+		...call,
+		arguments: named.length > 0 ? { ...rest, models: named } : rest,
+	};
+}
+
 /** An entry without what identifies it, to write it back changed. */
 function bodyOf(entry: AssistantEntry): AssistantEntryBody {
 	const { id, sessionId, createdAt, ...body } = entry;
@@ -594,6 +653,12 @@ export class Assistant {
 			const messages = conversation(kept);
 			if (brain.vision) await this.showAgain(ctx, sessionId, kept, messages);
 			const instructions = assistantInstructions(language);
+			const words = kept
+				.flatMap((entry) =>
+					entry.message.role === "user" ? entry.message.content : [],
+				)
+				.map((part) => (part.type === "text" ? part.text : ""))
+				.join("\n");
 			for (let step = 0; step < this.maxSteps; step++) {
 				const reply = await brain.chat(
 					instructions,
@@ -601,17 +666,22 @@ export class Assistant {
 					specs,
 					signal,
 				);
+				const models = reply.toolCalls.some((c) => c.name === "generate")
+					? await reel.models()
+					: [];
 				const said: ChatMessage = {
 					role: "assistant",
 					text: reply.text,
-					toolCalls: reply.toolCalls,
+					toolCalls: reply.toolCalls.map((call) =>
+						keptModels(call, words, models),
+					),
 				};
 				messages.push(said);
 				await this.add(ctx, sessionId, { message: said });
-				if (reply.toolCalls.length === 0) return;
+				if (said.toolCalls.length === 0) return;
 
 				let asked = false;
-				for (const call of reply.toolCalls) {
+				for (const call of said.toolCalls) {
 					if (signal.aborted) break;
 					const cost = await this.paidCost(reel, call, guard);
 					if (signal.aborted) break;

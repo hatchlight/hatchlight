@@ -142,9 +142,9 @@ export function JobCard(props: {
 									className={`breathe size-2 shrink-0 rounded-full ${job.status === "queued" ? "bg-dim" : "bg-accent shadow-[0_0_10px_var(--accent)]"}`}
 								/>
 								<span className="truncate">
-									{job.status === "queued"
-										? t("job.waiting")
-										: describeProgress(i18n, progress)}
+									{job.status === "running" || progress?.stage === "queued"
+										? describeProgress(i18n, progress)
+										: t("job.waiting")}
 								</span>
 							</p>
 							<button

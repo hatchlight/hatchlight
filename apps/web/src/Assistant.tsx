@@ -246,7 +246,12 @@ export function Assistant({ sessionId, addReference }: Props) {
 			turn,
 		]),
 	);
-	const working = view.data?.turnId ? turns.get(view.data.turnId) : undefined;
+	// A turn already shown with the call that made it is not shown twice.
+	const working =
+		view.data?.turnId &&
+		!entries.some((entry) => entry.turnId === view.data?.turnId)
+			? turns.get(view.data.turnId)
+			: undefined;
 	const thinking = busy && !working;
 	const nothing = brain.data && brain.data.brain == null;
 	const submit = () => {

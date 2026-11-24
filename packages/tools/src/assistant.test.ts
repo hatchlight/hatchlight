@@ -18,6 +18,8 @@ import {
 	type AssistantStore,
 	conversation,
 	fit,
+	keptModels,
+	namesModel,
 	toolSpec,
 } from "./assistant";
 import type { Reel, SessionDetail } from "./reel";
@@ -402,6 +404,83 @@ describe("the assistant", () => {
 		const view = await assistant.view(ctx, sessionId);
 		expect(view.entries.at(-1)?.note).toBe("tooManySteps");
 		expect(brain.seen).toHaveLength(3);
+	});
+});
+
+describe("models nobody asked for", () => {
+	const schnell = {
+		...local,
+		id: "local/flux-schnell",
+		name: "FLUX.1 schnell",
+	} as ModelSpec;
+	const klein = {
+		...local,
+		id: "local/flux-2-klein-4b",
+		name: "FLUX.2 klein 4B",
+	} as ModelSpec;
+	const turbo = {
+		...local,
+		id: "local/sdxl-turbo",
+		name: "SDXL Turbo",
+	} as ModelSpec;
+	const zTurbo = {
+		...local,
+		id: "local/z-image-turbo",
+		name: "Z-Image Turbo",
+	} as ModelSpec;
+	const all = [schnell, klein, turbo, zTurbo];
+	const generate = (models: string[]) => ({
+		id: "c1",
+		name: "generate",
+		arguments: { prompt: "a dog", models },
+	});
+
+	test("a model is named by its id, its name or a word of its own", () => {
+		expect(namesModel("faz com o flux-schnell", schnell)).toBe(true);
+		expect(namesModel("use o Z-Image Turbo", zTurbo)).toBe(true);
+		expect(namesModel("quero no klein", klein)).toBe(true);
+		expect(namesModel("um cachorro turbo", turbo)).toBe(false);
+		expect(namesModel("um cachorro com um cavalo", schnell)).toBe(false);
+	});
+
+	test("are left out, so the best free one is used", () => {
+		const kept = keptModels(
+			generate(all.map((m) => m.id)),
+			"me faz uma foto de cachorro com um cavalo",
+			all,
+		);
+		expect(kept.arguments).toEqual({ prompt: "a dog" });
+	});
+
+	test("the ones the person named stay", () => {
+		const kept = keptModels(
+			generate([schnell.id, klein.id, turbo.id]),
+			"um cachorro, com o flux",
+			all,
+		);
+		expect(kept.arguments.models).toEqual([schnell.id, klein.id]);
+	});
+
+	test("all stay when the person asked to compare", () => {
+		const ids = [schnell.id, turbo.id];
+		expect(
+			keptModels(generate(ids), "compara uns modelos", all).arguments.models,
+		).toEqual(ids);
+	});
+
+	test("in a conversation, only what was asked is made", async () => {
+		const brain = scripted(
+			call("generate", { prompt: "a fox", models: ["local/z", "fal/x"] }),
+			{ text: "Here.", toolCalls: [] },
+		);
+		const { assistant, inputs, idle } = setup(brain);
+		const { sessionId } = await assistant.send(ctx, { text: "uma raposa" });
+		await idle(sessionId);
+		// Nothing to pay for was asked, and one free model made it.
+		expect(inputs).toHaveLength(1);
+		expect(inputs[0]?.modelIds).toEqual(["local/z"]);
+		const view = await assistant.view(ctx, sessionId);
+		expect(view.entries.some((e) => e.confirm)).toBe(false);
 	});
 });
 

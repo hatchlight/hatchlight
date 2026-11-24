@@ -142,7 +142,12 @@ export function useLiveJobs(): void {
 		source.addEventListener("job.updated", (message) => {
 			const event = JSON.parse(message.data) as EngineEvent;
 			if (event.type !== "job.updated") return;
-			if (event.job.status !== "running") progress.delete(event.job.id);
+			// A job that starts leaves its place in the line behind.
+			if (
+				event.job.status !== "running" ||
+				progress.get(event.job.id)?.stage === "queued"
+			)
+				progress.delete(event.job.id);
 			order = order.then(() => applyJob(client, event.job));
 			notify();
 		});

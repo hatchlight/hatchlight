@@ -40,6 +40,15 @@ function estimateCost(
 	return usdPerOutput == null ? null : usdPerOutput * outputs;
 }
 
+/** What the engine needs of a job to queue it. */
+type Queued = Pick<Job, "id" | "userId" | "providerId" | "modelId">;
+
+/** A job waiting in a line, and whom to tell where it stands. */
+interface Waiting {
+	id: string;
+	userId: string;
+}
+
 export type EngineListener = (userId: string, event: EngineEvent) => void;
 
 export interface JobEngineDeps {
@@ -113,8 +122,8 @@ export class JobEngine {
 		string,
 		{ userId: string; data: Uint8Array; mime: string; version: number }
 	>();
-	/** Jobs waiting and running, by line: a provider, or a line of one. */
-	private waiting = new Map<string, string[]>();
+	/** Jobs waiting to run, by line: a provider, or a line of one. */
+	private waiting = new Map<string, Waiting[]>();
 	private active = new Map<string, number>();
 	/** Jobs queued or running here, so that none is ever run twice at once. */
 	private owned = new Set<string>();
@@ -162,21 +171,38 @@ export class JobEngine {
 		}
 	}
 
-	enqueue(job: Pick<Job, "id" | "providerId" | "modelId">): void {
+	enqueue(job: Queued): void {
 		if (this.owned.has(job.id)) return;
 		this.owned.add(job.id);
 		this.schedule(job);
 	}
 
-	private schedule(job: Pick<Job, "id" | "providerId" | "modelId">): void {
+	private schedule(job: Queued): void {
 		const adapter = this.deps.registry.adapter(job.providerId);
 		const line = adapter?.lineOf
 			? `${job.providerId}#${adapter.lineOf(job.modelId)}`
 			: job.providerId;
 		const queue = this.waiting.get(line) ?? [];
-		queue.push(job.id);
+		queue.push({ id: job.id, userId: job.userId });
 		this.waiting.set(line, queue);
 		this.pump(line, job.providerId);
+		this.tellPlaces(line);
+	}
+
+	/**
+	 * Tells each job still waiting in a line how many are before it, so a
+	 * person sees why theirs has not started.
+	 */
+	private tellPlaces(line: string): void {
+		const queue = this.waiting.get(line) ?? [];
+		queue.forEach((job, index) => {
+			this.emit(job.userId, {
+				type: "job.progress",
+				jobId: job.id,
+				stage: "queued",
+				position: index + 1,
+			});
+		});
 	}
 
 	/** The latest picture of a running job, if it shows one, for its owner. */
@@ -196,12 +222,13 @@ export class JobEngine {
 			controller.abort();
 			return;
 		}
-		for (const queue of this.waiting.values()) {
-			const index = queue.indexOf(jobId);
+		for (const [line, queue] of this.waiting) {
+			const index = queue.findIndex((job) => job.id === jobId);
 			if (index === -1) continue;
 			queue.splice(index, 1);
 			this.owned.delete(jobId);
 			await this.update(jobId, { status: "canceled", finishedAt: Date.now() });
+			this.tellPlaces(line);
 			return;
 		}
 	}
@@ -245,13 +272,16 @@ export class JobEngine {
 		while (this.inflight.size > 0) await Promise.all(this.inflight);
 	}
 
-	private pump(line: string, providerId: string): void {
+	/** Starts what the line has room for; says whether any job started. */
+	private pump(line: string, providerId: string): boolean {
 		const queue = this.waiting.get(line) ?? [];
 		const adapter = this.deps.registry.adapter(providerId);
 		const limit = Math.min(this.limit, adapter?.maxConcurrency ?? this.limit);
+		let moved = false;
 		while ((this.active.get(line) ?? 0) < limit) {
-			const jobId = queue.shift();
-			if (!jobId) return;
+			const jobId = queue.shift()?.id;
+			if (!jobId) break;
+			moved = true;
 			this.active.set(line, (this.active.get(line) ?? 0) + 1);
 			const run = this.run(jobId)
 				// run() records its own failures; this only catches a failure to record
@@ -263,10 +293,11 @@ export class JobEngine {
 					this.owned.delete(jobId);
 					this.inflight.delete(run);
 					this.active.set(line, (this.active.get(line) ?? 1) - 1);
-					this.pump(line, providerId);
+					if (this.pump(line, providerId)) this.tellPlaces(line);
 				});
 			this.inflight.add(run);
 		}
+		return moved;
 	}
 
 	private async run(jobId: string): Promise<void> {
