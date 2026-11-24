@@ -1,4 +1,24 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { FlipHorizontal2Icon, RotateCcwIcon, RotateCwIcon } from "lucide-react";
+import {
+	useEffect,
+	useId,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
+import { Toggle } from "@/components/ui/toggle";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useI18n } from "./i18n";
 
 interface Props {
@@ -35,6 +55,10 @@ const MAX_WORK_SIDE = 4096;
 /** The smallest crop, as a fraction of the picture. */
 const MIN_FRACTION = 0.05;
 
+/** A choice that stays lit while it holds, among the tools. */
+const CHOICE =
+	"h-10 rounded-xl px-3.5 aria-pressed:border-transparent aria-pressed:bg-ink aria-pressed:text-bg";
+
 const FULL: Box = { x: 0, y: 0, w: 1, h: 1 };
 
 /** The largest box of `ratio` (width / height, in pixels) centred in the picture. */
@@ -55,7 +79,8 @@ const clamp = (value: number, min: number, max: number) =>
 /** Turns, flips and crops pictures before they are used, in the browser. */
 export function Adjust({ src, onDone, onClose }: Props) {
 	const { t, explain, number } = useI18n();
-	const dialog = useRef<HTMLDialogElement>(null);
+	const sizeLabel = useId();
+	const cropLabel = useId();
 	const frame = useRef<HTMLDivElement>(null);
 	const [image, setImage] = useState<HTMLImageElement | null>(null);
 	const [turns, setTurns] = useState(0);
@@ -72,7 +97,6 @@ export function Adjust({ src, onDone, onClose }: Props) {
 	} | null>(null);
 
 	useEffect(() => {
-		dialog.current?.showModal();
 		const loaded = new Image();
 		loaded.onload = () => setImage(loaded);
 		loaded.src = src;
@@ -305,8 +329,6 @@ export function Adjust({ src, onDone, onClose }: Props) {
 		}
 	};
 
-	const button =
-		"rounded-md px-3 py-1.5 text-sm text-dim hover:bg-line hover:text-ink disabled:opacity-40";
 	const corner = "absolute size-4 rounded-sm border-2 border-white bg-black/40";
 	const shapeText = (which: Shape) =>
 		which === "free"
@@ -314,20 +336,25 @@ export function Adjust({ src, onDone, onClose }: Props) {
 			: which === "original"
 				? t("adjust.original")
 				: which;
+	const sideText = (value: number) =>
+		value === 0
+			? t("adjust.sizeAsIs")
+			: t("adjust.sizeLongest", { size: number(value) });
 
 	return (
-		<dialog
-			ref={dialog}
-			onClose={onClose}
+		<Dialog
+			open
 			// While the picture is sent, closing would leave it half used.
-			onCancel={(event) => saving && event.preventDefault()}
-			aria-labelledby="adjust-title"
-			className="m-auto max-h-[96vh] max-w-[96vw] rounded-lg border border-line bg-panel p-0 text-ink"
+			onOpenChange={(open) => !open && !saving && onClose()}
+			disablePointerDismissal
 		>
-			<div className="flex flex-col gap-3 p-4">
-				<h2 id="adjust-title" className="font-display text-xl font-bold">
+			<DialogContent
+				showCloseButton={false}
+				className="flex max-h-[96dvh] w-full max-w-[calc(100%-2rem)] sm:w-fit flex-col gap-4 overflow-y-auto rounded-2xl bg-panel p-5 ring-line sm:max-w-[calc(100%-2rem)] sm:p-6"
+			>
+				<DialogTitle className="font-display text-2xl font-bold tracking-tight">
 					{t("adjust.title")}
-				</h2>
+				</DialogTitle>
 				<div
 					ref={frame}
 					onPointerMove={onPointerMove}
@@ -337,7 +364,7 @@ export function Adjust({ src, onDone, onClose }: Props) {
 					onPointerCancel={() => {
 						drag.current = null;
 					}}
-					className="relative mx-auto w-fit touch-none select-none overflow-hidden"
+					className="relative mx-auto w-fit touch-none select-none overflow-hidden rounded-xl"
 				>
 					<canvas
 						ref={preview}
@@ -351,7 +378,7 @@ export function Adjust({ src, onDone, onClose }: Props) {
 							aria-label={t("adjust.cropArea")}
 							onKeyDown={onKey}
 							onPointerDown={(event) => onPointerDown(event, "move")}
-							className="absolute cursor-move border border-white/90 shadow-[0_0_0_9999px_rgb(0_0_0/0.55)] focus-visible:outline-2 focus-visible:outline-accent"
+							className="absolute cursor-move border border-white/90 shadow-[0_0_0_9999px_rgb(0_0_0/0.55)] focus-visible:outline-2 focus-visible:outline-pink"
 							style={{
 								left: `${box.x * 100}%`,
 								top: `${box.y * 100}%`,
@@ -372,57 +399,78 @@ export function Adjust({ src, onDone, onClose }: Props) {
 						</button>
 					)}
 				</div>
-				<div className="flex flex-wrap items-center gap-1">
-					<button type="button" onClick={() => turn(-1)} className={button}>
-						↺ {t("adjust.rotateLeft")}
-					</button>
-					<button type="button" onClick={() => turn(1)} className={button}>
-						↻ {t("adjust.rotateRight")}
-					</button>
-					<button
-						type="button"
-						aria-pressed={flipped}
-						onClick={() => setFlipped(!flipped)}
-						className={`${button} aria-pressed:bg-line aria-pressed:text-ink`}
+				<div className="flex flex-wrap items-center gap-2">
+					<Button variant="outline" onClick={() => turn(-1)}>
+						<RotateCcwIcon aria-hidden="true" />
+						{t("adjust.rotateLeft")}
+					</Button>
+					<Button variant="outline" onClick={() => turn(1)}>
+						<RotateCwIcon aria-hidden="true" />
+						{t("adjust.rotateRight")}
+					</Button>
+					<Toggle
+						variant="outline"
+						pressed={flipped}
+						onPressedChange={setFlipped}
+						className={CHOICE}
 					>
-						⇋ {t("adjust.flip")}
-					</button>
-					<span className="mx-2 h-5 w-px bg-line" aria-hidden="true" />
-					<fieldset className="flex flex-wrap items-center gap-1">
-						<legend className="sr-only">{t("adjust.crop")}</legend>
-						<span className="mr-1 text-sm text-dim" aria-hidden="true">
-							{t("adjust.crop")}
-						</span>
+						<FlipHorizontal2Icon aria-hidden="true" />
+						{t("adjust.flip")}
+					</Toggle>
+				</div>
+				<div className="flex flex-wrap items-center gap-2">
+					<span id={cropLabel} className="mr-1 text-sm text-dim">
+						{t("adjust.crop")}
+					</span>
+					<ToggleGroup
+						aria-labelledby={cropLabel}
+						value={[shape]}
+						onValueChange={([which]) => {
+							const next = SHAPES.find((s) => s === which);
+							if (next) reshape(next);
+						}}
+						className="flex-wrap"
+					>
 						{SHAPES.map((which) => (
-							<button
+							<ToggleGroupItem
 								key={which}
-								type="button"
-								aria-pressed={shape === which}
-								onClick={() => reshape(which)}
-								className={`${button} aria-pressed:bg-line aria-pressed:text-ink`}
+								value={which}
+								variant="outline"
+								className={CHOICE}
 							>
 								{shapeText(which)}
-							</button>
+							</ToggleGroupItem>
 						))}
-					</fieldset>
+					</ToggleGroup>
 				</div>
 				<div className="flex flex-wrap items-center gap-3">
-					<label className="flex items-center gap-2 text-sm text-dim">
-						{t("adjust.size")}
-						<select
+					<div className="flex items-center gap-2">
+						<Label id={sizeLabel} className="font-normal text-dim">
+							{t("adjust.size")}
+						</Label>
+						<Select
 							value={side}
-							onChange={(event) => setSide(Number(event.target.value))}
-							className="rounded-md border border-line bg-bg px-2 py-1.5 text-sm"
+							onValueChange={(value) => value != null && setSide(value)}
+							items={SIDES.map((value) => ({
+								value,
+								label: sideText(value),
+							}))}
 						>
-							{SIDES.map((value) => (
-								<option key={value} value={value}>
-									{value === 0
-										? t("adjust.sizeAsIs")
-										: t("adjust.sizeLongest", { size: number(value) })}
-								</option>
-							))}
-						</select>
-					</label>
+							<SelectTrigger
+								aria-labelledby={sizeLabel}
+								className="data-[size=default]:h-10 rounded-xl"
+							>
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								{SIDES.map((value) => (
+									<SelectItem key={value} value={value}>
+										{sideText(value)}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+					</div>
 					{result && (
 						<span className="font-mono text-xs text-dim">
 							{t("adjust.result", {
@@ -431,29 +479,27 @@ export function Adjust({ src, onDone, onClose }: Props) {
 							})}
 						</span>
 					)}
-					<button type="button" onClick={reset} className={button}>
+					<Button variant="ghost" onClick={reset} className="text-dim">
 						{t("adjust.reset")}
-					</button>
-					<span className="ml-auto text-sm text-danger" role="alert">
+					</Button>
+				</div>
+				<div className="flex flex-wrap items-center justify-end gap-2 border-t border-line pt-4">
+					<span className="mr-auto text-sm text-danger" role="alert">
 						{error}
 					</span>
-					<button
-						type="button"
-						onClick={onClose}
-						className="rounded-md px-4 py-2 text-sm text-dim hover:text-ink"
-					>
+					<Button variant="ghost" onClick={onClose} disabled={saving}>
 						{t("common.cancel")}
-					</button>
-					<button
-						type="button"
+					</Button>
+					<Button
+						variant="aurora"
+						size="lg"
 						onClick={done}
 						disabled={!turned || saving}
-						className="cta rounded-lg px-5 py-2 font-display font-bold"
 					>
 						{saving ? t("mask.saving") : t("adjust.done")}
-					</button>
+					</Button>
 				</div>
-			</div>
-		</dialog>
+			</DialogContent>
+		</Dialog>
 	);
 }

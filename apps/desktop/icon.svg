@@ -8,12 +8,8 @@
 		</linearGradient>
 	</defs>
 	<rect width="1024" height="1024" rx="224" fill="#09090b"/>
-	<circle cx="512" cy="512" r="330" fill="none" stroke="url(#aurora)" stroke-width="88"/>
-	<circle cx="512" cy="512" r="104" fill="url(#aurora)"/>
-	<g fill="#09090b">
-		<circle cx="512" cy="182" r="40"/>
-		<circle cx="512" cy="842" r="40"/>
-		<circle cx="182" cy="512" r="40"/>
-		<circle cx="842" cy="512" r="40"/>
+	<g transform="translate(92 84.5) scale(15)">
+		<path d="M28 10 C 40 10, 44 24, 44 32 C 44 42, 37 47, 28 47 C 19 47, 12 42, 12 32 C 12 24, 16 10, 28 10 Z" fill="url(#aurora)"/>
+		<path d="M14 30 L 21 25 L 27 31 L 34 24 L 42 30" fill="none" stroke="#09090b" stroke-width="3" stroke-linejoin="round"/>
 	</g>
 </svg>

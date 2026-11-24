@@ -1,4 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { BrushIcon, EraserIcon } from "lucide-react";
+import { useId, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogTitle,
+} from "@/components/ui/dialog";
+import { Slider } from "@/components/ui/slider";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useI18n } from "./i18n";
 
 interface Props {
@@ -22,6 +32,10 @@ const PAINT = "rgb(255 61 139)";
  * a canvas the size of a phone photo costs hundreds of megabytes.
  */
 const MAX_SIDE = 2048;
+
+/** A choice that stays lit while it holds, among the tools. */
+const CHOICE =
+	"h-10 rounded-xl px-3.5 aria-pressed:border-transparent aria-pressed:bg-ink aria-pressed:text-bg";
 
 /** Whether anything is painted on the layer. */
 function hasPaint(layer: HTMLCanvasElement): boolean {
@@ -59,7 +73,7 @@ function toMask(layer: HTMLCanvasElement): Promise<Blob | null> {
 export function MaskPainter({ src, mask, onDone, onClose }: Props) {
 	const { t, explain } = useI18n();
 	const [error, setError] = useState<string | null>(null);
-	const dialog = useRef<HTMLDialogElement>(null);
+	const sizeLabel = useId();
 	const layer = useRef<HTMLCanvasElement>(null);
 	const [size, setSize] = useState(48);
 	const [erasing, setErasing] = useState(false);
@@ -69,10 +83,6 @@ export function MaskPainter({ src, mask, onDone, onClose }: Props) {
 	const [saving, setSaving] = useState(false);
 	const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
 	const last = useRef<{ x: number; y: number } | null>(null);
-
-	useEffect(() => {
-		dialog.current?.showModal();
-	}, []);
 
 	/** Sizes the layer to the picture, and redraws an earlier mask on it. */
 	const prepare = (image: HTMLImageElement) => {
@@ -161,31 +171,30 @@ export function MaskPainter({ src, mask, onDone, onClose }: Props) {
 		}
 	};
 
-	const tool = (active: boolean) =>
-		`rounded-md px-3 py-1.5 text-sm ${
-			active ? "bg-line text-ink" : "text-dim hover:text-ink"
-		}`;
-
 	return (
-		<dialog
-			ref={dialog}
-			onClose={onClose}
-			aria-labelledby="mask-title"
-			className="m-auto max-h-[96vh] max-w-[96vw] rounded-lg border border-line bg-panel p-0 text-ink"
+		<Dialog
+			open
+			onOpenChange={(open) => !open && !saving && onClose()}
+			disablePointerDismissal
 		>
-			<div className="flex flex-col gap-3 p-4">
-				<div>
-					<h2 id="mask-title" className="font-display text-xl font-bold">
+			<DialogContent
+				showCloseButton={false}
+				className="flex max-h-[96dvh] w-full max-w-[calc(100%-2rem)] sm:w-fit flex-col gap-4 overflow-y-auto rounded-2xl bg-panel p-5 ring-line sm:max-w-[calc(100%-2rem)] sm:p-6"
+			>
+				<div className="flex flex-col gap-1">
+					<DialogTitle className="font-display text-2xl font-bold tracking-tight">
 						{t("mask.title")}
-					</h2>
-					<p className="mt-1 text-sm text-dim">{t("mask.hint")}</p>
+					</DialogTitle>
+					<DialogDescription className="text-dim">
+						{t("mask.hint")}
+					</DialogDescription>
 				</div>
-				<div className="relative mx-auto w-fit overflow-hidden rounded-md">
+				<div className="relative mx-auto w-fit overflow-hidden rounded-xl">
 					<img
 						src={src}
 						alt=""
 						onLoad={(event) => prepare(event.currentTarget)}
-						className="block max-h-[66vh] max-w-full select-none"
+						className="block max-h-[62vh] max-w-full select-none"
 						draggable={false}
 					/>
 					<canvas
@@ -220,66 +229,64 @@ export function MaskPainter({ src, mask, onDone, onClose }: Props) {
 						/>
 					)}
 				</div>
-				<div className="flex flex-wrap items-center gap-2">
-					<fieldset className="flex gap-1">
-						<button
-							type="button"
-							aria-pressed={!erasing}
-							onClick={() => setErasing(false)}
-							className={tool(!erasing)}
-						>
+				<div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+					<ToggleGroup
+						aria-label={t("mask.tool")}
+						value={[erasing ? "erase" : "brush"]}
+						onValueChange={([which]) => which && setErasing(which === "erase")}
+					>
+						<ToggleGroupItem value="brush" variant="outline" className={CHOICE}>
+							<BrushIcon aria-hidden="true" />
 							{t("mask.brush")}
-						</button>
-						<button
-							type="button"
-							aria-pressed={erasing}
-							onClick={() => setErasing(true)}
-							className={tool(erasing)}
-						>
+						</ToggleGroupItem>
+						<ToggleGroupItem value="erase" variant="outline" className={CHOICE}>
+							<EraserIcon aria-hidden="true" />
 							{t("mask.erase")}
-						</button>
-					</fieldset>
-					<label className="flex items-center gap-2 text-sm text-dim">
-						{t("mask.size")}
-						<input
-							type="range"
-							min={8}
-							max={160}
-							value={size}
-							onChange={(event) => setSize(Number(event.target.value))}
-							className="w-28 accent-accent"
-						/>
-					</label>
-					<button
-						type="button"
+						</ToggleGroupItem>
+					</ToggleGroup>
+					<div className="flex h-10 items-center gap-3">
+						<span id={sizeLabel} className="text-sm text-dim">
+							{t("mask.size")}
+						</span>
+						<div className="w-32">
+							<Slider
+								aria-labelledby={sizeLabel}
+								min={8}
+								max={160}
+								value={[size]}
+								onValueChange={(value) => {
+									const next = Array.isArray(value) ? value[0] : value;
+									if (next != null) setSize(next);
+								}}
+							/>
+						</div>
+					</div>
+					<Button
+						variant="ghost"
 						onClick={clear}
 						disabled={!painted}
-						className="rounded-md px-3 py-1.5 text-sm text-dim hover:text-ink disabled:opacity-40"
+						className="text-dim"
 					>
 						{t("mask.clear")}
-					</button>
-					<span className="ml-auto text-sm text-danger" role="alert">
+					</Button>
+				</div>
+				<div className="flex flex-wrap items-center justify-end gap-2 border-t border-line pt-4">
+					<span className="mr-auto text-sm text-danger" role="alert">
 						{error}
 					</span>
-					<div className="flex gap-2">
-						<button
-							type="button"
-							onClick={onClose}
-							className="rounded-md px-4 py-2 text-sm text-dim hover:text-ink"
-						>
-							{t("common.cancel")}
-						</button>
-						<button
-							type="button"
-							onClick={done}
-							disabled={!ready || !painted || saving}
-							className="cta rounded-lg px-5 py-2 font-display font-bold"
-						>
-							{saving ? t("mask.saving") : t("mask.done")}
-						</button>
-					</div>
+					<Button variant="ghost" onClick={onClose} disabled={saving}>
+						{t("common.cancel")}
+					</Button>
+					<Button
+						variant="aurora"
+						size="lg"
+						onClick={done}
+						disabled={!ready || !painted || saving}
+					>
+						{saving ? t("mask.saving") : t("mask.done")}
+					</Button>
 				</div>
-			</div>
-		</dialog>
+			</DialogContent>
+		</Dialog>
 	);
 }

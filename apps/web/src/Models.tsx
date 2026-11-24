@@ -7,7 +7,26 @@ import type {
 	LocalModelTask,
 } from "@hatchlight/core/types";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { CheckIcon, ChevronDownIcon, SparklesIcon } from "lucide-react";
+import { useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+	Collapsible,
+	CollapsibleContent,
+	CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
+	Dialog,
+	DialogClose,
+	DialogContent,
+	DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Toggle } from "@/components/ui/toggle";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { cn } from "@/lib/utils";
 import { useCan } from "./Accounts";
 import { api, demoUrl, useServerMode } from "./api";
 import { CheckpointShelf } from "./Checkpoints";
@@ -24,43 +43,63 @@ import {
 	recommendedLocal,
 	sortLocal,
 } from "./recommend";
+import { Bar, ConfirmButton, LABEL, SECTION } from "./Training";
+
+/** The top of a page: what it is about, its name and a few words on it. */
+export function PageHeader({
+	eyebrow,
+	title,
+	intro,
+}: {
+	eyebrow: string;
+	title: string;
+	intro: string;
+}) {
+	return (
+		<header className="flex flex-col gap-3">
+			<p className={LABEL}>{eyebrow}</p>
+			<h1 className="font-display text-4xl leading-none font-extrabold tracking-tight sm:text-5xl">
+				{title}
+			</h1>
+			<p className="max-w-2xl text-[15px] leading-relaxed text-dim">{intro}</p>
+		</header>
+	);
+}
 
 type Demo = LocalModelStatus["demos"][number] & { src: string; large: string };
 
 function DemoViewer({ demo, onClose }: { demo: Demo; onClose(): void }) {
 	const { t } = useI18n();
-	const ref = useRef<HTMLDialogElement>(null);
 	// If the large picture fails, the card's one is better than nothing.
 	const [src, setSrc] = useState(demo.large);
-	useEffect(() => {
-		ref.current?.showModal();
-	}, []);
 	return (
-		// biome-ignore lint/a11y/useKeyWithClickEvents: clicking the backdrop closes; Esc already does so natively
-		<dialog
-			ref={ref}
-			onClose={onClose}
-			onClick={(event) => event.target === ref.current && onClose()}
-			className="m-auto max-h-[94vh] max-w-[96vw] rounded-lg border border-line bg-panel p-0 text-ink"
-		>
-			<img
-				src={src}
-				alt={demo.caption ?? t("models.demo.sample")}
-				decoding="async"
-				onError={() => setSrc(demo.src)}
-				className="max-h-[86vh] max-w-full object-contain"
-			/>
-			<div className="flex items-center justify-between gap-4 p-3 text-sm">
-				<span className="text-dim">{demo.caption}</span>
-				<button
-					type="button"
-					onClick={onClose}
-					className="rounded-md px-3 py-1 text-dim hover:text-ink"
-				>
-					{t("common.close")}
-				</button>
-			</div>
-		</dialog>
+		<Dialog open onOpenChange={(open) => !open && onClose()}>
+			<DialogContent
+				showCloseButton={false}
+				className="w-auto max-w-[96vw] gap-0 overflow-hidden rounded-2xl p-0 sm:max-w-[96vw]"
+			>
+				<img
+					src={src}
+					alt={demo.caption ?? t("models.demo.sample")}
+					decoding="async"
+					onError={() => setSrc(demo.src)}
+					className="max-h-[84vh] max-w-full bg-black object-contain"
+				/>
+				<div className="flex items-center justify-between gap-4 p-3 pl-4">
+					<DialogTitle
+						className={cn(
+							"text-sm font-normal text-dim",
+							!demo.caption && "sr-only",
+						)}
+					>
+						{demo.caption ?? t("models.demo.sample")}
+					</DialogTitle>
+					<DialogClose render={<Button variant="outline" />}>
+						{t("common.close")}
+					</DialogClose>
+				</div>
+			</DialogContent>
+		</Dialog>
 	);
 }
 
@@ -87,7 +126,7 @@ function Demos({ model }: { model: LocalModelStatus }) {
 	}
 	return (
 		<div>
-			<div className="relative aspect-video overflow-hidden bg-black">
+			<div className="aspect-video overflow-hidden bg-black">
 				{failed.includes(index) ? (
 					<div className="flex h-full items-center justify-center px-6 text-center text-sm text-dim">
 						{t("models.demo.failed")}
@@ -110,7 +149,7 @@ function Demos({ model }: { model: LocalModelStatus }) {
 						aria-label={t("models.demo.enlarge", {
 							caption: demo.caption ?? t("models.demo.sampleShort"),
 						})}
-						className={`block h-full w-full cursor-zoom-in ${
+						className={`block h-full w-full cursor-zoom-in outline-none focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-inset ${
 							loaded.includes(index) ? "" : "developing"
 						}`}
 					>
@@ -129,33 +168,34 @@ function Demos({ model }: { model: LocalModelStatus }) {
 						/>
 					</button>
 				)}
-				{demos.length > 1 && (
-					<div className="absolute right-2 bottom-2 flex gap-1">
-						{demos.map((other, i) => (
-							<button
-								key={other.src}
-								type="button"
-								onClick={() => setIndex(i)}
-								aria-label={t("models.demo.position", {
-									index: i + 1,
-									total: demos.length,
-								})}
-								aria-pressed={i === index}
-								className={`h-6 min-w-6 rounded bg-black/70 px-1.5 font-mono text-xs ${
-									i === index ? "text-white" : "text-white/50 hover:text-white"
-								}`}
-							>
-								{i + 1}
-							</button>
-						))}
-					</div>
-				)}
 			</div>
-			{demo.caption && (
-				<p className="px-4 pt-2 text-xs text-dim">
-					{demo.media === "video" && `${t("models.demo.video")} · `}
-					{demo.caption}
-				</p>
+			{(demo.caption || demos.length > 1) && (
+				<div className="flex items-start justify-between gap-3 px-5 pt-3">
+					<p className="pt-2.5 text-xs leading-relaxed text-dim">
+						{demo.media === "video" && `${t("models.demo.video")} · `}
+						{demo.caption}
+					</p>
+					{demos.length > 1 && (
+						<div className="flex shrink-0 gap-1">
+							{demos.map((other, i) => (
+								<Button
+									key={other.src}
+									variant="ghost"
+									size="icon"
+									onClick={() => setIndex(i)}
+									aria-label={t("models.demo.position", {
+										index: i + 1,
+										total: demos.length,
+									})}
+									aria-pressed={i === index}
+									className="font-mono text-xs text-dim aria-pressed:bg-panel-2 aria-pressed:text-ink"
+								>
+									{i + 1}
+								</Button>
+							))}
+						</div>
+					)}
+				</div>
 			)}
 			{open && demo.media === "image" && (
 				<DemoViewer demo={demo} onClose={() => setOpen(false)} />
@@ -188,21 +228,12 @@ function Progress({ model }: { model: LocalModelStatus }) {
 						.filter(Boolean)
 						.join(" · ");
 	return (
-		<div>
-			<div
-				role="progressbar"
-				aria-label={t("models.progress.label", { model: model.name })}
-				aria-valuemin={0}
-				aria-valuemax={100}
-				aria-valuenow={Math.round(percent)}
-				className="h-1.5 overflow-hidden rounded-full bg-line"
-			>
-				<div
-					className="h-full rounded-full bg-accent transition-[width] duration-300"
-					style={{ width: `${percent}%` }}
-				/>
-			</div>
-			<p className="mt-2 font-mono text-xs text-dim">
+		<div className="flex flex-col gap-2">
+			<Bar
+				value={percent}
+				label={t("models.progress.label", { model: model.name })}
+			/>
+			<p className="font-mono text-xs text-dim">
 				{Math.floor(percent)}% · {detail}
 			</p>
 		</div>
@@ -291,9 +322,10 @@ function FitBadge({
 	const fit = localFit(model);
 	if (recommended) {
 		return (
-			<span className="aurora rounded-full px-2.5 py-0.5 text-xs font-semibold">
+			<Badge variant="outline" className="h-6 border-gold/40 px-2.5 text-gold">
+				<SparklesIcon aria-hidden="true" />
 				{t("models.badge.recommended")}
-			</span>
+			</Badge>
 		);
 	}
 	const text =
@@ -305,10 +337,10 @@ function FitBadge({
 					? t("models.badge.cpu")
 					: t("models.badge.none");
 	return (
-		<span className={`rounded-full px-2.5 py-0.5 text-xs ${FIT_BADGE[fit]}`}>
-			<span aria-hidden="true">● </span>
+		<Badge className={cn("h-6 px-2.5 font-normal", FIT_BADGE[fit])}>
+			<span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
 			{text}
-		</span>
+		</Badge>
 	);
 }
 
@@ -370,223 +402,239 @@ function ModelCard({
 				.join(" · ");
 
 	return (
-		<li className="flex flex-col overflow-hidden rounded-lg border border-line bg-panel">
-			<Demos model={model} />
-			<div className="flex flex-1 flex-col gap-3 p-4">
-				<div className="flex flex-wrap gap-1.5">
-					<FitBadge model={model} recommended={recommended} />
-					<span
-						className={`rounded-full border px-2.5 py-0.5 text-xs ${COMMERCIAL_STYLE[model.commercial.kind]}`}
-					>
-						{commercialText(i18n, model.commercial)}
-					</span>
-				</div>
-				<div>
-					<div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-						<h2 className="font-medium">{model.name}</h2>
-						<span
-							className={`font-mono text-xs ${installed ? "text-accent" : "text-dim"}`}
-						>
-							{installed
-								? t("models.installed")
-								: model.media === "video"
-									? t("models.media.video")
-									: t("models.media.image")}
-						</span>
-					</div>
-					<p className="mt-0.5 text-xs text-dim">
-						{model.author} ·{" "}
-						<a
-							href={model.licenseUrl}
-							target="_blank"
-							rel="noreferrer"
-							className="underline hover:text-ink"
-						>
-							{model.license}
-						</a>{" "}
-						·{" "}
-						<a
-							href={model.homepage}
-							target="_blank"
-							rel="noreferrer"
-							className="underline hover:text-ink"
-						>
-							{t("models.page")}
-						</a>
-					</p>
-				</div>
-				<p className="text-sm leading-relaxed">{summaryOf(t, model)}</p>
-				<ul
-					aria-label={t("models.task.label")}
-					className="flex flex-wrap gap-1.5"
-				>
-					{model.tasks.map((task) => (
-						<li
-							key={task}
-							className="rounded border border-line px-1.5 py-0.5 font-mono text-[11px] text-dim"
-						>
-							{taskText(t, task)}
-						</li>
-					))}
-				</ul>
-
-				{variant ? (
-					<div>
-						<p>
-							<span className="font-mono text-lg">{bytes(model.size)}</span>{" "}
-							<span className="text-sm text-dim">{note}</span>
-						</p>
-						<p className="mt-1 text-sm">
-							<span className="font-medium">{variant.label}</span>{" "}
-							<span
-								className={variant.fit === "gpu" ? "text-dim" : "text-danger"}
-							>
-								· {fitText(t, variant.fit)}
-							</span>
-						</p>
-						<details className="mt-1 text-xs text-dim">
-							<summary className="cursor-pointer hover:text-ink">
-								{t("models.files", { count: variant.files.length })}
-								{model.variants.length > 1 &&
-									` · ${t("models.versions", { count: model.variants.length })}`}
-							</summary>
-							<ul className="mt-2 flex flex-col gap-1 font-mono">
-								{variant.files.map((file) => (
-									<li key={file.name} className="flex justify-between gap-4">
-										<span className="min-w-0 truncate" title={file.name}>
-											{file.name}
-										</span>
-										<span className="shrink-0">
-											{bytes(file.size)}
-											{file.present && ` · ${t("models.onDisk")}`}
-										</span>
-									</li>
-								))}
-							</ul>
-							{model.variants.length > 1 && (
-								<ul className="mt-3 flex flex-col gap-2">
-									{model.variants.map((other) => (
-										<li
-											key={other.id}
-											className="flex flex-wrap items-center justify-between gap-2"
-										>
-											<span>
-												<span className="text-ink">{other.label}</span> ·{" "}
-												{bytes(other.size)} · {fitText(t, other.fit)}
-												{other.id === model.variant &&
-													` · ${installed ? t("models.variantInstalled") : t("models.recommended")}`}
-											</span>
-											{can.admin &&
-												!installed &&
-												!active &&
-												others.includes(other) && (
-													<button
-														type="button"
-														onClick={() => install.mutate(other.id)}
-														disabled={install.isPending}
-														className="rounded border border-line px-2 py-0.5 hover:border-dim hover:text-ink"
-													>
-														{t("models.installVersion")}
-													</button>
-												)}
-										</li>
-									))}
-								</ul>
+		<li className="flex">
+			<Card className="w-full gap-0 rounded-2xl py-0 ring-line">
+				<Demos model={model} />
+				<div className="flex flex-1 flex-col gap-4 p-5">
+					<div className="flex flex-wrap gap-1.5">
+						<FitBadge model={model} recommended={recommended} />
+						<Badge
+							variant="outline"
+							className={cn(
+								"h-6 px-2.5 font-normal",
+								COMMERCIAL_STYLE[model.commercial.kind],
 							)}
-						</details>
+						>
+							{commercialText(i18n, model.commercial)}
+						</Badge>
 					</div>
-				) : (
-					<p className="text-sm text-danger">{t("models.noVersion")}</p>
-				)}
+					<div>
+						<div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+							<h3 className="font-display text-xl font-bold tracking-tight">
+								{model.name}
+							</h3>
+							<span
+								className={`font-mono text-xs ${installed ? "text-good" : "text-dim"}`}
+							>
+								{installed
+									? t("models.installed")
+									: model.media === "video"
+										? t("models.media.video")
+										: t("models.media.image")}
+							</span>
+						</div>
+						<p className="mt-1 text-xs text-dim">
+							{model.author} ·{" "}
+							<a
+								href={model.licenseUrl}
+								target="_blank"
+								rel="noreferrer"
+								className="underline underline-offset-2 hover:text-ink"
+							>
+								{model.license}
+							</a>{" "}
+							·{" "}
+							<a
+								href={model.homepage}
+								target="_blank"
+								rel="noreferrer"
+								className="underline underline-offset-2 hover:text-ink"
+							>
+								{t("models.page")}
+							</a>
+						</p>
+					</div>
+					<p className="text-sm leading-relaxed text-soft">
+						{summaryOf(t, model)}
+					</p>
+					<ul
+						aria-label={t("models.task.label")}
+						className="flex flex-wrap gap-1.5"
+					>
+						{model.tasks.map((task) => (
+							<li
+								key={task}
+								className="rounded-md bg-panel-2 px-2 py-0.5 font-mono text-[11px] text-dim"
+							>
+								{taskText(t, task)}
+							</li>
+						))}
+					</ul>
 
-				{installed && !model.ready && !active && (
-					<p className="text-sm text-danger">{t("models.engineMissing")}</p>
-				)}
-				{active && <Progress model={model} />}
-				{model.error && !active && (
-					<p className="text-sm text-danger">
-						{t("models.installStopped", {
-							error: explain({
-								message: model.error,
-								code: model.errorCode,
-								params: model.errorParams,
-							}),
-						})}
-					</p>
-				)}
-				{error && <p className="text-sm text-danger">{explain(error)}</p>}
-				{variant && !installed && !active && !fits && (
-					<p className="text-sm text-danger">
-						{t("models.notEnoughSpace", {
-							needed: bytes(toDownload),
-							free: bytes(freeBytes),
-						})}
-					</p>
-				)}
+					{variant ? (
+						<div className="flex flex-col gap-1 border-t border-line pt-4">
+							<p>
+								<span className="font-mono text-lg">{bytes(model.size)}</span>{" "}
+								<span className="text-sm text-dim">{note}</span>
+							</p>
+							<p className="text-sm">
+								<span className="font-medium">{variant.label}</span>{" "}
+								<span
+									className={variant.fit === "gpu" ? "text-dim" : "text-danger"}
+								>
+									· {fitText(t, variant.fit)}
+								</span>
+							</p>
+							<Collapsible className="text-xs text-dim">
+								<CollapsibleTrigger className="group -ml-2 inline-flex h-10 items-center gap-1.5 rounded-lg px-2 outline-none hover:text-ink focus-visible:ring-3 focus-visible:ring-ring/50">
+									{t("models.files", { count: variant.files.length })}
+									{model.variants.length > 1 &&
+										` · ${t("models.versions", { count: model.variants.length })}`}
+									<ChevronDownIcon
+										aria-hidden="true"
+										className="size-3.5 transition-transform group-data-panel-open:rotate-180 motion-reduce:transition-none"
+									/>
+								</CollapsibleTrigger>
+								<CollapsibleContent>
+									<ul className="flex flex-col gap-1 font-mono">
+										{variant.files.map((file) => (
+											<li
+												key={file.name}
+												className="flex justify-between gap-4"
+											>
+												<span className="min-w-0 truncate" title={file.name}>
+													{file.name}
+												</span>
+												<span className="shrink-0">
+													{bytes(file.size)}
+													{file.present && ` · ${t("models.onDisk")}`}
+												</span>
+											</li>
+										))}
+									</ul>
+									{model.variants.length > 1 && (
+										<ul className="mt-3 flex flex-col gap-2">
+											{model.variants.map((other) => (
+												<li
+													key={other.id}
+													className="flex flex-wrap items-center justify-between gap-2"
+												>
+													<span>
+														<span className="text-ink">{other.label}</span> ·{" "}
+														{bytes(other.size)} · {fitText(t, other.fit)}
+														{other.id === model.variant &&
+															` · ${installed ? t("models.variantInstalled") : t("models.recommended")}`}
+													</span>
+													{can.admin &&
+														!installed &&
+														!active &&
+														others.includes(other) && (
+															<Button
+																variant="outline"
+																onClick={() => install.mutate(other.id)}
+																disabled={install.isPending}
+															>
+																{t("models.installVersion")}
+															</Button>
+														)}
+												</li>
+											))}
+										</ul>
+									)}
+								</CollapsibleContent>
+							</Collapsible>
+						</div>
+					) : (
+						<p className="text-sm text-danger">{t("models.noVersion")}</p>
+					)}
 
-				{!can.admin && !installed && !active && (
-					<p className="mt-auto pt-1 text-sm text-dim">
-						{t("models.askAdmin")}
-					</p>
-				)}
-				<div
-					className={`mt-auto flex flex-wrap gap-2 pt-1 text-sm ${can.admin ? "" : "hidden"}`}
-				>
 					{installed && !model.ready && !active && (
-						<button
-							type="button"
-							onClick={() => install.mutate(undefined)}
-							disabled={install.isPending}
-							className="rounded-md bg-accent px-4 py-2 font-medium text-accent-ink disabled:opacity-40"
-						>
-							{t("models.installEngine")}
-						</button>
+						<p className="text-sm text-danger">{t("models.engineMissing")}</p>
 					)}
-					{variant && !installed && !active && (
-						<button
-							type="button"
-							onClick={() => install.mutate(undefined)}
-							disabled={!fits || install.isPending}
-							className="rounded-md bg-accent px-4 py-2 font-medium text-accent-ink disabled:opacity-40"
-						>
-							{partial > 0 ? t("models.resume") : t("models.install")}
-						</button>
+					{active && <Progress model={model} />}
+					{model.error && !active && (
+						<p className="text-sm text-danger">
+							{t("models.installStopped", {
+								error: explain({
+									message: model.error,
+									code: model.errorCode,
+									params: model.errorParams,
+								}),
+							})}
+						</p>
 					)}
-					{active && (
-						<button
-							type="button"
-							onClick={() => cancel.mutate()}
-							disabled={cancel.isPending}
-							className="rounded-md border border-line px-4 py-2 hover:border-dim"
-						>
-							{model.state === "queued"
-								? t("common.cancel")
-								: t("models.pause")}
-						</button>
+					{error && <p className="text-sm text-danger">{explain(error)}</p>}
+					{variant && !installed && !active && !fits && (
+						<p className="text-sm text-danger">
+							{t("models.notEnoughSpace", {
+								needed: bytes(toDownload),
+								free: bytes(freeBytes),
+							})}
+						</p>
 					)}
-					{(installed || partial > 0) && !active && (
-						<button
-							type="button"
-							disabled={remove.isPending}
-							onClick={() => {
-								const question = installed
-									? t("models.deleteConfirm", {
-											model: model.name,
-											size: bytes(model.reclaimableBytes),
-										})
-									: t("models.discardConfirm", {
-											model: model.name,
-											size: bytes(partial),
-										});
-								if (window.confirm(question)) remove.mutate();
-							}}
-							className="rounded-md border border-line px-4 py-2 text-dim hover:text-danger"
-						>
-							{installed ? t("models.delete") : t("models.discard")}
-						</button>
+
+					{!can.admin && !installed && !active && (
+						<p className="mt-auto pt-1 text-sm text-dim">
+							{t("models.askAdmin")}
+						</p>
 					)}
+					<div
+						className={cn(
+							"mt-auto flex flex-wrap gap-2 pt-1",
+							!can.admin && "hidden",
+						)}
+					>
+						{installed && !model.ready && !active && (
+							<Button
+								variant="aurora"
+								onClick={() => install.mutate(undefined)}
+								disabled={install.isPending}
+							>
+								{t("models.installEngine")}
+							</Button>
+						)}
+						{variant && !installed && !active && (
+							<Button
+								variant="aurora"
+								onClick={() => install.mutate(undefined)}
+								disabled={!fits || install.isPending}
+							>
+								{partial > 0 ? t("models.resume") : t("models.install")}
+							</Button>
+						)}
+						{active && (
+							<Button
+								variant="outline"
+								onClick={() => cancel.mutate()}
+								disabled={cancel.isPending}
+							>
+								{model.state === "queued"
+									? t("common.cancel")
+									: t("models.pause")}
+							</Button>
+						)}
+						{(installed || partial > 0) && !active && (
+							<ConfirmButton
+								label={installed ? t("models.delete") : t("models.discard")}
+								question={
+									installed
+										? t("models.deleteConfirm", {
+												model: model.name,
+												size: bytes(model.reclaimableBytes),
+											})
+										: t("models.discardConfirm", {
+												model: model.name,
+												size: bytes(partial),
+											})
+								}
+								confirm={installed ? t("models.delete") : t("models.discard")}
+								disabled={remove.isPending}
+								onConfirm={() => remove.mutate()}
+							/>
+						)}
+					</div>
 				</div>
-			</div>
+			</Card>
 		</li>
 	);
 }
@@ -601,60 +649,82 @@ const BACKEND_NAMES: Record<
 	vulkan: "Vulkan",
 };
 
-/** What Hatchlight found on this computer, and what it will run models with. */
+/** What Hatchlight found on this computer, what it runs models with, and where it keeps them. */
 function Machine({ view }: { view: LocalModelsView }) {
+	const can = useCan();
 	const { t, bytes } = useI18n();
-	const { hardware, engines } = view;
+	const { hardware, engines, disk } = view;
 	const gpu = hardware.gpus.toSorted(
 		(a, b) => b.memoryBytes - a.memoryBytes,
 	)[0];
-	const label = "font-mono text-[11px] uppercase tracking-wider text-dim";
 	return (
-		<dl className="mt-6 grid gap-x-10 gap-y-4 sm:grid-cols-2">
-			<div>
-				<dt className={label}>{t("models.machine.computer")}</dt>
-				<dd className="mt-1 text-sm">
-					{gpu
-						? `${gpu.name} · ${bytes(gpu.memoryBytes)}`
-						: t("models.machine.noGpu")}
-					<span className="text-dim">
-						{" "}
-						·{" "}
-						{t("models.machine.memory", { size: bytes(hardware.memoryBytes) })}
-						{hardware.wsl && " · WSL"}
-					</span>
-				</dd>
-			</div>
-			<div>
-				<dt className={label}>{t("models.machine.engine")}</dt>
-				<dd className="mt-1 text-sm">
-					{engines.length === 0 ? (
-						<span className="text-danger">{t("models.machine.noEngine")}</span>
-					) : (
-						engines.map((engine) => (
-							<span key={engine.engine}>
-								{engine.name} ·{" "}
-								{engine.backend === "cpu"
-									? t("models.machine.cpu")
-									: BACKEND_NAMES[engine.backend]}
-								{engine.throughWindows && ` ${t("models.machine.windows")}`}
-								<span className="text-dim">
-									{" "}
-									·{" "}
-									{engine.installed
-										? t("models.machine.engineInstalled", {
-												size: bytes(engine.size),
-											})
-										: t("models.machine.engineLater", {
-												size: bytes(engine.size),
-											})}
-								</span>
+		<Card className={SECTION}>
+			<CardContent>
+				<dl className="grid gap-x-8 gap-y-6 sm:grid-cols-2 lg:grid-cols-[2fr_2fr_1fr_1fr]">
+					<div className="flex flex-col gap-2">
+						<dt className={LABEL}>{t("models.machine.computer")}</dt>
+						<dd className="text-sm leading-relaxed">
+							{gpu
+								? `${gpu.name} · ${bytes(gpu.memoryBytes)}`
+								: t("models.machine.noGpu")}
+							<span className="text-dim">
+								{" "}
+								·{" "}
+								{t("models.machine.memory", {
+									size: bytes(hardware.memoryBytes),
+								})}
+								{hardware.wsl && " · WSL"}
 							</span>
-						))
-					)}
-				</dd>
-			</div>
-		</dl>
+						</dd>
+					</div>
+					<div className="flex flex-col gap-2">
+						<dt className={LABEL}>{t("models.machine.engine")}</dt>
+						<dd className="text-sm leading-relaxed">
+							{engines.length === 0 ? (
+								<span className="text-danger">
+									{t("models.machine.noEngine")}
+								</span>
+							) : (
+								engines.map((engine) => (
+									<span key={engine.engine} className="block">
+										{engine.name} ·{" "}
+										{engine.backend === "cpu"
+											? t("models.machine.cpu")
+											: BACKEND_NAMES[engine.backend]}
+										{engine.throughWindows && ` ${t("models.machine.windows")}`}
+										<span className="text-dim">
+											{" "}
+											·{" "}
+											{engine.installed
+												? t("models.machine.engineInstalled", {
+														size: bytes(engine.size),
+													})
+												: t("models.machine.engineLater", {
+														size: bytes(engine.size),
+													})}
+										</span>
+									</span>
+								))
+							)}
+						</dd>
+					</div>
+					<div className="flex flex-col gap-2">
+						<dt className={LABEL}>{t("models.disk.used")}</dt>
+						<dd className="font-mono text-lg">
+							{disk.usedBytes > 0
+								? bytes(disk.usedBytes)
+								: t("models.disk.nothing")}
+						</dd>
+					</div>
+					<div className="flex flex-col gap-2">
+						<dt className={LABEL}>{t("models.disk.free")}</dt>
+						<dd className="font-mono text-lg">{bytes(disk.freeBytes)}</dd>
+					</div>
+					{/* Where the server keeps its files is for those who run it. */}
+					{can.admin && <Folder disk={disk} />}
+				</dl>
+			</CardContent>
+		</Card>
 	);
 }
 
@@ -691,8 +761,11 @@ function categoryBody(t: I18n["t"], category: LocalCategory): string {
 	}
 }
 
-const chip =
-	"rounded-full border border-line px-3.5 py-1.5 text-sm text-dim transition-colors hover:text-ink aria-pressed:border-ink aria-pressed:bg-ink aria-pressed:text-bg";
+/** A pill to narrow the catalog with, filled in while it is on. */
+const CHIP =
+	"h-10 rounded-full border border-line px-4 font-normal text-dim hover:text-ink aria-pressed:border-ink aria-pressed:bg-ink aria-pressed:text-bg aria-pressed:hover:bg-ink/90 aria-pressed:hover:text-bg";
+
+const ALL_CATEGORIES = ["all", ...CATEGORIES] as const;
 
 /** Every model, narrowed by what it does and how it suits this computer. */
 function Catalog({ view }: { view: LocalModelsView }) {
@@ -737,50 +810,50 @@ function Catalog({ view }: { view: LocalModelsView }) {
 		{ key: "installed", text: t("models.filter.installed") },
 	];
 	return (
-		<div className="mt-8">
+		<div className="flex flex-col gap-10 pt-4">
 			<fieldset className="flex flex-col gap-3">
 				<legend className="sr-only">{t("models.filter.label")}</legend>
-				<div className="flex flex-wrap gap-2">
-					{(["all", ...CATEGORIES] as const).map((category) => (
-						<button
-							key={category}
-							type="button"
-							aria-pressed={filter.category === category}
-							onClick={() => set({ category })}
-							className={chip}
-						>
-							{categoryText(t, category)}{" "}
+				<ToggleGroup
+					value={[filter.category]}
+					onValueChange={(next) => {
+						const category = ALL_CATEGORIES.find((c) => c === next[0]);
+						if (category) set({ category });
+					}}
+					className="flex-wrap"
+				>
+					{ALL_CATEGORIES.map((category) => (
+						<ToggleGroupItem key={category} value={category} className={CHIP}>
+							{categoryText(t, category)}
 							<span className="font-mono text-xs opacity-60">
 								{count(category)}
 							</span>
-						</button>
+						</ToggleGroupItem>
 					))}
-				</div>
+				</ToggleGroup>
 				<div className="flex flex-wrap gap-2">
 					{toggles.map((toggle) => (
-						<button
+						<Toggle
 							key={toggle.key}
-							type="button"
-							aria-pressed={filter[toggle.key]}
-							onClick={() => set({ [toggle.key]: !filter[toggle.key] })}
-							className={`${chip} text-xs`}
+							pressed={filter[toggle.key]}
+							onPressedChange={(pressed) => set({ [toggle.key]: pressed })}
+							className={cn(CHIP, "text-xs")}
 						>
-							{filter[toggle.key] ? "✓ " : ""}
+							{filter[toggle.key] && <CheckIcon aria-hidden="true" />}
 							{toggle.text}
-						</button>
+						</Toggle>
 					))}
 				</div>
 			</fieldset>
 			{shown.length === 0 ? (
-				<p className="mt-8 text-sm text-dim">
+				<p className="text-sm text-dim">
 					{t("models.filter.none")}{" "}
-					<button
-						type="button"
+					<Button
+						variant="link"
 						onClick={() => setFilter(NO_FILTER)}
-						className="underline hover:text-ink"
+						className="h-10 px-1 text-ink underline"
 					>
 						{t("models.filter.clear")}
-					</button>
+					</Button>
 				</p>
 			) : (
 				shelves.map(
@@ -789,17 +862,17 @@ function Catalog({ view }: { view: LocalModelsView }) {
 							<section
 								key={shelf.category}
 								aria-label={categoryText(t, shelf.category)}
-								className="mt-8"
+								className="flex flex-col gap-5"
 							>
-								<div className="flex flex-wrap items-baseline justify-between gap-2">
-									<h2 className="font-display text-xl font-bold tracking-tight">
+								<div className="flex flex-col gap-1">
+									<h2 className="font-display text-2xl font-bold tracking-tight">
 										{categoryText(t, shelf.category)}
 									</h2>
 									<p className="text-sm text-dim">
 										{categoryBody(t, shelf.category)}
 									</p>
 								</div>
-								<ul className="mt-3 grid gap-4 lg:grid-cols-2">
+								<ul className="grid gap-5 md:grid-cols-2">
 									{shelf.models.map(card)}
 								</ul>
 							</section>
@@ -828,29 +901,18 @@ function Folder({ disk }: { disk: LocalModelsView["disk"] }) {
 		? Math.round((moving.movedBytes / Math.max(moving.totalBytes, 1)) * 100)
 		: 0;
 	return (
-		<div className="min-w-0 flex-1 basis-80">
-			<dt className="font-mono text-[11px] uppercase tracking-wider text-dim">
-				{t("models.disk.path")}
-			</dt>
-			<dd className="pt-1">
+		<div className="flex min-w-0 flex-col gap-2 border-t border-line pt-6 sm:col-span-2 lg:col-span-4">
+			<dt className={LABEL}>{t("models.disk.path")}</dt>
+			<dd>
 				{moving ? (
-					<div className="flex flex-col gap-1.5">
+					<div className="flex flex-col gap-2">
 						<p className="truncate text-sm" title={moving.to}>
 							{t("models.folder.moving", { path: moving.to })}
 						</p>
-						<div
-							role="progressbar"
-							aria-label={t("models.folder.moving", { path: moving.to })}
-							aria-valuemin={0}
-							aria-valuemax={100}
-							aria-valuenow={percent}
-							className="h-1.5 overflow-hidden rounded-full bg-line"
-						>
-							<div
-								className="h-full rounded-full bg-accent transition-[width] duration-300"
-								style={{ width: `${percent}%` }}
-							/>
-						</div>
+						<Bar
+							value={percent}
+							label={t("models.folder.moving", { path: moving.to })}
+						/>
 						<p className="font-mono text-xs text-dim">
 							{t("models.folder.moved", {
 								moved: bytes(moving.movedBytes),
@@ -860,20 +922,19 @@ function Folder({ disk }: { disk: LocalModelsView["disk"] }) {
 					</div>
 				) : editing ? (
 					<form
-						className="flex flex-col gap-2"
+						className="flex flex-col gap-3"
 						onSubmit={(event) => {
 							event.preventDefault();
 							move.mutate();
 						}}
 					>
-						<input
+						<Input
 							value={path}
 							onChange={(event) => setPath(event.target.value)}
 							aria-label={t("models.folder.label")}
 							spellCheck={false}
-							// biome-ignore lint/a11y/noAutofocus: the form opens on request
 							autoFocus
-							className="rounded-md border border-line bg-panel px-3 py-2 font-mono text-sm focus:border-dim focus:outline-none"
+							className="h-10 font-mono"
 						/>
 						<p className="text-xs leading-relaxed text-dim">
 							{t("models.folder.hint", { size: bytes(disk.usedBytes) })}
@@ -881,47 +942,44 @@ function Folder({ disk }: { disk: LocalModelsView["disk"] }) {
 						{move.error && (
 							<p className="text-sm text-danger">{explain(move.error)}</p>
 						)}
-						<div className="flex gap-2">
-							<button
-								type="submit"
-								disabled={move.isPending || !path.trim()}
-								className="rounded-md bg-accent px-4 py-2 font-medium text-accent-ink disabled:opacity-40"
-							>
+						<div className="flex flex-wrap gap-2">
+							<Button type="submit" disabled={move.isPending || !path.trim()}>
 								{t("models.folder.move")}
-							</button>
-							<button
-								type="button"
+							</Button>
+							<Button
+								variant="outline"
 								onClick={() => {
 									setEditing(false);
 									move.reset();
 								}}
-								className="rounded-md border border-line px-4 py-2 hover:border-dim"
 							>
 								{t("common.cancel")}
-							</button>
+							</Button>
 						</div>
 					</form>
 				) : (
 					<div className="flex min-w-0 items-center gap-3">
-						<span className="truncate font-mono text-sm" title={disk.path}>
+						<span
+							className="min-w-0 truncate font-mono text-sm"
+							title={disk.path}
+						>
 							{disk.path}
 						</span>
 						{changeable && (
-							<button
-								type="button"
+							<Button
+								variant="outline"
 								onClick={() => {
 									setPath(disk.path);
 									setEditing(true);
 								}}
-								className="shrink-0 rounded border border-line px-2 py-0.5 text-xs hover:border-dim hover:text-ink"
 							>
 								{t("models.folder.change")}
-							</button>
+							</Button>
 						)}
 					</div>
 				)}
 				{disk.moveError && !moving && !editing && (
-					<p className="mt-1 text-sm text-danger">{explain(disk.moveError)}</p>
+					<p className="mt-2 text-sm text-danger">{explain(disk.moveError)}</p>
 				)}
 			</dd>
 		</div>
@@ -929,48 +987,23 @@ function Folder({ disk }: { disk: LocalModelsView["disk"] }) {
 }
 
 export function Models() {
-	const can = useCan();
-	const { t, bytes, explain } = useI18n();
+	const { t, explain } = useI18n();
 	const view = useQuery({
 		queryKey: ["local-models"],
 		queryFn: api.localModels,
 	});
-	const disk = view.data?.disk;
 	return (
-		<div className="min-h-0 flex-1 overflow-y-auto p-6">
-			<div className="mx-auto max-w-5xl">
-				<h1 className="font-display text-4xl leading-none font-extrabold tracking-tight">
-					{t("models.title")}
-				</h1>
-				<p className="mt-2 max-w-2xl text-sm leading-relaxed text-dim">
-					{t("models.intro")}
-				</p>
+		<div className="min-h-0 flex-1 overflow-y-auto">
+			<div className="mx-auto flex w-full max-w-[1060px] flex-col gap-6 px-4 py-8 sm:px-8 sm:py-12">
+				<PageHeader
+					eyebrow={t("models.eyebrow")}
+					title={t("models.title")}
+					intro={t("models.intro")}
+				/>
 				{view.error && (
-					<p className="mt-6 text-sm text-danger">{explain(view.error)}</p>
+					<p className="text-sm text-danger">{explain(view.error)}</p>
 				)}
 				{view.data && <Machine view={view.data} />}
-				{disk && (
-					<dl className="mt-6 flex flex-wrap gap-x-10 gap-y-3">
-						<div>
-							<dt className="font-mono text-[11px] uppercase tracking-wider text-dim">
-								{t("models.disk.used")}
-							</dt>
-							<dd className="font-mono text-lg">
-								{disk.usedBytes > 0
-									? bytes(disk.usedBytes)
-									: t("models.disk.nothing")}
-							</dd>
-						</div>
-						<div>
-							<dt className="font-mono text-[11px] uppercase tracking-wider text-dim">
-								{t("models.disk.free")}
-							</dt>
-							<dd className="font-mono text-lg">{bytes(disk.freeBytes)}</dd>
-						</div>
-						{/* Where the server keeps its files is for those who run it. */}
-						{can.admin && <Folder disk={disk} />}
-					</dl>
-				)}
 				<CheckpointShelf />
 				<LoraShelf />
 				{view.data && <Catalog view={view.data} />}

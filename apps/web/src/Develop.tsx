@@ -1,5 +1,5 @@
 import { develop, latent, loadImage } from "@hatchlight/motion";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /** Develop and latent frames redraw at film speed: lively, and cheap. */
 export const FRAME_MS = 1000 / 24;
@@ -18,15 +18,15 @@ function canvasSize(ratio: number): [number, number] {
 }
 
 /**
- * A picture still being made: static under a safelight that warms as
- * `fraction` grows. `children` sit on top, such as a status line and a button.
+ * A picture still being made: soft lights that settle as `fraction` grows,
+ * then the model's own preview coming into focus. Nothing is drawn over it;
+ * its status goes below.
  */
 export function LatentFrame(props: {
 	ratio: number;
 	fraction: number | undefined;
 	/** The picture as the model has it now, when it shows one. */
 	preview?: string;
-	children?: ReactNode;
 }) {
 	const canvas = useRef<HTMLCanvasElement>(null);
 	// Read by the animation loop without restarting it on every progress event.
@@ -85,7 +85,7 @@ export function LatentFrame(props: {
 
 	return (
 		<div
-			className="relative overflow-hidden rounded-md bg-bg"
+			className="relative overflow-hidden rounded-2xl bg-panel"
 			style={{ aspectRatio: String(props.ratio) }}
 		>
 			<canvas
@@ -94,22 +94,6 @@ export function LatentFrame(props: {
 				height={height}
 				className="absolute inset-0 h-full w-full"
 			/>
-			<div className="relative flex h-full flex-col items-center justify-center gap-3 p-4">
-				{props.children}
-			</div>
-			<div
-				aria-hidden="true"
-				className="absolute inset-x-0 bottom-0 h-0.5 bg-line"
-			>
-				<div
-					className={`h-full ${props.fraction == null ? "flow w-full opacity-70" : "flow"} transition-[width] duration-500`}
-					style={
-						props.fraction == null
-							? undefined
-							: { width: `${Math.round(props.fraction * 100)}%` }
-					}
-				/>
-			</div>
 		</div>
 	);
 }

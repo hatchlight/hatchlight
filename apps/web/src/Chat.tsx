@@ -1,14 +1,28 @@
 import { storedValue } from "@hatchlight/core/legacy";
 import type { JobView, ModelSpec, TurnView } from "@hatchlight/core/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ImagePlus, Info, Maximize2 } from "lucide-react";
 import {
 	type CSSProperties,
 	type Dispatch,
+	type ReactElement,
 	type SetStateAction,
 	useEffect,
 	useRef,
 	useState,
 } from "react";
+import { Button } from "@/components/ui/button";
+import {
+	Collapsible,
+	CollapsibleContent,
+	CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import { api, assetUrl, previewUrl, type SessionDetail } from "./api";
 import { Composer, type Draft } from "./Composer";
 import { DevelopedImage, LatentFrame } from "./Develop";
@@ -56,6 +70,34 @@ function Elapsed({ since }: { since: number }) {
 	return <>{duration(i18n, now - since)}</>;
 }
 
+/** A small action under a picture, named by its tooltip. */
+function PictureAction(props: {
+	label: string;
+	icon: ReactElement;
+	disabled?: boolean;
+	onClick(): void;
+}) {
+	return (
+		<Tooltip>
+			<TooltipTrigger
+				render={
+					<Button
+						variant="ghost"
+						size="icon-sm"
+						aria-label={props.label}
+						disabled={props.disabled}
+						onClick={props.onClick}
+						className="text-dim hover:text-ink max-md:size-10"
+					/>
+				}
+			>
+				{props.icon}
+			</TooltipTrigger>
+			<TooltipContent>{props.label}</TooltipContent>
+		</Tooltip>
+	);
+}
+
 export function JobCard(props: {
 	index: number;
 	job: JobView;
@@ -85,111 +127,131 @@ export function JobCard(props: {
 	)
 		.split(":")
 		.map(Number);
+	const ratio = (width || 1) / (height || 1);
+	const fraction = job.status === "running" ? progress?.fraction : undefined;
+	const several = job.assets.length > 1;
+	// How long it took and what it cost, under each picture it made.
+	const took =
+		job.status === "succeeded" && job.startedAt && job.finishedAt
+			? [
+					duration(i18n, job.finishedAt - job.startedAt),
+					job.costUsd != null &&
+						(job.costUsd === 0 ? t("picker.free") : usd(i18n, job.costUsd)),
+				]
+					.filter(Boolean)
+					.join(" · ")
+			: null;
 
 	return (
-		<section
-			className="rise-in flex min-w-0 flex-col rounded-lg border border-line bg-panel transition-colors hover:border-line-strong"
+		<article
+			aria-label={name}
+			className="rise-in flex min-w-0 flex-col gap-2"
 			style={{ "--i": props.index } as CSSProperties}
 		>
-			<header className="flex items-baseline justify-between gap-3 border-b border-line px-3 py-2">
-				<h3 className="truncate text-sm font-medium">
-					{name}
-					<span className="ml-2 font-mono text-[11px] font-normal uppercase tracking-wider text-dim">
-						{job.providerId}
-					</span>
-				</h3>
-				<p className="shrink-0 font-mono text-xs tabular-nums text-dim">
-					{job.status === "queued" && t("job.queued")}
-					{job.status === "running" && job.startedAt && (
-						<Elapsed since={job.startedAt} />
-					)}
-					{job.status === "succeeded" && job.startedAt && job.finishedAt && (
-						<>
-							{duration(i18n, job.finishedAt - job.startedAt)}
-							{job.costUsd != null &&
-								` · ${job.costUsd === 0 ? t("picker.free") : usd(i18n, job.costUsd)}`}
-						</>
-					)}
-					{job.status === "failed" && (
-						<span className="text-danger">{t("job.failed")}</span>
-					)}
-					{job.status === "canceled" && t("job.canceled")}
-				</p>
-			</header>
-
-			<div className="flex flex-1 flex-col gap-2 p-2">
-				{pending && (
-					<>
-						<LatentFrame
-							ratio={(width || 1) / (height || 1)}
-							fraction={
-								job.status === "running" ? progress?.fraction : undefined
-							}
-							preview={
-								progress?.preview
-									? previewUrl(job.id, progress.preview)
-									: undefined
-							}
-						/>
-						{/* Below the picture, so nothing covers it while it forms. */}
-						<div className="flex items-center justify-between gap-3 px-1">
-							<p
-								className="flex min-w-0 items-center gap-2 text-sm font-medium text-ink"
-								aria-live="polite"
-							>
-								<i
-									aria-hidden="true"
-									className={`breathe size-2 shrink-0 rounded-full ${job.status === "queued" ? "bg-dim" : "bg-accent shadow-[0_0_10px_var(--accent)]"}`}
-								/>
-								<span className="truncate">
-									{job.status === "running" || progress?.stage === "queued"
-										? describeProgress(i18n, progress)
-										: t("job.waiting")}
-								</span>
-							</p>
-							<button
-								type="button"
+			{pending && (
+				<>
+					<LatentFrame
+						ratio={ratio}
+						fraction={fraction}
+						preview={
+							progress?.preview
+								? previewUrl(job.id, progress.preview)
+								: undefined
+						}
+					/>
+					{/* Below the picture, so nothing covers it while it forms. */}
+					{/* Name and Cancel, then what is happening, then the bar: a
+					    narrow card still shows each in full. */}
+					<div className="flex flex-col gap-1.5 font-mono text-xs text-[#a1a1aa]">
+						<div className="flex min-h-8 items-center gap-2.5">
+							<i
+								aria-hidden="true"
+								className={cn(
+									"breathe size-2 shrink-0 rounded-full",
+									job.status === "queued"
+										? "bg-dim"
+										: "bg-orange shadow-[0_0_12px_var(--orange)]",
+								)}
+							/>
+							<span className="min-w-0 flex-1 truncate">{name}</span>
+							<Button
+								variant="outline"
+								size="sm"
 								onClick={() => cancel.mutate()}
 								disabled={cancel.isPending}
-								className="shrink-0 rounded-full border border-line-strong px-3 py-1 text-xs text-dim hover:text-ink"
+								className="font-sans max-md:h-10"
 							>
 								{t("common.cancel")}
-							</button>
+							</Button>
 						</div>
-					</>
-				)}
-				{(job.status === "failed" || job.status === "canceled") && (
-					<div className="flex items-start justify-between gap-3 p-2">
-						{job.status === "failed" ? (
-							<p className="text-sm leading-relaxed text-danger">
-								{i18n.explain({
-									message: job.error ?? "",
-									code: job.errorCode,
-									params: job.errorParams,
-								})}
-							</p>
-						) : (
-							<p className="text-sm text-dim">{t("job.canceledEarly")}</p>
-						)}
-						{retry.error && (
-							<p className="text-sm text-danger">{i18n.explain(retry.error)}</p>
-						)}
-						<button
-							type="button"
+						<div className="flex items-center gap-2.5 text-dim">
+							<span className="min-w-0 flex-1 truncate" aria-live="polite">
+								{job.status === "running" || progress?.stage === "queued"
+									? describeProgress(i18n, progress)
+									: t("job.waiting")}
+							</span>
+							{job.status === "running" && job.startedAt && (
+								<span className="shrink-0 tabular-nums">
+									<Elapsed since={job.startedAt} />
+								</span>
+							)}
+						</div>
+						<div
+							aria-hidden="true"
+							className="h-1 overflow-hidden rounded-full bg-line"
+						>
+							{job.status === "running" && (
+								<div
+									className={cn(
+										"flow h-full transition-[width] duration-500",
+										fraction == null && "w-full opacity-60",
+									)}
+									style={
+										fraction == null
+											? undefined
+											: { width: `${Math.round(fraction * 100)}%` }
+									}
+								/>
+							)}
+						</div>
+					</div>
+				</>
+			)}
+			{(job.status === "failed" || job.status === "canceled") && (
+				<div className="flex flex-col gap-3 rounded-2xl border border-line bg-panel p-4">
+					{job.status === "failed" ? (
+						<p className="text-sm leading-relaxed text-danger">
+							{i18n.explain({
+								message: job.error ?? "",
+								code: job.errorCode,
+								params: job.errorParams,
+							})}
+						</p>
+					) : (
+						<p className="text-sm text-dim">{t("job.canceledEarly")}</p>
+					)}
+					{retry.error && (
+						<p className="text-sm text-danger">{i18n.explain(retry.error)}</p>
+					)}
+					<div className="flex items-center justify-between gap-3">
+						<span className="min-w-0 truncate font-mono text-xs text-dim">
+							{name}
+						</span>
+						<Button
+							variant="outline"
+							size="sm"
 							onClick={() => retry.mutate()}
 							disabled={retry.isPending}
-							className="shrink-0 rounded-full border border-line-strong px-3 py-1 text-xs text-ink hover:border-ink"
+							className="max-md:h-10"
 						>
 							{t("job.retry")}
-						</button>
+						</Button>
 					</div>
-				)}
-				<div
-					className={
-						job.assets.length > 1 ? "grid grid-cols-2 gap-2" : "contents"
-					}
-				>
-					{job.assets.map((asset) => {
+				</div>
+			)}
+			{job.assets.length > 0 && (
+				<div className={several ? "grid grid-cols-2 gap-2.5" : "contents"}>
+					{job.assets.map((asset, position) => {
 						const open = () =>
 							props.onOpen({
 								assetId: asset.id,
@@ -200,83 +262,97 @@ export function JobCard(props: {
 								costUsd:
 									job.costUsd == null ? null : job.costUsd / job.assets.length,
 							});
-						const overlay =
-							"absolute rounded-md bg-black/75 px-2 py-1 text-xs text-white opacity-0 focus-visible:opacity-100 group-hover:opacity-100";
-						return asset.mime.startsWith("video/") ? (
-							<div key={asset.id} className="group relative">
-								{/* biome-ignore lint/a11y/useMediaCaption: generated clips have no transcript */}
-								<video
-									src={assetUrl(asset.id)}
-									aria-label={`${name}: ${props.prompt}`}
-									controls
-									loop
-									playsInline
-									preload="metadata"
-									className="print-in w-full rounded-md bg-black"
-								/>
-								<button
-									type="button"
-									onClick={open}
-									className={`${overlay} right-2 top-2`}
-								>
-									{t("job.details")}
-								</button>
-							</div>
-						) : (
-							<div key={asset.id} className="group relative">
-								<button
-									type="button"
-									aria-label={t("job.openImage", { model: name })}
-									onClick={open}
-									className="block w-full"
-								>
-									<DevelopedImage
+						const video = asset.mime.startsWith("video/");
+						return (
+							<figure key={asset.id} className="flex min-w-0 flex-col gap-1.5">
+								{video ? (
+									// biome-ignore lint/a11y/useMediaCaption: generated clips have no transcript
+									<video
 										src={assetUrl(asset.id)}
-										alt={`${name}: ${props.prompt}`}
-										fresh={watched.current}
-										from={shown.current ? 0.85 : 0}
-										ratio={(width || 1) / (height || 1)}
-										className="w-full rounded-md"
+										aria-label={`${name}: ${props.prompt}`}
+										controls
+										loop
+										playsInline
+										preload="metadata"
+										className="print-in w-full rounded-2xl bg-black"
 									/>
-								</button>
-								<button
-									type="button"
-									onClick={() => props.onUseAsReference(asset.id)}
-									className={`${overlay} bottom-2 left-2`}
-								>
-									{t("common.useAsReference")}
-								</button>
-								{props.upscale && model?.capabilities.upscale == null && (
+								) : (
 									<button
 										type="button"
-										onClick={() => props.upscale?.run(asset.id)}
-										disabled={props.upscale.busy}
-										className={`${overlay} right-2 bottom-2 disabled:opacity-40`}
+										aria-label={t("job.openImage", { model: name })}
+										onClick={open}
+										className="block w-full rounded-2xl outline-none focus-visible:ring-3 focus-visible:ring-ring/60"
 									>
-										{t("job.upscale", {
-											factor: i18n.number(props.upscale.factor),
-										})}
+										<DevelopedImage
+											src={assetUrl(asset.id)}
+											alt={`${name}: ${props.prompt}`}
+											fresh={watched.current}
+											from={shown.current ? 0.85 : 0}
+											ratio={ratio}
+											className="w-full rounded-2xl"
+										/>
 									</button>
 								)}
-							</div>
+								<figcaption className="flex min-h-8 items-center gap-1 font-mono text-xs text-dim">
+									{/* The name on its own line, so narrow cards keep it whole. */}
+									<span className="flex min-w-0 flex-1 flex-col gap-0.5">
+										<span className="truncate text-[#a1a1aa]">
+											{several
+												? `${name} · ${i18n.number(position + 1)}`
+												: name}
+										</span>
+										{took && <span className="tabular-nums">{took}</span>}
+									</span>
+									<span className="flex shrink-0">
+										{video ? (
+											<PictureAction
+												label={t("job.details")}
+												icon={<Info />}
+												onClick={open}
+											/>
+										) : (
+											<>
+												<PictureAction
+													label={t("common.useAsReference")}
+													icon={<ImagePlus />}
+													onClick={() => props.onUseAsReference(asset.id)}
+												/>
+												{props.upscale &&
+													model?.capabilities.upscale == null && (
+														<PictureAction
+															label={t("job.upscale", {
+																factor: i18n.number(props.upscale.factor),
+															})}
+															icon={<Maximize2 />}
+															disabled={props.upscale.busy}
+															onClick={() => props.upscale?.run(asset.id)}
+														/>
+													)}
+											</>
+										)}
+									</span>
+								</figcaption>
+							</figure>
 						);
 					})}
 				</div>
-				{job.params.translatedPrompt && (
-					// What the model was sent, in a language the person may not
-					// read: there for the curious, out of the way otherwise.
-					<details className="px-1 text-xs leading-relaxed text-dim">
-						<summary className="w-fit cursor-pointer hover:text-ink">
-							{t("job.details")}
-						</summary>
-						<p className="mt-1">
+			)}
+			{job.params.translatedPrompt && (
+				// What the model was sent, in a language the person may not
+				// read: there for the curious, out of the way otherwise.
+				<Collapsible className="text-xs leading-relaxed text-dim">
+					<CollapsibleTrigger className="min-h-8 rounded-sm outline-none hover:text-ink focus-visible:ring-3 focus-visible:ring-ring/50">
+						{t("job.details")}
+					</CollapsibleTrigger>
+					<CollapsibleContent>
+						<p>
 							{t("job.translated")}{" "}
 							<span className="text-ink">{job.params.translatedPrompt}</span>
 						</p>
-					</details>
-				)}
-			</div>
-		</section>
+					</CollapsibleContent>
+				</Collapsible>
+			)}
+		</article>
 	);
 }
 
@@ -291,36 +367,33 @@ function TurnBlock(props: {
 }) {
 	const { turn } = props;
 	const { t } = useI18n();
-	const columns = Math.min(turn.jobs.length, 3);
 	return (
-		<article className="flex flex-col gap-3">
-			<p className="font-mono text-[11px] uppercase tracking-wider text-dim">
-				{props.label}
-			</p>
-			<div className="rise-in flex items-start gap-3">
-				{turn.referenceAssetIds.map((id) => (
-					<img
-						key={id}
-						src={assetUrl(id)}
-						alt={t("common.reference")}
-						className="size-12 shrink-0 rounded-md border border-line object-cover"
-					/>
-				))}
-				<p className="whitespace-pre-wrap text-lg leading-snug">
-					<span
-						aria-hidden="true"
-						className="mr-2 align-middle font-mono text-[11px] tracking-wider text-accent"
-					>
-						▸
-					</span>
+		<article className="flex flex-col gap-3.5">
+			<header className="rise-in flex flex-col gap-1 md:flex-row md:items-baseline md:gap-3">
+				<span className="shrink-0 font-mono text-[11px] tracking-[0.14em] text-dim uppercase">
+					{props.label}
+				</span>
+				<p className="whitespace-pre-wrap leading-snug text-[#e4e4e7]">
 					{turn.prompt}
 				</p>
-			</div>
+			</header>
+			{turn.referenceAssetIds.length > 0 && (
+				<div className="flex gap-2">
+					{turn.referenceAssetIds.map((id) => (
+						<img
+							key={id}
+							src={assetUrl(id)}
+							alt={t("common.reference")}
+							className="size-12 shrink-0 rounded-[10px] border border-line object-cover"
+						/>
+					))}
+				</div>
+			)}
 			<div
-				className="grid gap-3 max-md:!grid-cols-1"
-				style={{
-					gridTemplateColumns: `repeat(${columns}, minmax(0, ${columns === 1 ? "28rem" : "1fr"}))`,
-				}}
+				className={cn(
+					"grid gap-3.5",
+					turn.jobs.length > 1 ? "sm:grid-cols-2" : "max-w-xl",
+				)}
 			>
 				{turn.jobs.map((job, index) => (
 					<JobCard
@@ -405,6 +478,8 @@ export function Chat({
 	const [open, setOpen] = useState<LightboxItem | null>(null);
 	// The picture in the inspector, once one is chosen.
 	const [selected, setSelected] = useState<LightboxItem | null>(null);
+	// On narrow screens the inspector opens over the turns.
+	const [inspecting, setInspecting] = useState(false);
 
 	const create = useMutation({
 		mutationFn: (draft: Draft & { referenceAssetIds?: string[] }) =>
@@ -487,7 +562,7 @@ export function Chat({
 		<>
 			{firstRun ? (
 				<div className="min-h-0 flex-1 overflow-y-auto">
-					<div className="mx-auto max-w-5xl p-6">
+					<div className="mx-auto max-w-5xl px-4 py-6 md:px-8">
 						<Welcome
 							busy={create.isPending}
 							error={create.error ? i18n.explain(create.error) : null}
@@ -501,7 +576,7 @@ export function Chat({
 				</div>
 			) : (
 				!deciding && (
-					<div className="grid min-h-0 flex-1 max-lg:overflow-y-auto lg:grid-cols-[17rem_minmax(0,1fr)_19rem]">
+					<div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] lg:grid-cols-[300px_minmax(0,1fr)_320px]">
 						<Composer
 							models={models.data ?? []}
 							providers={providers.data ?? []}
@@ -510,22 +585,45 @@ export function Chat({
 							busy={create.isPending}
 							error={create.error ? i18n.explain(create.error) : null}
 							onSubmit={(draft) => create.mutate(draft)}
+							inspector={{
+								content: (
+									<Inspector
+										item={shown}
+										onOpen={(item) => {
+											setInspecting(false);
+											setOpen(item);
+										}}
+										onUseAsReference={(id) => {
+											setInspecting(false);
+											addReference(id);
+										}}
+										upscale={upscale}
+										talkHref={sessionId ? href.talk(sessionId) : undefined}
+									/>
+								),
+								thumb:
+									shown?.mime.startsWith("image/") === true
+										? assetUrl(shown.assetId)
+										: undefined,
+								open: inspecting,
+								onOpenChange: setInspecting,
+							}}
 						>
-							<div className="flex flex-col gap-10 p-6">
+							<div className="flex flex-col gap-8 px-4 py-5 md:px-7 md:py-6">
 								{loadError && (
 									<p className="text-sm text-danger">
 										{i18n.explain(loadError)}
 									</p>
 								)}
 								{!sessionId && sessions.data && (
-									<div className="rise-in py-6">
-										<p className="font-mono text-[11px] uppercase tracking-[0.18em] text-accent">
+									<div className="rise-in py-6 md:py-10">
+										<p className="font-mono text-[11px] tracking-[0.18em] text-dim uppercase">
 											{t("chat.eyebrow")}
 										</p>
-										<h1 className="mt-3 font-display text-5xl leading-[0.95] font-extrabold tracking-tight">
+										<h1 className="mt-3 font-display text-[40px] leading-[0.95] font-extrabold tracking-[-0.03em] text-balance md:text-5xl">
 											{t("chat.heading")}
 										</h1>
-										<p className="mt-4 max-w-xl leading-relaxed text-dim">
+										<p className="mt-4 max-w-xl leading-relaxed text-soft">
 											{t("chat.intro")}
 										</p>
 									</div>
@@ -543,7 +641,13 @@ export function Chat({
 												.filter(Boolean)
 												.join(" · ")}
 											models={byId}
-											onOpen={setSelected}
+											onOpen={(item) => {
+												setSelected(item);
+												// The sheet is for narrow screens; wide ones show a column.
+												setInspecting(
+													!window.matchMedia("(min-width: 1024px)").matches,
+												);
+											}}
 											onUseAsReference={addReference}
 											upscale={upscale}
 										/>
@@ -551,13 +655,6 @@ export function Chat({
 									.toReversed()}
 							</div>
 						</Composer>
-						<Inspector
-							item={shown}
-							onOpen={setOpen}
-							onUseAsReference={addReference}
-							upscale={upscale}
-							talkHref={sessionId ? href.talk(sessionId) : undefined}
-						/>
 					</div>
 				)
 			)}

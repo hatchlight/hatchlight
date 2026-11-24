@@ -1,4 +1,19 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+	useEffect,
+	useId,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
+import { Button } from "@/components/ui/button";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogTitle,
+} from "@/components/ui/dialog";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useI18n } from "./i18n";
 
 interface Props {
@@ -24,6 +39,10 @@ const MAX_SIDE = 2048;
  * side, so the new part is drawn into the old one instead of beside it.
  */
 const OVERLAP = 0.04;
+
+/** A choice that stays lit while it holds, among the tools. */
+const CHOICE =
+	"h-10 rounded-xl px-3.5 aria-pressed:border-transparent aria-pressed:bg-ink aria-pressed:text-bg";
 
 const clamp = (value: number, min: number, max: number) =>
 	Math.min(max, Math.max(min, value));
@@ -53,7 +72,8 @@ const canvasBlob = (canvas: HTMLCanvasElement, type: string) =>
 /** Makes room around a picture for a model to fill. */
 export function Extend({ src, onDone, onClose }: Props) {
 	const { t, explain, number } = useI18n();
-	const dialog = useRef<HTMLDialogElement>(null);
+	const shapeLabel = useId();
+	const roomLabel = useId();
 	const frame = useRef<HTMLDivElement>(null);
 	const [image, setImage] = useState<HTMLImageElement | null>(null);
 	const [shape, setShape] = useState<Shape>("16:9");
@@ -69,7 +89,6 @@ export function Extend({ src, onDone, onClose }: Props) {
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: loaded once per picture
 	useEffect(() => {
-		dialog.current?.showModal();
 		const loaded = new Image();
 		loaded.onload = () => setImage(loaded);
 		loaded.onerror = () => setError(t("extend.cannotLoad"));
@@ -243,23 +262,23 @@ export function Extend({ src, onDone, onClose }: Props) {
 		}
 	};
 
-	const button =
-		"rounded-md px-3 py-1.5 text-sm text-dim hover:bg-line hover:text-ink aria-pressed:bg-line aria-pressed:text-ink";
-
 	return (
-		<dialog
-			ref={dialog}
-			onClose={onClose}
-			onCancel={(event) => saving && event.preventDefault()}
-			aria-labelledby="extend-title"
-			className="m-auto max-h-[96vh] max-w-[96vw] rounded-lg border border-line bg-panel p-0 text-ink"
+		<Dialog
+			open
+			onOpenChange={(open) => !open && !saving && onClose()}
+			disablePointerDismissal
 		>
-			<div className="flex flex-col gap-3 p-4">
-				<div>
-					<h2 id="extend-title" className="font-display text-xl font-bold">
+			<DialogContent
+				showCloseButton={false}
+				className="flex max-h-[96dvh] w-full max-w-[calc(100%-2rem)] sm:w-fit flex-col gap-4 overflow-y-auto rounded-2xl bg-panel p-5 ring-line sm:max-w-[calc(100%-2rem)] sm:p-6"
+			>
+				<div className="flex flex-col gap-1">
+					<DialogTitle className="font-display text-2xl font-bold tracking-tight">
 						{t("extend.title")}
-					</h2>
-					<p className="mt-1 text-sm text-dim">{t("extend.hint")}</p>
+					</DialogTitle>
+					<DialogDescription className="text-dim">
+						{t("extend.hint")}
+					</DialogDescription>
 				</div>
 				<div
 					ref={frame}
@@ -270,7 +289,7 @@ export function Extend({ src, onDone, onClose }: Props) {
 					onPointerCancel={() => {
 						drag.current = null;
 					}}
-					className="relative mx-auto w-fit touch-none select-none overflow-hidden rounded-md"
+					className="relative mx-auto w-fit touch-none select-none overflow-hidden rounded-xl"
 				>
 					<canvas
 						ref={preview}
@@ -299,7 +318,7 @@ export function Extend({ src, onDone, onClose }: Props) {
 										place,
 									};
 								}}
-								className="absolute cursor-move border border-white/90 focus-visible:outline-2 focus-visible:outline-accent"
+								className="absolute cursor-move border border-white/90 focus-visible:outline-2 focus-visible:outline-pink"
 								style={{
 									left: `${box.x * 100}%`,
 									top: `${box.y * 100}%`,
@@ -310,77 +329,88 @@ export function Extend({ src, onDone, onClose }: Props) {
 						</>
 					)}
 				</div>
-				<div className="flex flex-wrap items-center gap-1">
-					<fieldset className="flex flex-wrap items-center gap-1">
-						<legend className="sr-only">{t("extend.shape")}</legend>
-						<span className="mr-1 text-sm text-dim" aria-hidden="true">
-							{t("extend.shape")}
-						</span>
+				<div className="flex flex-wrap items-center gap-2">
+					<span id={shapeLabel} className="mr-1 text-sm text-dim">
+						{t("extend.shape")}
+					</span>
+					<ToggleGroup
+						aria-labelledby={shapeLabel}
+						value={[shape]}
+						onValueChange={([which]) => {
+							const next = SHAPES.find((s) => s === which);
+							if (next) setShape(next);
+						}}
+						className="flex-wrap"
+					>
 						{SHAPES.map((which) => (
-							<button
+							<ToggleGroupItem
 								key={which}
-								type="button"
-								aria-pressed={shape === which}
-								onClick={() => setShape(which)}
-								className={button}
+								value={which}
+								variant="outline"
+								className={CHOICE}
 							>
 								{which === "same" ? t("extend.same") : which}
-							</button>
+							</ToggleGroupItem>
 						))}
-					</fieldset>
-					<span className="mx-2 h-5 w-px bg-line" aria-hidden="true" />
-					<fieldset className="flex flex-wrap items-center gap-1">
-						<legend className="sr-only">{t("extend.room")}</legend>
-						<span className="mr-1 text-sm text-dim" aria-hidden="true">
-							{t("extend.room")}
-						</span>
+					</ToggleGroup>
+				</div>
+				<div className="flex flex-wrap items-center gap-2">
+					<span id={roomLabel} className="mr-1 text-sm text-dim">
+						{t("extend.room")}
+					</span>
+					<ToggleGroup
+						aria-labelledby={roomLabel}
+						value={[String(room)]}
+						onValueChange={([value]) => {
+							const next = ROOMS.find((r) => String(r) === value);
+							if (next != null) setRoom(next);
+						}}
+						className="flex-wrap"
+					>
 						{ROOMS.map((value) => (
-							<button
+							<ToggleGroupItem
 								key={value}
-								type="button"
-								aria-pressed={room === value}
-								onClick={() => setRoom(value)}
-								className={button}
+								value={String(value)}
+								variant="outline"
+								className={CHOICE}
 							>
 								{value === 0
 									? t("extend.none")
 									: `+${number(value, { style: "percent" })}`}
-							</button>
+							</ToggleGroupItem>
 						))}
-					</fieldset>
+					</ToggleGroup>
 				</div>
-				<div className="flex flex-wrap items-center gap-3">
-					{result && (
-						<span className="font-mono text-xs text-dim">
-							{t("adjust.result", {
-								width: number(result.width),
-								height: number(result.height),
-							})}
+				<div className="flex flex-wrap items-center justify-end gap-2 border-t border-line pt-4">
+					<span className="mr-auto flex flex-wrap items-center gap-3">
+						{result && (
+							<span className="font-mono text-xs text-dim">
+								{t("adjust.result", {
+									width: number(result.width),
+									height: number(result.height),
+								})}
+							</span>
+						)}
+						{image && !grows && (
+							<span className="text-sm text-dim">{t("extend.noRoom")}</span>
+						)}
+						<span className="text-sm text-danger" role="alert">
+							{error}
 						</span>
-					)}
-					{image && !grows && (
-						<span className="text-sm text-dim">{t("extend.noRoom")}</span>
-					)}
-					<span className="ml-auto text-sm text-danger" role="alert">
-						{error}
 					</span>
-					<button
-						type="button"
-						onClick={onClose}
-						className="rounded-md px-4 py-2 text-sm text-dim hover:text-ink"
-					>
+					<Button variant="ghost" onClick={onClose} disabled={saving}>
 						{t("common.cancel")}
-					</button>
-					<button
-						type="button"
+					</Button>
+					<Button
+						variant="aurora"
+						size="lg"
 						onClick={done}
 						disabled={!grows || saving}
-						className="cta rounded-lg px-5 py-2 font-display font-bold"
 					>
 						{saving ? t("mask.saving") : t("extend.done")}
-					</button>
+					</Button>
 				</div>
-			</div>
-		</dialog>
+			</DialogContent>
+		</Dialog>
 	);
 }

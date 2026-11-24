@@ -1,3 +1,4 @@
+import { Progress as ProgressPrimitive } from "@base-ui/react/progress";
 import type {
 	Asset,
 	GalleryItem,
@@ -12,7 +13,25 @@ import {
 	useQuery,
 	useQueryClient,
 } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { PenLineIcon, XIcon } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+	AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { ProgressIndicator, ProgressTrack } from "@/components/ui/progress";
+import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import { useAccount, useCan } from "./Accounts";
 import { api, assetUrl, GALLERY_PAGE, sampleUrl } from "./api";
 import { remaining } from "./format";
@@ -53,21 +72,88 @@ function stageText(t: I18n["t"], stage: TrainingStage): string {
 	}
 }
 
-function Bar({ value, label }: { value: number; label: string }) {
+/** The small mono uppercase label over a section or a value. */
+export const LABEL =
+	"font-mono text-[11px] font-medium uppercase tracking-[0.14em] text-dim";
+
+/** A section of a page: a panel with roomy spacing. */
+export const SECTION =
+	"gap-5 rounded-2xl ring-line [--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]";
+
+/** Progress of something under way: the Aurora flowing along a bar. */
+export function Bar({
+	value,
+	label,
+	className,
+}: {
+	/** From 0 to 100. */
+	value: number;
+	label: string;
+	className?: string;
+}) {
 	return (
-		<div
-			role="progressbar"
+		<ProgressPrimitive.Root
+			value={value}
 			aria-label={label}
-			aria-valuemin={0}
-			aria-valuemax={100}
-			aria-valuenow={Math.round(value * 100)}
-			className="h-1.5 overflow-hidden rounded-full bg-line"
+			className={cn("w-full", className)}
 		>
-			<div
-				className="aurora h-full rounded-full transition-[width] duration-500"
-				style={{ width: `${Math.max(2, value * 100)}%` }}
-			/>
-		</div>
+			<ProgressTrack className="h-1.5 bg-line">
+				<ProgressIndicator className="flow rounded-full duration-500" />
+			</ProgressTrack>
+		</ProgressPrimitive.Root>
+	);
+}
+
+/** A button that asks before doing what cannot be undone. */
+export function ConfirmButton({
+	label,
+	ariaLabel,
+	question,
+	confirm,
+	disabled,
+	onConfirm,
+}: {
+	label: string;
+	ariaLabel?: string;
+	question: string;
+	confirm: string;
+	disabled?: boolean;
+	onConfirm(): void;
+}) {
+	const { t } = useI18n();
+	const [open, setOpen] = useState(false);
+	return (
+		<AlertDialog open={open} onOpenChange={setOpen}>
+			<AlertDialogTrigger
+				render={
+					<Button
+						variant="outline"
+						disabled={disabled}
+						aria-label={ariaLabel}
+						className="text-dim hover:text-danger"
+					/>
+				}
+			>
+				{label}
+			</AlertDialogTrigger>
+			<AlertDialogContent>
+				<AlertDialogHeader>
+					<AlertDialogTitle>{question}</AlertDialogTitle>
+				</AlertDialogHeader>
+				<AlertDialogFooter>
+					<AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+					<AlertDialogAction
+						variant="destructive"
+						onClick={() => {
+							setOpen(false);
+							onConfirm();
+						}}
+					>
+						{confirm}
+					</AlertDialogAction>
+				</AlertDialogFooter>
+			</AlertDialogContent>
+		</AlertDialog>
 	);
 }
 
@@ -84,11 +170,11 @@ function Install({ status }: { status: TrainerStatus }) {
 				? step.receivedBytes / step.totalBytes
 				: null;
 		return (
-			<div className="flex flex-col gap-2" role="status">
+			<div className="flex flex-col gap-3" role="status">
 				<p className="text-sm">{stepText(t, step.step)}</p>
 				{fraction != null && (
 					<>
-						<Bar value={fraction} label={stepText(t, step.step)} />
+						<Bar value={fraction * 100} label={stepText(t, step.step)} />
 						<p className="font-mono text-xs text-dim">
 							{t("training.install.received", {
 								received: bytes(step.receivedBytes ?? 0),
@@ -103,19 +189,15 @@ function Install({ status }: { status: TrainerStatus }) {
 					</p>
 				)}
 				<div>
-					<button
-						type="button"
-						onClick={() => cancel.mutate()}
-						className="rounded-md border border-line px-3 py-1 text-sm text-dim hover:border-dim hover:text-ink"
-					>
+					<Button variant="outline" onClick={() => cancel.mutate()}>
 						{t("common.cancel")}
-					</button>
+					</Button>
 				</div>
 			</div>
 		);
 	}
 	return (
-		<div className="flex flex-col gap-3">
+		<div className="flex flex-col gap-4">
 			<p className="text-sm leading-relaxed text-dim">
 				{t("training.install.intro", { size: bytes(status.downloadBytes) })}
 			</p>
@@ -128,14 +210,13 @@ function Install({ status }: { status: TrainerStatus }) {
 				<p className="text-sm text-danger">{explain(install.error)}</p>
 			)}
 			<div>
-				<button
-					type="button"
+				<Button
+					variant="aurora"
 					onClick={() => install.mutate()}
 					disabled={install.isPending}
-					className="aurora rounded-md px-4 py-2 text-sm font-medium disabled:opacity-40"
 				>
 					{t("training.install.start")}
-				</button>
+				</Button>
 			</div>
 		</div>
 	);
@@ -147,20 +228,21 @@ function Samples({ training }: { training: TrainingView }) {
 	if (training.samples.length === 0) return null;
 	const latest = training.samples.at(-1) as number;
 	return (
-		<div className="flex flex-col gap-2">
-			<p className="text-sm">{t("training.samples")}</p>
-			<div className="flex flex-wrap items-end gap-2">
+		<div className="flex flex-col gap-3">
+			<p className={LABEL}>{t("training.samples")}</p>
+			<div className="flex flex-wrap items-end gap-3">
 				{training.samples.map((step) => (
-					<figure key={step} className="flex flex-col gap-1">
+					<figure key={step} className="flex flex-col gap-1.5">
 						<a
 							href={sampleUrl(training.id, step)}
 							target="_blank"
 							rel="noreferrer"
+							className="rounded-lg focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
 						>
 							<img
 								src={sampleUrl(training.id, step)}
 								alt={t("training.sampleAt", { step })}
-								className={`rounded border border-line object-cover ${
+								className={`rounded-lg object-cover ${
 									step === latest ? "h-40 w-40" : "h-20 w-20"
 								}`}
 							/>
@@ -184,7 +266,7 @@ function Progress({ training }: { training: TrainingView }) {
 	const finish = useMutation({ mutationFn: api.finishTraining });
 	if (training.state !== "running") {
 		return (
-			<div className="flex flex-col gap-3">
+			<div className="flex flex-col gap-4">
 				{training.state === "done" && (
 					<p className="text-sm text-good" role="status">
 						{training.keptStep != null
@@ -217,7 +299,7 @@ function Progress({ training }: { training: TrainingView }) {
 	}
 	const fraction = training.steps > 0 ? training.step / training.steps : 0;
 	return (
-		<div className="flex flex-col gap-3">
+		<div className="flex flex-col gap-4">
 			<div className="flex flex-col gap-2">
 				<div className="flex flex-wrap items-baseline justify-between gap-2">
 					<p className="font-medium">
@@ -233,7 +315,7 @@ function Progress({ training }: { training: TrainingView }) {
 						{stageText(t, training.stage)}
 					</p>
 				</div>
-				<Bar value={fraction} label={stageText(t, training.stage)} />
+				<Bar value={fraction * 100} label={stageText(t, training.stage)} />
 				<p className="font-mono text-xs text-dim">
 					{t("training.steps", { step: training.step, steps: training.steps })}
 					{training.secondsLeft != null &&
@@ -254,22 +336,17 @@ function Progress({ training }: { training: TrainingView }) {
 			)}
 			<div className="flex flex-wrap gap-2">
 				{training.savedStep != null && training.step < training.steps && (
-					<button
-						type="button"
+					<Button
+						variant="secondary"
 						onClick={() => finish.mutate()}
 						disabled={finish.isPending}
-						className="rounded-md border border-line px-3 py-1 text-sm hover:border-dim disabled:opacity-40"
 					>
 						{t("training.keep", { step: training.savedStep })}
-					</button>
+					</Button>
 				)}
-				<button
-					type="button"
-					onClick={() => cancel.mutate()}
-					className="rounded-md border border-line px-3 py-1 text-sm text-dim hover:border-dim hover:text-ink"
-				>
+				<Button variant="outline" onClick={() => cancel.mutate()}>
 					{t("training.cancel")}
-				</button>
+				</Button>
 			</div>
 		</div>
 	);
@@ -310,14 +387,14 @@ function GalleryChooser({
 		TRAINABLE.has(item.mime),
 	);
 	return (
-		<div className="flex flex-col gap-2 rounded-md border border-line bg-bg p-2">
+		<div className="flex flex-col gap-3 rounded-xl border border-line bg-bg p-3">
 			{pages.error && (
 				<p className="text-sm text-danger">{explain(pages.error)}</p>
 			)}
 			{pages.isSuccess && items.length === 0 && (
 				<p className="text-sm text-dim">{t("training.galleryEmpty")}</p>
 			)}
-			<ul className="grid max-h-72 grid-cols-4 gap-1.5 overflow-y-auto sm:grid-cols-6">
+			<ul className="grid max-h-72 grid-cols-4 gap-2 overflow-y-auto p-0.5 sm:grid-cols-6">
 				{items.map((item) => {
 					const on = chosen.has(item.id);
 					return (
@@ -328,8 +405,8 @@ function GalleryChooser({
 								aria-pressed={on}
 								aria-label={t("training.pickPicture")}
 								title={item.prompt ?? undefined}
-								className={`block aspect-square w-full overflow-hidden rounded border-2 ${
-									on ? "border-accent" : "border-transparent hover:border-line"
+								className={`block aspect-square w-full overflow-hidden rounded-lg outline-none ring-offset-2 ring-offset-bg focus-visible:ring-3 focus-visible:ring-ring/50 ${
+									on ? "ring-2 ring-pink" : "opacity-80 hover:opacity-100"
 								}`}
 							>
 								<img
@@ -345,22 +422,17 @@ function GalleryChooser({
 			</ul>
 			<div className="flex flex-wrap gap-2">
 				{pages.hasNextPage && (
-					<button
-						type="button"
+					<Button
+						variant="ghost"
 						onClick={() => void pages.fetchNextPage()}
 						disabled={pages.isFetchingNextPage}
-						className="rounded-md px-2 py-1 text-sm text-dim hover:text-ink disabled:opacity-40"
 					>
 						{t("training.galleryMore")}
-					</button>
+					</Button>
 				)}
-				<button
-					type="button"
-					onClick={close}
-					className="rounded-md border border-line px-3 py-1 text-sm hover:border-dim"
-				>
+				<Button variant="secondary" onClick={close}>
 					{t("training.galleryClose")}
-				</button>
+				</Button>
 			</div>
 		</div>
 	);
@@ -370,6 +442,7 @@ function GalleryChooser({
 function Form({ hidden }: { hidden: boolean }) {
 	const client = useQueryClient();
 	const { t, explain } = useI18n();
+	const id = useId();
 	const input = useRef<HTMLInputElement>(null);
 	const [pictures, setPictures] = useState<Picture[]>([]);
 	// The latest pictures, for describing that goes on across renders.
@@ -472,45 +545,40 @@ function Form({ hidden }: { hidden: boolean }) {
 		consent &&
 		!described;
 	const uncaptioned = pictures.filter((p) => !p.caption.trim());
-	const field = "rounded-md border border-line bg-bg px-3 py-2 text-sm";
-	const small =
-		"rounded-md border border-line px-3 py-1 text-sm hover:border-dim disabled:opacity-40";
 	return (
 		<form
 			hidden={hidden}
-			className="flex flex-col gap-4"
+			className="flex flex-col gap-6"
 			onSubmit={(event) => {
 				event.preventDefault();
 				if (ready) train.mutate();
 			}}
 		>
-			<div className="flex flex-col gap-2">
+			<div className="flex flex-col gap-3">
 				<div className="flex flex-wrap items-center justify-between gap-2">
-					<p className="text-sm">
+					<p className="text-sm font-medium">
 						{t("training.pictures", {
 							count: pictures.length,
 							min: MIN_PICTURES,
 						})}
 					</p>
 					<div className="flex flex-wrap gap-2">
-						<button
-							type="button"
+						<Button
+							variant="outline"
 							onClick={() => input.current?.click()}
 							disabled={upload.isPending}
-							className={small}
 						>
 							{upload.isPending
 								? t("training.adding")
 								: t("training.addPictures")}
-						</button>
-						<button
-							type="button"
+						</Button>
+						<Button
+							variant="outline"
 							onClick={() => setChoosing((open) => !open)}
 							aria-expanded={choosing}
-							className={small}
 						>
 							{t("training.fromGallery")}
-						</button>
+						</Button>
 					</div>
 					<input
 						ref={input}
@@ -547,7 +615,7 @@ function Form({ hidden }: { hidden: boolean }) {
 					/>
 				)}
 				{pictures.length > 0 && (
-					<ul className="grid gap-2 sm:grid-cols-2">
+					<ul className="grid gap-3 sm:grid-cols-2">
 						{pictures.map((picture, index) => {
 							const size = picture.size;
 							const tooSmall =
@@ -556,9 +624,9 @@ function Form({ hidden }: { hidden: boolean }) {
 							return (
 								<li
 									key={picture.asset.id}
-									className="flex items-start gap-2 rounded-md border border-line bg-bg p-1.5"
+									className="flex items-start gap-3 rounded-xl border border-line bg-bg p-2"
 								>
-									<div className="relative shrink-0">
+									<div className="flex w-20 shrink-0 flex-col gap-1">
 										<img
 											src={assetUrl(picture.asset.id)}
 											alt=""
@@ -569,7 +637,7 @@ function Form({ hidden }: { hidden: boolean }) {
 													size: { width: naturalWidth, height: naturalHeight },
 												});
 											}}
-											className={`h-20 w-20 rounded object-cover ${busy ? "animate-pulse" : ""}`}
+											className={`h-20 w-20 rounded-lg object-cover ${busy ? "animate-pulse motion-reduce:animate-none" : ""}`}
 										/>
 										{tooSmall && (
 											<span
@@ -577,13 +645,13 @@ function Form({ hidden }: { hidden: boolean }) {
 													width: size.width,
 													height: size.height,
 												})}
-												className="absolute bottom-0.5 left-0.5 rounded bg-bg/80 px-1 text-[10px] text-danger"
+												className="font-mono text-[11px] text-danger"
 											>
 												{t("training.small")}
 											</span>
 										)}
 									</div>
-									<textarea
+									<Textarea
 										value={picture.caption}
 										onChange={(event) =>
 											change(picture.asset.id, { caption: event.target.value })
@@ -593,11 +661,12 @@ function Form({ hidden }: { hidden: boolean }) {
 										maxLength={500}
 										rows={3}
 										disabled={busy}
-										className="min-w-0 flex-1 resize-none rounded border border-line bg-panel px-2 py-1 text-sm"
+										className="min-h-20 min-w-0 flex-1 resize-none [field-sizing:fixed]"
 									/>
 									<div className="flex flex-col items-center">
-										<button
-											type="button"
+										<Button
+											variant="ghost"
+											size="icon"
 											onClick={() =>
 												setPictures((current) =>
 													current.filter(
@@ -606,21 +675,20 @@ function Form({ hidden }: { hidden: boolean }) {
 												)
 											}
 											aria-label={t("training.removePicture", { n: index + 1 })}
-											className="rounded px-1.5 text-dim hover:text-ink"
 										>
-											×
-										</button>
+											<XIcon aria-hidden="true" />
+										</Button>
 										{captioner.data?.ready && (
-											<button
-												type="button"
+											<Button
+												variant="ghost"
+												size="icon"
 												onClick={() => void describe([picture], false)}
 												disabled={described != null}
 												aria-label={t("training.describe", { n: index + 1 })}
 												title={t("training.describe", { n: index + 1 })}
-												className="rounded px-1.5 text-dim hover:text-ink disabled:opacity-40"
 											>
-												✎
-											</button>
+												<PenLineIcon aria-hidden="true" />
+											</Button>
 										)}
 									</div>
 								</li>
@@ -640,23 +708,18 @@ function Form({ hidden }: { hidden: boolean }) {
 												total: described.total,
 											})}
 										</p>
-										<button
-											type="button"
-											onClick={stopDescribing}
-											className={small}
-										>
+										<Button variant="outline" onClick={stopDescribing}>
 											{t("training.describeStop")}
-										</button>
+										</Button>
 									</>
 								) : (
 									uncaptioned.length > 0 && (
-										<button
-											type="button"
+										<Button
+											variant="outline"
 											onClick={() => void describe(uncaptioned, true)}
-											className={small}
 										>
 											{t("training.describeAll")}
-										</button>
+										</Button>
 									)
 								)}
 							</div>
@@ -676,64 +739,75 @@ function Form({ hidden }: { hidden: boolean }) {
 					</div>
 				)}
 			</div>
-			<div className="flex flex-wrap gap-3">
-				<label className="flex min-w-48 flex-1 flex-col gap-1 text-sm text-dim">
-					{t("training.name")}
-					<input
-						value={name}
-						onChange={(event) => setName(event.target.value)}
-						maxLength={80}
-						placeholder={t("training.namePlaceholder")}
-						className={field}
-					/>
-				</label>
-				<label className="flex min-w-48 flex-1 flex-col gap-1 text-sm text-dim">
-					{t("training.trigger")}
-					<input
-						value={trigger}
-						onChange={(event) => setTrigger(event.target.value)}
-						maxLength={40}
-						placeholder={t("training.triggerPlaceholder")}
-						spellCheck={false}
-						className={`${field} font-mono`}
-					/>
-				</label>
-				<label className="flex w-32 flex-col gap-1 text-sm text-dim">
-					{t("training.stepsLabel")}
-					<input
-						type="number"
-						min={100}
-						max={4000}
-						step={50}
-						value={steps}
-						onChange={(event) => setSteps(event.target.value)}
-						className={`${field} font-mono`}
-					/>
-				</label>
+			<div className="flex flex-col gap-2">
+				<div className="grid gap-4 sm:grid-cols-[1fr_1fr_8rem]">
+					<div className="flex flex-col gap-2">
+						<Label htmlFor={`${id}-name`} className="text-dim">
+							{t("training.name")}
+						</Label>
+						<Input
+							id={`${id}-name`}
+							value={name}
+							onChange={(event) => setName(event.target.value)}
+							maxLength={80}
+							placeholder={t("training.namePlaceholder")}
+							className="h-10"
+						/>
+					</div>
+					<div className="flex flex-col gap-2">
+						<Label htmlFor={`${id}-trigger`} className="text-dim">
+							{t("training.trigger")}
+						</Label>
+						<Input
+							id={`${id}-trigger`}
+							value={trigger}
+							onChange={(event) => setTrigger(event.target.value)}
+							maxLength={40}
+							placeholder={t("training.triggerPlaceholder")}
+							spellCheck={false}
+							className="h-10 font-mono"
+						/>
+					</div>
+					<div className="flex flex-col gap-2">
+						<Label htmlFor={`${id}-steps`} className="text-dim">
+							{t("training.stepsLabel")}
+						</Label>
+						<Input
+							id={`${id}-steps`}
+							type="number"
+							min={100}
+							max={4000}
+							step={50}
+							value={steps}
+							onChange={(event) => setSteps(event.target.value)}
+							className="h-10 font-mono"
+						/>
+					</div>
+				</div>
+				<p className="text-xs leading-relaxed text-dim">
+					{t("training.triggerHint")}
+				</p>
 			</div>
-			<p className="text-xs leading-relaxed text-dim">
-				{t("training.triggerHint")}
-			</p>
-			<label className="flex items-start gap-2 text-sm">
-				<input
-					type="checkbox"
+			<Label className="items-start gap-3 leading-relaxed font-normal">
+				<Checkbox
 					checked={consent}
-					onChange={(event) => setConsent(event.target.checked)}
-					className="mt-0.5 accent-accent"
+					onCheckedChange={setConsent}
+					className="mt-0.5"
 				/>
 				{t("training.consent")}
-			</label>
+			</Label>
 			{train.error && (
 				<p className="text-sm text-danger">{explain(train.error)}</p>
 			)}
 			<div>
-				<button
+				<Button
 					type="submit"
+					variant="aurora"
+					size="lg"
 					disabled={!ready || train.isPending}
-					className="aurora rounded-md px-4 py-2 text-sm font-medium disabled:opacity-40"
 				>
 					{t("training.start")}
-				</button>
+				</Button>
 			</div>
 		</form>
 	);
@@ -742,38 +816,16 @@ function Form({ hidden }: { hidden: boolean }) {
 /** Deletes the trainer, to give its gigabytes back. */
 function Remove() {
 	const { t, explain } = useI18n();
-	const [confirming, setConfirming] = useState(false);
 	const remove = useMutation({ mutationFn: api.removeTrainer });
 	return (
-		<div className="flex flex-wrap items-center gap-2 border-t border-line pt-3 text-sm">
-			{confirming ? (
-				<>
-					<span className="text-dim">{t("training.removeAsk")}</span>
-					<button
-						type="button"
-						onClick={() => remove.mutate()}
-						disabled={remove.isPending}
-						className="rounded-md bg-danger px-3 py-1 font-medium text-bg disabled:opacity-40"
-					>
-						{t("training.removeConfirm")}
-					</button>
-					<button
-						type="button"
-						onClick={() => setConfirming(false)}
-						className="rounded-md px-3 py-1 text-dim hover:text-ink"
-					>
-						{t("common.cancel")}
-					</button>
-				</>
-			) : (
-				<button
-					type="button"
-					onClick={() => setConfirming(true)}
-					className="rounded-md px-2 py-1 text-dim hover:text-ink"
-				>
-					{t("training.remove")}
-				</button>
-			)}
+		<div className="flex flex-wrap items-center gap-3 border-t border-line pt-4 text-sm">
+			<ConfirmButton
+				label={t("training.remove")}
+				question={t("training.removeAsk")}
+				confirm={t("training.removeConfirm")}
+				disabled={remove.isPending}
+				onConfirm={() => remove.mutate()}
+			/>
 			{remove.error && <p className="text-danger">{explain(remove.error)}</p>}
 		</div>
 	);
@@ -786,15 +838,11 @@ export function TrainPanel() {
 	const status = useQuery({ queryKey: ["trainer"], queryFn: api.trainer });
 	const data = status.data;
 	return (
-		<section className="mt-4 flex flex-col gap-4 rounded-lg border border-line bg-panel p-4">
-			<div>
-				<h3 className="font-display text-lg font-bold tracking-tight">
-					{t("training.title")}
-				</h3>
-				<p className="mt-1 text-sm leading-relaxed text-dim">
-					{t("training.intro")}
-				</p>
-			</div>
+		<section
+			aria-label={t("training.title")}
+			className="flex flex-col gap-5 rounded-xl border border-line bg-panel-2/60 p-4 sm:p-5"
+		>
+			<p className="text-sm leading-relaxed text-dim">{t("training.intro")}</p>
 			{status.error && (
 				<p className="text-sm text-danger">{explain(status.error)}</p>
 			)}

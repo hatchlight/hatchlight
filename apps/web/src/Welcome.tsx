@@ -1,5 +1,8 @@
 import type { Media } from "@hatchlight/core/types";
 import { type CSSProperties, useState } from "react";
+import { Mark } from "@/components/Logo";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { type Draft, rememberModels } from "./Composer";
 import { useI18n } from "./i18n";
 import { Picker } from "./Picker";
@@ -52,32 +55,35 @@ function FirstPrompt(props: {
 				send();
 			}}
 		>
-			<div className="flex flex-wrap gap-2">
-				<input
+			<div className="flex flex-wrap gap-2 rounded-[22px] border border-[#2c2c32] bg-panel p-2 pl-4 focus-within:border-orange/50">
+				<Input
 					value={prompt}
 					onChange={(event) => setPrompt(event.target.value)}
 					aria-label={t("welcome.prompt")}
 					placeholder={t("welcome.prompt")}
-					className="min-w-0 flex-[1_1_18rem] rounded-xl border border-line-strong bg-bg px-4 py-3 text-base"
+					className="h-12 min-w-0 flex-[1_1_16rem] border-0 bg-transparent px-0 text-base focus-visible:ring-0 md:text-base dark:bg-transparent"
 				/>
-				<button
+				<Button
 					type="submit"
+					variant="aurora"
 					disabled={!canSend}
-					className="cta rounded-xl px-6 py-3 font-display text-base font-bold"
+					className="h-12 px-6 text-[15px] max-sm:w-full"
 				>
 					{props.busy ? t("welcome.generating") : t("welcome.generate")}
-				</button>
+				</Button>
 			</div>
-			<div className="flex flex-wrap gap-1.5">
+			<div className="flex flex-wrap gap-2">
 				{suggestions.map((suggestion) => (
-					<button
+					<Button
 						key={suggestion.prompt}
 						type="button"
+						variant="outline"
+						aria-pressed={prompt === suggestion.prompt}
 						onClick={() => setPrompt(suggestion.prompt)}
-						className="rounded-full border border-line px-3 py-1 text-xs text-dim transition-colors hover:border-line-strong hover:text-ink"
+						className="h-10 rounded-full px-4 text-soft aria-pressed:border-ink aria-pressed:text-ink dark:bg-panel"
 					>
 						{suggestion.label}
-					</button>
+					</Button>
 				))}
 			</div>
 			{props.error && <p className="text-sm text-danger">{props.error}</p>}
@@ -100,14 +106,15 @@ export function Welcome(props: {
 	const [media, setMedia] = useState<Media>("image");
 
 	return (
-		<div className="relative flex flex-col gap-8 py-8">
+		<div className="relative flex flex-col gap-10 py-6 md:py-12">
 			<div className="sky" aria-hidden="true" />
-			<header className="rise-in relative flex flex-col gap-3">
-				<h1 className="font-display text-4xl leading-[0.98] font-extrabold tracking-tight text-balance sm:text-6xl">
+			<header className="rise-in relative flex flex-col items-start gap-5">
+				<Mark className="h-14 md:h-16" />
+				<h1 className="max-w-[16ch] font-display text-[44px] leading-[0.95] font-extrabold tracking-[-0.03em] text-balance sm:text-7xl">
 					{t("welcome.title")}{" "}
-					<span className="aurora-text">{t("welcome.titleAccent")}</span>
+					<span className="text-soft">{t("welcome.titleAccent")}</span>
 				</h1>
-				<p className="max-w-[58ch] text-base leading-relaxed text-dim">
+				<p className="max-w-[58ch] text-[17px] leading-relaxed text-soft">
 					{t("welcome.lede")}
 				</p>
 			</header>
@@ -127,14 +134,14 @@ export function Welcome(props: {
 				/>
 			</div>
 
-			<button
-				type="button"
+			<Button
+				variant="link"
 				onClick={props.onSkip}
-				className="rise-in relative self-start text-sm text-dim underline decoration-line-strong underline-offset-4 hover:text-ink"
+				className="rise-in relative h-10 self-start px-0 text-dim decoration-line-strong underline-offset-4 hover:text-ink"
 				style={{ "--i": 8 } as CSSProperties}
 			>
 				{t("welcome.skip")}
-			</button>
+			</Button>
 		</div>
 	);
 }
