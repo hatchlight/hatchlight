@@ -151,6 +151,8 @@ export interface LocalRuntime {
 	throughWindows: boolean;
 	/** How it runs here: `offload` keeps part of the model in system memory. */
 	fit: Fit;
+	/** Memory of the GPU it runs on, in bytes; absent on the CPU. */
+	gpuMemoryBytes?: number;
 	/** Absolute paths of the variant's files, by role (or name, without one). */
 	files: Record<string, string>;
 	/** A folder on the same disk for the engine's output. */
@@ -1004,6 +1006,7 @@ export class LocalModelStore {
 			executable: join(dir, ...choice.build.executable.split(/[\\/]/)),
 			throughWindows: choice.throughWindows,
 			fit: fitOf(variant, hardware, choice),
+			...(choice.gpu && { gpuMemoryBytes: choice.gpu.memoryBytes }),
 			scratch: join(this.root, "tmp"),
 			files: Object.fromEntries(
 				variant.files.map((file) => [
@@ -1044,6 +1047,7 @@ export class LocalModelStore {
 			executable: join(dir, ...choice.build.executable.split(/[\\/]/)),
 			throughWindows: choice.throughWindows,
 			fit: fitOf(variant, hardware, choice),
+			...(choice.gpu && { gpuMemoryBytes: choice.gpu.memoryBytes }),
 			scratch: join(this.root, "tmp"),
 			files: { model: this.checkpoints.path(id) },
 		};

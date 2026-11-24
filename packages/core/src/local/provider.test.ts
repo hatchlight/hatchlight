@@ -21,6 +21,7 @@ import {
 	roleOption,
 	type Spawn,
 	samplingProgress,
+	vramBudget,
 } from "../index";
 
 import { GpuLock } from "./gpu";
@@ -303,6 +304,41 @@ describe("engine arguments", () => {
 		);
 		expect(fits).not.toContain("--offload-to-cpu");
 		expect(short.at(-1)).toBe("--offload-to-cpu");
+	});
+
+	test("a model run in pieces gets a share of the card's memory", async () => {
+		const pieces = {
+			...FLUX,
+			defaults: { ...FLUX.defaults, vramBudget: true },
+		};
+		const card = { ...runtime(pieces), gpuMemoryBytes: 12_282 * 2 ** 20 };
+		const args = await engineArguments(
+			card,
+			pieces.defaults,
+			params(),
+			"/o.png",
+			async (p) => p,
+		);
+		expect(args[args.indexOf("--max-vram") + 1]).toBe("8");
+		expect(vramBudget(24 * 2 ** 30)).toBe(20);
+		expect(vramBudget(4 * 2 ** 30)).toBe(1);
+		// Not on the CPU, nor for a model that does not ask for it.
+		const cpu = await engineArguments(
+			runtime(pieces),
+			pieces.defaults,
+			params(),
+			"/o.png",
+			async (p) => p,
+		);
+		expect(cpu).not.toContain("--max-vram");
+		const whole = await engineArguments(
+			{ ...runtime(FLUX), gpuMemoryBytes: 12_282 * 2 ** 20 },
+			FLUX.defaults,
+			params(),
+			"/o.png",
+			async (p) => p,
+		);
+		expect(whole).not.toContain("--max-vram");
 	});
 
 	test("LoRAs are named in the prompt, with their trigger, and their folder given", async () => {

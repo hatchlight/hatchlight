@@ -341,6 +341,8 @@ export function zimageModels(): LocalModelSpec[] {
 				aspectRatios: ALL_RATIOS,
 				steps: 8,
 				cfgScale: 1,
+				// The 8-bit model and a full-size picture do not fit a 12 GB card at once.
+				vramBudget: true,
 			},
 			demos: [],
 		},
@@ -421,6 +423,8 @@ export function zimageModels(): LocalModelSpec[] {
 				aspectRatios: ALL_RATIOS,
 				steps: 50,
 				cfgScale: 5,
+				// The 8-bit model and a full-size picture do not fit a 12 GB card at once.
+				vramBudget: true,
 			},
 			demos: [],
 		},

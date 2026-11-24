@@ -522,6 +522,13 @@ export interface LocalModelDefaults {
 	/** More engine options this model needs, e.g. `["--diffusion-fa"]`. */
 	engineArgs?: string[];
 	/**
+	 * Runs the model in pieces that fit a share of the GPU's memory. Without
+	 * a budget the engine puts all of the model on the GPU and, when the rest
+	 * of the job does not fit beside it, makes no picture (ERNIE-Image at its
+	 * full size on a 12 GB card).
+	 */
+	vramBudget?: boolean;
+	/**
 	 * False when showing the picture as it forms does not fit in memory
 	 * while the model follows a picture.
 	 */
