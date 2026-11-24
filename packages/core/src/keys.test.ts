@@ -3,16 +3,19 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FileKeyStore, SERVER_KEYS, SharedKeyStore } from "./keys";
+import { SecretError } from "./secrets";
 
 const dirs: string[] = [];
 afterEach(async () => {
 	await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true })));
 });
 
+const SECRET = crypto.getRandomValues(new Uint8Array(32));
+
 async function store() {
 	const dir = await mkdtemp(join(tmpdir(), "hatchlight-keys-"));
 	dirs.push(dir);
-	return new FileKeyStore(join(dir, "auth.json"));
+	return new FileKeyStore(join(dir, "auth.json"), SECRET);
 }
 
 const me = { userId: "local" };
@@ -66,4 +69,65 @@ test("a server's keys serve only those allowed to spend", async () => {
 	expect(await shared.list({ userId: "usr_free" })).toEqual([]);
 	await shared.delete({ userId: "usr_owner" }, "fal");
 	expect(await inner.list(SERVER_KEYS)).toEqual([]);
+});
+
+describe("keys at rest", () => {
+	const at = async () => {
+		const dir = await mkdtemp(join(tmpdir(), "hatchlight-keys-"));
+		dirs.push(dir);
+		return join(dir, "auth.json");
+	};
+
+	test("are encrypted, each with a nonce of its own", async () => {
+		const path = await at();
+		const keys = new FileKeyStore(path, SECRET);
+		await keys.set(me, "fal", "sk-same");
+		await keys.set(me, "openai", "sk-same");
+		const text = await Bun.file(path).text();
+		expect(text).not.toContain("sk-same");
+		const stored = JSON.parse(text).local;
+		expect(stored.fal).toStartWith("enc:v1:");
+		// The same key twice is two different texts.
+		expect(stored.fal).not.toBe(stored.openai);
+		expect(await keys.get(me, "fal")).toBe("sk-same");
+	});
+
+	test("saved before encryption are encrypted on start, and still read", async () => {
+		const path = await at();
+		await Bun.write(path, JSON.stringify({ local: { fal: "sk-plain" } }));
+		const keys = new FileKeyStore(path, SECRET);
+		expect(await keys.migrate()).toBe(true);
+		expect(await Bun.file(path).text()).not.toContain("sk-plain");
+		expect(await keys.get(me, "fal")).toBe("sk-plain");
+		// Done once.
+		expect(await keys.migrate()).toBe(false);
+	});
+
+	test("cannot be read with another secret, which leaves them as they are", async () => {
+		const path = await at();
+		await new FileKeyStore(path, SECRET).set(me, "fal", "sk-1");
+		const before = await Bun.file(path).text();
+		const other = new FileKeyStore(
+			path,
+			crypto.getRandomValues(new Uint8Array(32)),
+		);
+		await expect(other.get(me, "fal")).rejects.toThrow(path);
+		await expect(other.set(me, "openai", "sk-2")).rejects.toThrow(
+			"cannot be read with this secret",
+		);
+		await expect(other.migrate()).rejects.toThrow(SecretError);
+		expect(await Bun.file(path).text()).toBe(before);
+	});
+
+	test("cannot be moved to another person or provider by editing the file", async () => {
+		const path = await at();
+		const keys = new FileKeyStore(path, SECRET);
+		await keys.set(me, "fal", "sk-mine");
+		const data = JSON.parse(await Bun.file(path).text());
+		data.someone = { openai: data.local.fal };
+		await Bun.write(path, JSON.stringify(data));
+		await expect(keys.get({ userId: "someone" }, "openai")).rejects.toThrow(
+			SecretError,
+		);
+	});
 });

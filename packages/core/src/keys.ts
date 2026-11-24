@@ -1,5 +1,7 @@
+import { createCipheriv, createDecipheriv } from "node:crypto";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { SecretError } from "./secrets";
 import type { UserContext } from "./types";
 
 export interface KeyStore {
@@ -17,12 +19,74 @@ function isPrototypeName(name: string): boolean {
 	return name === "__proto__" || name === "constructor" || name === "prototype";
 }
 
-/** API keys in a JSON file readable only by the owner. */
+/** How an encrypted value starts; anything else is from before encryption. */
+const SEALED = "enc:v1:";
+
+/**
+ * API keys in a JSON file readable only by the owner, each value encrypted
+ * with AES-256-GCM under `secret`, with a nonce of its own, and bound to
+ * whose key it is and for which provider.
+ */
 export class FileKeyStore implements KeyStore {
 	/** Serializes changes so concurrent ones cannot overwrite each other. */
 	private pending: Promise<void> = Promise.resolve();
 
-	constructor(private path: string) {}
+	constructor(
+		private path: string,
+		private secret: Uint8Array,
+	) {
+		if (secret.byteLength !== 32)
+			throw new Error("The secret must be 32 bytes");
+	}
+
+	private seal(owner: string, provider: string, value: string): string {
+		const nonce = crypto.getRandomValues(new Uint8Array(12));
+		const cipher = createCipheriv("aes-256-gcm", this.secret, nonce);
+		cipher.setAAD(Buffer.from(`${owner}\n${provider}`));
+		const sealed = Buffer.concat([
+			cipher.update(value, "utf8"),
+			cipher.final(),
+			cipher.getAuthTag(),
+		]);
+		return `${SEALED}${Buffer.from(nonce).toString("base64url")}.${sealed.toString("base64url")}`;
+	}
+
+	private open(owner: string, provider: string, stored: string): string {
+		if (!stored.startsWith(SEALED)) return stored;
+		const [nonce = "", sealed = ""] = stored.slice(SEALED.length).split(".");
+		const bytes = Buffer.from(sealed, "base64url");
+		try {
+			const decipher = createDecipheriv(
+				"aes-256-gcm",
+				this.secret,
+				Buffer.from(nonce, "base64url"),
+			);
+			decipher.setAAD(Buffer.from(`${owner}\n${provider}`));
+			decipher.setAuthTag(bytes.subarray(bytes.byteLength - 16));
+			return Buffer.concat([
+				decipher.update(bytes.subarray(0, bytes.byteLength - 16)),
+				decipher.final(),
+			]).toString("utf8");
+		} catch {
+			throw new SecretError(
+				`The API keys in ${this.path} cannot be read with this secret: it is not the one they were saved with. Restore that secret (HATCHLIGHT_SECRET_FILE, or secret.key in the data directory); the file is left as it is`,
+			);
+		}
+	}
+
+	/**
+	 * Checks every key opens with this secret, then encrypts those saved
+	 * before encryption, in one atomic rewrite. Says if it rewrote.
+	 */
+	async migrate(): Promise<boolean> {
+		await this.read();
+		const raw = await this.readRaw();
+		const plain = Object.values(raw).some((keys) =>
+			Object.values(keys ?? {}).some((value) => !value.startsWith(SEALED)),
+		);
+		if (plain) await this.change(() => {});
+		return plain;
+	}
 
 	private change(mutate: (data: KeyFile) => void): Promise<void> {
 		const next = this.pending.then(async () => {
@@ -34,18 +98,48 @@ export class FileKeyStore implements KeyStore {
 		return next;
 	}
 
-	private async read(): Promise<KeyFile> {
+	private async readRaw(): Promise<KeyFile> {
 		const file = Bun.file(this.path);
 		if (!(await file.exists())) return {};
 		return (await file.json()) as KeyFile;
+	}
+
+	/** The keys, opened. Throws, and so stops any write, when one cannot be. */
+	private async read(): Promise<KeyFile> {
+		const raw = await this.readRaw();
+		const data: KeyFile = {};
+		for (const [owner, keys] of Object.entries(raw)) {
+			if (isPrototypeName(owner)) continue;
+			data[owner] = {};
+			for (const [provider, value] of Object.entries(keys ?? {})) {
+				if (isPrototypeName(provider)) continue;
+				(data[owner] as Record<string, string>)[provider] = this.open(
+					owner,
+					provider,
+					value,
+				);
+			}
+		}
+		return data;
 	}
 
 	private async write(data: KeyFile): Promise<void> {
 		await mkdir(dirname(this.path), { recursive: true });
 		// Written aside and renamed, so a crash cannot leave a half-written file.
 		const tmp = `${this.path}.${crypto.randomUUID()}.tmp`;
+		const sealed: KeyFile = {};
+		for (const [owner, keys] of Object.entries(data)) {
+			sealed[owner] = {};
+			for (const [provider, value] of Object.entries(keys ?? {})) {
+				(sealed[owner] as Record<string, string>)[provider] = this.seal(
+					owner,
+					provider,
+					value,
+				);
+			}
+		}
 		// Created owner-only from the start, so the keys are never readable by others.
-		await writeFile(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
+		await writeFile(tmp, JSON.stringify(sealed, null, 2), { mode: 0o600 });
 		await rename(tmp, this.path);
 	}
 

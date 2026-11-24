@@ -84,7 +84,10 @@ function boot(
 ) {
 	const repo = new SqliteRepository(join(dir, "db.sqlite"));
 	const assets = new FsAssetStore(join(dir, "assets"));
-	const keys = new FileKeyStore(join(dir, "auth.json"));
+	const keys = new FileKeyStore(
+		join(dir, "auth.json"),
+		crypto.getRandomValues(new Uint8Array(32)),
+	);
 	const registry = new ProviderRegistry().register(provider);
 	const engine = new JobEngine({
 		repo,

@@ -12,6 +12,7 @@ import {
 	MAX_CHECKPOINT_BYTES,
 	modelsLocationFile,
 	plainPath,
+	SecretError,
 	writeServerInfo,
 } from "@hatchlight/core";
 import {
@@ -77,7 +78,8 @@ Options for serve:
   --host <a>       Address to listen on (default 127.0.0.1, or 0.0.0.0 in
                    server mode)
   --data-dir <p>   Where sessions, images and keys are stored
-                   (default ${defaultDataDir()})
+                   (default ${defaultDataDir()}). API keys are encrypted
+                   with HATCHLIGHT_SECRET_FILE, or secret.key made there
   --dev            Accept requests from the Vite dev server and skip the UI
   --no-open        Do not open the browser
   --resources <p>  Where a packaged app keeps the built UI (web/) and the
@@ -160,7 +162,10 @@ const runtime = await createRuntime({
 	migrationsDir,
 	server: server != null,
 }).catch((error) => {
-	if (!(error instanceof DataDirInUseError)) throw error;
+	// Said plainly: another server on the folder, or keys under another secret.
+	if (!(error instanceof DataDirInUseError || error instanceof SecretError)) {
+		throw error;
+	}
 	console.error(`${error.message}.`);
 	process.exit(1);
 });

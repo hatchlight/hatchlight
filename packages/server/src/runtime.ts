@@ -23,6 +23,7 @@ import {
 	type Hardware,
 	improvePrompt,
 	JobEngine,
+	keysSecret,
 	type LanguageModel,
 	LOCAL_USER,
 	type LocalEngineSpec,
@@ -521,7 +522,21 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		options.migrationsDir,
 	);
 	const assets = new FsAssetStore(join(options.dataDir, "assets"));
-	const fileKeys = new FileKeyStore(join(options.dataDir, "auth.json"));
+	// Keys are encrypted at rest; those saved before are encrypted now.
+	const fileKeys = await (async () => {
+		try {
+			const store = new FileKeyStore(
+				join(options.dataDir, "auth.json"),
+				keysSecret(options.dataDir),
+			);
+			await store.migrate();
+			return store;
+		} catch (error) {
+			repo.close();
+			unlock();
+			throw error;
+		}
+	})();
 	const settings = new FileSettingsStore(
 		join(options.dataDir, "settings.json"),
 	);
