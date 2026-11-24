@@ -960,3 +960,42 @@ test("a setup cut short before the files moved is finished at the next start", a
 	// Nothing left to move is fine too.
 	await restarted.accounts.resumeAdoption();
 });
+
+test("deleting sessions does not give back what was spent", async () => {
+	const { call, setupOwner, invite, userId, runtime } = await serverApp();
+	const owner = await setupOwner();
+	await call("/api/providers/paid/key", {
+		method: "PUT",
+		who: owner,
+		body: { key: "server-key" },
+	});
+	const member = await invite(owner, {
+		canUsePaid: true,
+		monthlyLimitUsd: 0.015,
+	});
+	const paidTurn = () =>
+		call("/api/turns", {
+			method: "POST",
+			who: member,
+			body: { prompt: "x", modelIds: ["paid/alpha"] },
+		});
+	// Two pictures at a cent each: the second goes over the limit.
+	for (let i = 0; i < 2; i++) {
+		expect((await paidTurn()).status).toBe(201);
+		await runtime.engine.idle();
+	}
+	expect(await errorCode(await paidTurn())).toBe("monthlyLimitReached");
+	const sessions = (await (
+		await call("/api/sessions", { who: member })
+	).json()) as { id: string }[];
+	for (const session of sessions) {
+		await call(`/api/sessions/${session.id}`, {
+			method: "DELETE",
+			who: member,
+		});
+	}
+	expect(runtime.accounts.spentThisMonth(userId(member.username))).toBeCloseTo(
+		0.02,
+	);
+	expect(await errorCode(await paidTurn())).toBe("monthlyLimitReached");
+});

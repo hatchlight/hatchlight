@@ -21,6 +21,9 @@ export interface UserContext {
 
 export const LOCAL_USER: UserContext = { userId: "local" };
 
+/** What was paid for: pictures and videos, or text from a language model. */
+export type SpendingKind = "generation" | "language";
+
 /** What a person may do on a server: everything, run it, or use it. */
 export const USER_ROLES = ["owner", "admin", "member"] as const;
 export type UserRole = (typeof USER_ROLES)[number];

@@ -13,6 +13,7 @@ import type {
 	AssistantEntryBody,
 	GenerationParams,
 	JobStatus,
+	SpendingKind,
 	UserRole,
 } from "../types";
 
@@ -181,4 +182,24 @@ export const apiTokens = sqliteTable(
 		expiresAt: integer("expires_at"),
 	},
 	(t) => [index("api_tokens_user").on(t.userId)],
+);
+
+/**
+ * What each person spent on paid services, one row per charge. Only added
+ * to: deleting a session or a job leaves what it cost, so monthly limits
+ * count everything.
+ */
+export const spending = sqliteTable(
+	"spending",
+	{
+		id: text("id").primaryKey(),
+		userId: text("user_id").notNull(),
+		/** `generation` for pictures and videos; `language` for text models. */
+		kind: text("kind").$type<SpendingKind>().notNull(),
+		/** The job it paid for, if any; no foreign key, so it outlives the job. */
+		jobId: text("job_id"),
+		costUsd: real("cost_usd").notNull(),
+		createdAt: integer("created_at").notNull(),
+	},
+	(t) => [index("spending_user_created").on(t.userId, t.createdAt)],
 );

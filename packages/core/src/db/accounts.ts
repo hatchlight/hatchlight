@@ -252,18 +252,18 @@ export class SqliteAccounts {
 		});
 	}
 
-	/** What a person spent on paid models since `since`, in dollars. */
+	/** What a person spent on paid services since `since`, in dollars. */
 	spentSince(userId: string, since: number): number {
 		return (
 			this.db
 				.select({
-					total: sql<number>`coalesce(sum(${schema.jobs.costUsd}), 0)`,
+					total: sql<number>`coalesce(sum(${schema.spending.costUsd}), 0)`,
 				})
-				.from(schema.jobs)
+				.from(schema.spending)
 				.where(
 					and(
-						eq(schema.jobs.userId, userId),
-						gte(schema.jobs.createdAt, since),
+						eq(schema.spending.userId, userId),
+						gte(schema.spending.createdAt, since),
 					),
 				)
 				.get()?.total ?? 0

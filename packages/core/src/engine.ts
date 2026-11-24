@@ -431,16 +431,28 @@ export class JobEngine {
 							for (const output of event.outputs) {
 								await this.storeOutput(ctx, job, output, controller.signal);
 							}
+							const costUsd =
+								event.costUsd ??
+								estimateCost(model, job.params, event.outputs.length);
 							await this.update(jobId, {
 								status: "succeeded",
 								error: null,
 								errorCode: null,
 								errorParams: null,
 								finishedAt: Date.now(),
-								costUsd:
-									event.costUsd ??
-									estimateCost(model, job.params, event.outputs.length),
+								costUsd,
 							});
+							// Kept apart from the job, which can be deleted.
+							if (costUsd != null && costUsd > 0) {
+								await this.deps.repo.addSpending({
+									id: newId("spd"),
+									userId: job.userId,
+									kind: "generation",
+									jobId,
+									costUsd,
+									createdAt: Date.now(),
+								});
+							}
 							return;
 						}
 					}

@@ -34,6 +34,8 @@ export type JobPatch = Partial<
 	>
 >;
 
+export type SpendingEntry = typeof schema.spending.$inferInsert;
+
 export interface GalleryQuery {
 	query?: string;
 	limit: number;
@@ -60,6 +62,9 @@ export interface Repository {
 		body: AssistantEntryBody,
 	): Promise<void>;
 	listEntries(ctx: UserContext, sessionId: string): Promise<AssistantEntry[]>;
+
+	/** Writes down a charge, which nothing removes. */
+	addSpending(entry: SpendingEntry): Promise<void>;
 
 	// Used by the job engine, which acts across users.
 	findJob(id: string): Promise<JobView | null>;
@@ -233,6 +238,10 @@ export class SqliteRepository implements Repository {
 			...job,
 			assets: assets.filter((a) => a.jobId === job.id),
 		}));
+	}
+
+	async addSpending(entry: SpendingEntry) {
+		this.db.insert(schema.spending).values(entry).run();
 	}
 
 	async createAsset(asset: Asset) {
