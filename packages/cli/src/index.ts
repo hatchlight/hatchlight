@@ -36,6 +36,11 @@ if (first === "mcp") {
 	await mcp(rest);
 	process.exit(0);
 }
+// Accounts of a server, from its data directory, for an owner locked out.
+if (first === "users") {
+	const { users } = await import("./users");
+	process.exit(await users(rest));
+}
 
 // A command typed in a terminal: it uses the server, and never serves the app.
 if (first != null && Object.hasOwn(COMMANDS, first)) {
@@ -58,6 +63,7 @@ Usage: hatchlight [serve] [options]   Start the app
 Commands (see hatchlight <command> --help):
 ${commandList()}
   mcp       Connect an AI agent
+  users     Manage a server's accounts, from its data directory
 
 Options for serve:
   --port <n>       Port to listen on (default 4096; 0 picks a free one)
@@ -114,13 +120,6 @@ try {
 	process.exit(1);
 }
 const server = config.transport;
-// Without accounts, anyone who reaches the server could spend its keys.
-if (config.mode === "server") {
-	console.error(
-		"Server mode needs accounts, coming in the next step. Run without --mode server for now.",
-	);
-	process.exit(1);
-}
 
 const parentPid =
 	values["parent-pid"] == null ? null : Number(values["parent-pid"]);
@@ -156,6 +155,7 @@ const runtime = await createRuntime({
 		? modelsLocationFile(defaultModels)
 		: undefined,
 	migrationsDir,
+	server: server != null,
 }).catch((error) => {
 	if (!(error instanceof DataDirInUseError)) throw error;
 	console.error(`${error.message}.`);
@@ -218,7 +218,17 @@ await writeServerInfo(dataDir, {
 const say = (line: string) => writeSync(1, `${line}\n`);
 // The desktop app reads this line; a server also says where it listens.
 say(`Hatchlight is running at ${url}`);
-if (server) say(`Listening on ${config.host}:${listener.port}`);
+if (server) {
+	say(`Listening on ${config.host}:${listener.port}`);
+	// Only whoever can read this log can make the first account.
+	const code = runtime.accounts.setupCode();
+	if (code) {
+		say("");
+		say(`  Set up this server: open ${url} and enter the code ${code}`);
+		say("  The code changes each time the server starts, until it is set up.");
+		say("");
+	}
+}
 say(`Data directory: ${dataDir}`);
 if (modelsDir !== join(dataDir, "models")) {
 	say(`Local models: ${modelsDir}`);
