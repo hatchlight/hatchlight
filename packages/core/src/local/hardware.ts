@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { totalmem } from "node:os";
 import type { Gpu, Hardware } from "../types";
@@ -87,6 +88,8 @@ export interface DetectOptions {
 	memoryBytes?: number;
 	/** The text of /proc/version, which names Microsoft under WSL. */
 	procVersion?: string;
+	/** Whether this runs in a container, which tells /.dockerenv. */
+	container?: boolean;
 }
 
 /** Finds out what this machine can run models on. */
@@ -116,7 +119,15 @@ export async function detectHardware(
 				? platform
 				: "other",
 		arch: arch === "x64" || arch === "arm64" ? arch : "other",
-		wsl: platform === "linux" && /microsoft/i.test(procVersion),
+		// A container on WSL's kernel (Docker Desktop) cannot start Windows
+		// programs: it runs the Linux builds, as on any other Linux.
+		wsl:
+			platform === "linux" &&
+			/microsoft/i.test(procVersion) &&
+			!(
+				options.container ??
+				(existsSync("/.dockerenv") || existsSync("/run/.containerenv"))
+			),
 		memoryBytes,
 		gpus,
 	};
