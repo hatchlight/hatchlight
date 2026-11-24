@@ -52,7 +52,15 @@ export function serverConfig(
 		flags.host ??
 		appEnv(env, "HOST") ??
 		(mode === "server" ? "0.0.0.0" : "127.0.0.1");
-	if (mode === "personal") return { mode, host, transport: null };
+	if (mode === "personal") {
+		// Personal mode has no login: only this computer may reach it.
+		if (!isLoopback(host)) {
+			throw new ConfigError(
+				`Personal mode listens only on this computer (127.0.0.1, ::1 or localhost), not on ${host}. To reach Hatchlight from other machines, run it with --mode server, which has accounts`,
+			);
+		}
+		return { mode, host, transport: null };
+	}
 
 	const publicUrl = appEnv(env, "PUBLIC_URL");
 	if (!publicUrl) {
@@ -292,4 +300,12 @@ export function localUrl(host: string, port: number): string {
 	return bare.includes(":")
 		? `http://[${bare}]:${port}`
 		: `http://${bare}:${port}`;
+}
+
+const LOOPBACK = ["127.0.0.0/8", "::1/128"].map((block) => parseCidr(block));
+
+/** Whether an address or host name is this computer's own. */
+export function isLoopback(address: string): boolean {
+	const bare = address.replace(/^\[(.*)\]$/, "$1").toLowerCase();
+	return bare === "localhost" || inBlocks(bare, LOOPBACK);
 }

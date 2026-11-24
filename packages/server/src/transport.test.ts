@@ -3,6 +3,7 @@ import {
 	ConfigError,
 	hostName,
 	inBlocks,
+	isLoopback,
 	localUrl,
 	parseIp,
 	requestOrigin,
@@ -35,7 +36,9 @@ test("the mode and host come from flags first, then the environment", () => {
 		host: "10.0.0.2",
 	});
 	expect(serverConfig({ host: "::" }, env).host).toBe("::");
-	expect(serverConfig({ mode: "personal" }, env).mode).toBe("personal");
+	expect(serverConfig({ mode: "personal", host: "127.0.0.1" }, env).mode).toBe(
+		"personal",
+	);
 	expect(() => serverConfig({ mode: "public" }, {})).toThrow(ConfigError);
 });
 
@@ -190,4 +193,18 @@ test("local processes find the server where it really listens", () => {
 	expect(localUrl("localhost", 4096)).toBe("http://localhost:4096");
 	expect(localUrl("10.0.0.2", 4096)).toBe("http://10.0.0.2:4096");
 	expect(localUrl("fd00::2", 4096)).toBe("http://[fd00::2]:4096");
+});
+
+test("personal mode, which has no login, refuses to listen on the network", () => {
+	for (const host of ["0.0.0.0", "::", "192.168.1.20", "nas.local"]) {
+		expect(() => serverConfig({ host }, {})).toThrow(/--mode server/);
+		expect(() => serverConfig({}, { HATCHLIGHT_HOST: host })).toThrow(
+			ConfigError,
+		);
+	}
+	for (const host of ["127.0.0.1", "127.0.0.2", "::1", "[::1]", "localhost"]) {
+		expect(serverConfig({ host }, {}).host).toBe(host);
+	}
+	expect(isLoopback("::ffff:127.0.0.1")).toBe(true);
+	expect(isLoopback("10.0.0.1")).toBe(false);
 });

@@ -35,7 +35,12 @@ import { mountAccounts } from "./accounts-routes";
 import type { Agents } from "./agents";
 import { requireAccess } from "./auth";
 import type { AssistantBrain, ImproveRequest } from "./runtime";
-import { hostName, requestOrigin, type ServerTransport } from "./transport";
+import {
+	hostName,
+	isLoopback,
+	requestOrigin,
+	type ServerTransport,
+} from "./transport";
 
 export interface AppOptions {
 	service: ReelService;
@@ -285,6 +290,12 @@ export function createApp(options: AppOptions): Hono {
 					await next();
 				}
 			: async (c, next) => {
+					// Without login, only this computer may come in, whatever
+					// address the server was told to listen on.
+					const peer = peerOf(c);
+					if (peer !== null && !isLoopback(peer)) {
+						return c.json({ error: "Forbidden address" }, 403);
+					}
 					// Bun builds the request URL from the Host header.
 					const host = new URL(c.req.url).host;
 					if (!LOCAL_HOSTS.includes(hostname(host))) {
