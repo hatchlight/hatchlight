@@ -2,8 +2,10 @@ import { expect, test } from "bun:test";
 import {
 	AccountService,
 	hashingRunning,
+	hashingWaiting,
 	hashToken,
 	MAX_HASHING,
+	MAX_HASHING_QUEUE,
 	MIN_PASSWORD_LENGTH,
 	SESSION_MS,
 } from "./accounts";
@@ -623,4 +625,64 @@ test("the same two-step code sent twice at once lets only one in", async () => {
 		),
 	);
 	expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+});
+
+test("a full line of password checks is refused as busy, not queued for ever", async () => {
+	const { accounts } = await withOwner();
+	const tries = Array.from(
+		{ length: MAX_HASHING + MAX_HASHING_QUEUE + 6 },
+		() =>
+			accounts.login({ username: "owner", password: "not it at all" }).then(
+				() => null,
+				(error: AccessError) => error,
+			),
+	);
+	const errors = await Promise.all(tries);
+	const busy = errors.filter((e) => e?.code === "serverBusy");
+	expect(busy.length).toBe(6);
+	expect(busy[0]?.status).toBe(503);
+	expect(hashingWaiting()).toBe(0);
+});
+
+test("a check whose request went away leaves the line", async () => {
+	const { accounts } = await withOwner();
+	// Takes every slot.
+	const running = Array.from({ length: MAX_HASHING }, () =>
+		accounts
+			.login({ username: "owner", password: "not it at all" })
+			.catch(() => {}),
+	);
+	const gone = new AbortController();
+	const waiting = accounts
+		.login(
+			{ username: "owner", password: "not it at all" },
+			{ signal: gone.signal },
+		)
+		.then(
+			() => "signed in",
+			(error: unknown) => error,
+		);
+	expect(hashingWaiting()).toBe(1);
+	gone.abort(new Error("the browser left"));
+	expect(hashingWaiting()).toBe(0);
+	expect(((await waiting) as Error).message).toBe("the browser left");
+	await Promise.all(running);
+});
+
+test("a password that cannot be right is refused without checking", async () => {
+	const { accounts } = await withOwner();
+	let most = 0;
+	const watch = setInterval(() => {
+		most = Math.max(most, hashingRunning());
+	}, 0);
+	for (const password of ["short", "x".repeat(300)]) {
+		expect(await code(accounts.login({ username: "owner", password }))).toBe(
+			"badCredentials",
+		);
+		expect(await code(accounts.login({ username: "nobody", password }))).toBe(
+			"badCredentials",
+		);
+	}
+	clearInterval(watch);
+	expect(most).toBe(0);
 });

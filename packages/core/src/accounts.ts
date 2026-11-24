@@ -29,15 +29,41 @@ const INVITE_MS = 7 * DAY_MS;
 const RESET_MS = DAY_MS;
 /**
  * Argon2 takes memory and time on purpose; a flood of sign-ins must not
- * take all of both. At most this many run at once, the others wait.
+ * take all of both. At most this many run at once, and at most so many
+ * wait: beyond that the server says it is busy. A request that goes away
+ * while waiting leaves the line.
  */
 export const MAX_HASHING = 4;
+export const MAX_HASHING_QUEUE = 64;
 let hashingNow = 0;
 const hashingQueue: (() => void)[] = [];
 
-async function hashing<T>(work: () => Promise<T>): Promise<T> {
+async function hashing<T>(
+	work: () => Promise<T>,
+	signal?: AbortSignal,
+): Promise<T> {
+	signal?.throwIfAborted();
 	if (hashingNow >= MAX_HASHING) {
-		await new Promise<void>((resolve) => hashingQueue.push(resolve));
+		if (hashingQueue.length >= MAX_HASHING_QUEUE) {
+			throw new AccessError(
+				"The server is busy. Try again in a few seconds",
+				"serverBusy",
+				503,
+			);
+		}
+		await new Promise<void>((resolve, reject) => {
+			const turn = () => {
+				signal?.removeEventListener("abort", leave);
+				resolve();
+			};
+			const leave = () => {
+				const index = hashingQueue.indexOf(turn);
+				if (index >= 0) hashingQueue.splice(index, 1);
+				reject(signal?.reason);
+			};
+			hashingQueue.push(turn);
+			signal?.addEventListener("abort", leave, { once: true });
+		});
 	} else {
 		hashingNow++;
 	}
@@ -51,11 +77,22 @@ async function hashing<T>(work: () => Promise<T>): Promise<T> {
 	}
 }
 
-/** How many password checks or hashes are running now. */
+/** How many password checks or hashes are running now, and waiting. */
 export const hashingRunning = () => hashingNow;
+export const hashingWaiting = () => hashingQueue.length;
 
-const verifyPassword = (password: string, hash: string) =>
-	hashing(() => Bun.password.verify(password, hash));
+/**
+ * Checks a password against its hash. One that cannot be right (shorter or
+ * longer than any password allowed) is refused without the work.
+ */
+const verifyPassword = async (
+	password: string,
+	hash: string,
+	signal?: AbortSignal,
+) =>
+	password.length >= MIN_PASSWORD_LENGTH &&
+	password.length <= MAX_PASSWORD_LENGTH &&
+	(await hashing(() => Bun.password.verify(password, hash), signal));
 
 /** ASCII only: names that look alike cannot be told apart otherwise. */
 const USERNAME = /^[a-z0-9._-]{3,32}$/;
@@ -121,6 +158,8 @@ export interface Seen {
 export interface Where {
 	userAgent?: string | null;
 	ip?: string | null;
+	/** The request's, so work it no longer waits for is dropped. */
+	signal?: AbortSignal;
 }
 
 export interface InviteTerms {
@@ -192,12 +231,17 @@ export class AccountService {
 		if (!expected || !sameSecret(expected, typed)) {
 			throw new AccessError("The setup code is not right", "badSetupCode", 403);
 		}
-		const user = await this.newUser(input.username, input.password, {
-			role: "owner",
-			canUsePaid: true,
-			canTrain: true,
-			monthlyLimitUsd: null,
-		});
+		const user = await this.newUser(
+			input.username,
+			input.password,
+			{
+				role: "owner",
+				canUsePaid: true,
+				canTrain: true,
+				monthlyLimitUsd: null,
+			},
+			where.signal,
+		);
 		if (!this.repo.createFirstOwner(user)) {
 			throw new AccessError("The server is already set up", "forbidden", 403);
 		}
@@ -226,12 +270,16 @@ export class AccountService {
 		where: Where = {},
 	): Promise<SignedIn> {
 		const user = this.repo.findUser(input.username.trim());
-		const password = input.password.slice(0, MAX_PASSWORD_LENGTH);
+		const password = input.password;
 		if (!user) {
-			await verifyPassword(password, await this.dummyHash());
+			await verifyPassword(password, await this.dummyHash(), where.signal);
 			throw badCredentials();
 		}
-		const right = await verifyPassword(password, user.passwordHash);
+		const right = await verifyPassword(
+			password,
+			user.passwordHash,
+			where.signal,
+		);
 		if (!right || user.disabledAt != null) throw badCredentials();
 		if (user.totpSecret) {
 			if (!input.totp) {
@@ -326,14 +374,10 @@ export class AccountService {
 		userId: string,
 		input: { current: string; next: string },
 		keep: string | null,
+		signal?: AbortSignal,
 	): Promise<void> {
 		const user = this.mustGet(userId);
-		if (
-			!(await verifyPassword(
-				input.current.slice(0, MAX_PASSWORD_LENGTH),
-				user.passwordHash,
-			))
-		) {
+		if (!(await verifyPassword(input.current, user.passwordHash, signal))) {
 			throw new AccessError(
 				"The current password is not right",
 				"badPassword",
@@ -341,7 +385,7 @@ export class AccountService {
 			);
 		}
 		this.repo.updateUser(userId, {
-			passwordHash: await hashPassword(input.next),
+			passwordHash: await hashPassword(input.next, signal),
 			mustChangePassword: false,
 		});
 		this.repo.deleteSessionsOf(userId, keep ?? undefined);
@@ -376,13 +420,9 @@ export class AccountService {
 		user: UserRow,
 		password: string,
 		code: string | undefined,
+		signal?: AbortSignal,
 	): Promise<void> {
-		if (
-			!(await verifyPassword(
-				password.slice(0, MAX_PASSWORD_LENGTH),
-				user.passwordHash,
-			))
-		) {
+		if (!(await verifyPassword(password, user.passwordHash, signal))) {
 			throw new AccessError(
 				"The current password is not right",
 				"badPassword",
@@ -409,9 +449,10 @@ export class AccountService {
 	async enableTotp(
 		userId: string,
 		input: { secret: string; code: string; password: string; current?: string },
+		signal?: AbortSignal,
 	): Promise<void> {
 		const user = this.mustGet(userId);
-		await this.assertOwnsAccount(user, input.password, input.current);
+		await this.assertOwnsAccount(user, input.password, input.current, signal);
 		const step = /^[A-Z2-7]{32}$/.test(input.secret)
 			? matchTotp(input.secret, input.code, this.now())
 			: null;
@@ -428,9 +469,10 @@ export class AccountService {
 	async disableTotp(
 		userId: string,
 		input: { password: string; code?: string },
+		signal?: AbortSignal,
 	): Promise<void> {
 		const user = this.mustGet(userId);
-		await this.assertOwnsAccount(user, input.password, input.code);
+		await this.assertOwnsAccount(user, input.password, input.code, signal);
 		this.repo.updateUser(userId, { totpSecret: null, totpLastCounter: null });
 	}
 
@@ -488,7 +530,12 @@ export class AccountService {
 		if (!row || row.usedAt != null || row.expiresAt < this.now()) {
 			throw invalid();
 		}
-		const user = await this.newUser(input.username, input.password, row);
+		const user = await this.newUser(
+			input.username,
+			input.password,
+			row,
+			where.signal,
+		);
 		if (!this.repo.acceptInvite(row.id, user)) throw invalid();
 		return this.startSession(user, where);
 	}
@@ -604,7 +651,11 @@ export class AccountService {
 	 * Sets the new password a reset link was for. Every sign-in and token of
 	 * the person ends; they then sign in as usual, two-step code included.
 	 */
-	async usePasswordReset(token: string, password: string): Promise<void> {
+	async usePasswordReset(
+		token: string,
+		password: string,
+		signal?: AbortSignal,
+	): Promise<void> {
 		const invalid = () =>
 			new AccessError(
 				"This link has expired or was already used",
@@ -617,7 +668,7 @@ export class AccountService {
 		}
 		const user = this.repo.getUser(reset.userId);
 		if (!user || user.disabledAt != null) throw invalid();
-		const passwordHash = await hashPassword(password);
+		const passwordHash = await hashPassword(password, signal);
 		if (!this.repo.usePasswordReset(reset.id, this.now())) throw invalid();
 		this.repo.updateUser(user.id, { passwordHash, mustChangePassword: false });
 		this.repo.deleteSessionsOf(user.id);
@@ -743,6 +794,7 @@ export class AccountService {
 		username: string,
 		password: string,
 		terms: InviteTerms,
+		signal?: AbortSignal,
 	): Promise<UserRow> {
 		const name = username.trim().toLowerCase();
 		if (!USERNAME.test(name)) {
@@ -758,7 +810,7 @@ export class AccountService {
 			id: newId("usr"),
 			username: name,
 			displayName: name,
-			passwordHash: await hashPassword(password),
+			passwordHash: await hashPassword(password, signal),
 			role: terms.role,
 			canUsePaid: terms.canUsePaid,
 			canTrain: terms.canTrain,
@@ -777,7 +829,10 @@ function displayName(value: string, fallback: string): string {
 }
 
 /** Argon2id, after checking the password is long enough. */
-export async function hashPassword(password: string): Promise<string> {
+export async function hashPassword(
+	password: string,
+	signal?: AbortSignal,
+): Promise<string> {
 	if (password.length < MIN_PASSWORD_LENGTH) {
 		throw new ValidationError(
 			`A password needs at least ${MIN_PASSWORD_LENGTH} characters`,
@@ -788,7 +843,10 @@ export async function hashPassword(password: string): Promise<string> {
 	if (password.length > MAX_PASSWORD_LENGTH) {
 		throw new ValidationError("That password is too long");
 	}
-	return hashing(() => Bun.password.hash(password, { algorithm: "argon2id" }));
+	return hashing(
+		() => Bun.password.hash(password, { algorithm: "argon2id" }),
+		signal,
+	);
 }
 
 function inviteView(row: InviteRow): InviteView {

@@ -232,6 +232,7 @@
 	"errors.resultDownloadFailed": "Could not download the result (the server answered {status}).",
 	"errors.resultNotHttps": "The service sent the result from an unsafe address, so it was not downloaded.",
 	"errors.resultTooLarge": "The result is too large to keep.",
+	"errors.serverBusy": "The server is busy. Try again in a few seconds.",
 	"errors.sessionNotFound": "That session no longer exists.",
 	"errors.signInRequired": "Sign in to go on.",
 	"errors.tooManyAttempts": "Too many tries. Wait {seconds} seconds and try again.",

@@ -35,7 +35,23 @@ export function mountAccounts(
 	const where = (c: Context) => ({
 		userAgent: c.req.header("user-agent") ?? null,
 		ip: c.get("client") ?? null,
+		signal: c.req.raw.signal,
 	});
+	/**
+	 * Password work from one address runs one at a time: many requests at
+	 * once from one place wait for each other, not for everyone's.
+	 */
+	const running = new Map<string, Promise<unknown>>();
+	const oneAtATime = <T>(key: string, work: () => Promise<T>): Promise<T> => {
+		const before = running.get(key) ?? Promise.resolve();
+		const mine = before.catch(() => {}).then(work);
+		const settled = mine.catch(() => {});
+		running.set(key, settled);
+		void settled.then(() => {
+			if (running.get(key) === settled) running.delete(key);
+		});
+		return mine;
+	};
 	const text = (value: unknown, name: string): string => {
 		if (typeof value !== "string") {
 			throw new ValidationError(`${name} must be text`);
@@ -84,7 +100,7 @@ export function mountAccounts(
 			for (const [limit, key] of counted) limit.refund(key);
 		};
 		try {
-			const result = await attempt();
+			const result = await oneAtATime(address, attempt);
 			refund();
 			if (lowered) limits.byNameAndAddress.succeed(`${lowered}|${address}`);
 			return result;
@@ -155,6 +171,7 @@ export function mountAccounts(
 					next: text(body.next, "next"),
 				},
 				sessionId,
+				c.req.raw.signal,
 			),
 		);
 		return c.body(null, 204);
@@ -182,12 +199,16 @@ export function mountAccounts(
 		const body = await json(c);
 		const { user } = c.get("viewer");
 		await guarded(c, user.username, "signIn", () =>
-			accounts.enableTotp(user.id, {
-				secret: text(body.secret, "secret"),
-				code: text(body.code, "code"),
-				password: text(body.password, "password"),
-				current: optionalText(body.current, "current"),
-			}),
+			accounts.enableTotp(
+				user.id,
+				{
+					secret: text(body.secret, "secret"),
+					code: text(body.code, "code"),
+					password: text(body.password, "password"),
+					current: optionalText(body.current, "current"),
+				},
+				c.req.raw.signal,
+			),
 		);
 		return c.body(null, 204);
 	});
@@ -195,10 +216,14 @@ export function mountAccounts(
 		const body = await json(c);
 		const { user } = c.get("viewer");
 		await guarded(c, user.username, "signIn", () =>
-			accounts.disableTotp(user.id, {
-				password: text(body.password, "password"),
-				code: optionalText(body.code, "code"),
-			}),
+			accounts.disableTotp(
+				user.id,
+				{
+					password: text(body.password, "password"),
+					code: optionalText(body.code, "code"),
+				},
+				c.req.raw.signal,
+			),
 		);
 		return c.body(null, 204);
 	});
@@ -220,6 +245,7 @@ export function mountAccounts(
 			accounts.usePasswordReset(
 				c.req.param("token"),
 				text(body.password, "password"),
+				c.req.raw.signal,
 			),
 		);
 		return c.body(null, 204);

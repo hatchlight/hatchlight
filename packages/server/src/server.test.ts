@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
 	base32Decode,
 	FakeProvider,
+	hashingRunning,
 	LOCAL_USER,
 	type TrainerEvent,
 	type TrainerStatus,
@@ -1200,4 +1201,23 @@ test("members may add only so many LoRAs; admins are not held to it", async () =
 	const { id } = (await first.json()) as { id: string };
 	await call(`/api/loras/${id}`, { method: "DELETE", who: owner });
 	expect((await add(member, "two.safetensors", "Two")).status).toBe(201);
+});
+
+test("password checks from one address run one at a time", async () => {
+	const { call, setupOwner } = await serverApp();
+	await setupOwner();
+	let most = 0;
+	const watch = setInterval(() => {
+		most = Math.max(most, hashingRunning());
+	}, 1);
+	await Promise.all(
+		Array.from({ length: 5 }, () =>
+			call("/api/login", {
+				method: "POST",
+				body: { username: "owner", password: "not the password" },
+			}),
+		),
+	);
+	clearInterval(watch);
+	expect(most).toBe(1);
 });

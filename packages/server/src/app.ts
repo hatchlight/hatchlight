@@ -349,7 +349,10 @@ export function createApp(options: AppOptions): Hono {
 			...(e.code && { code: e.code, params: e.params }),
 		});
 		if (error instanceof ValidationError) return c.json(body(error), 400);
-		if (error instanceof AccessError) return c.json(body(error), error.status);
+		if (error instanceof AccessError) {
+			if (error.status === 503) c.header("retry-after", "5");
+			return c.json(body(error), error.status);
+		}
 		if (error instanceof NotFoundError) return c.json(body(error), 404);
 		// Something the server relies on failed in a way a person can be told.
 		if (error instanceof CodedError && error.code) {

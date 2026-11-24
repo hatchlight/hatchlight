@@ -82,6 +82,7 @@ export const ERROR_CODES = [
 	"resultDownloadFailed",
 	"resultNotHttps",
 	"resultTooLarge",
+	"serverBusy",
 	"sessionNotFound",
 	"signInRequired",
 	"tooManyAttempts",
@@ -149,13 +150,14 @@ export class NotFoundError extends CodedError {}
 
 /**
  * Who is asking may not: 401 when nobody is signed in or the sign-in failed,
- * 403 when the person may not do this, 429 when they tried too often.
+ * 403 when the person may not do this, 429 when they tried too often, 503
+ * when the server is too busy checking passwords to take more.
  */
 export class AccessError extends CodedError {
 	constructor(
 		message: string,
 		code: ErrorCode,
-		readonly status: 401 | 403 | 429,
+		readonly status: 401 | 403 | 429 | 503,
 		params: ErrorParams = {},
 	) {
 		super(message, code, params);
