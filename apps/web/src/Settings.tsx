@@ -304,6 +304,7 @@ function HelperModel({
 }) {
 	const { t, bytes, explain } = useI18n();
 	const live = useModelProgress(model.id);
+	const can = useCan();
 	const install = useMutation({ mutationFn: () => api.installModel(model.id) });
 	const cancel = useMutation({ mutationFn: () => api.cancelModel(model.id) });
 	const remove = useMutation({ mutationFn: () => api.deleteModel(model.id) });
@@ -342,14 +343,20 @@ function HelperModel({
 					<span className="font-mono text-xs text-dim">
 						{bytes(received)} / {bytes(size)}
 					</span>
-					<button
-						type="button"
-						onClick={() => cancel.mutate()}
-						className="rounded-md border border-line px-3 py-1.5 text-sm text-dim hover:text-ink"
-					>
-						{t("common.cancel")}
-					</button>
+					{can.admin && (
+						<button
+							type="button"
+							onClick={() => cancel.mutate()}
+							className="rounded-md border border-line px-3 py-1.5 text-sm text-dim hover:text-ink"
+						>
+							{t("common.cancel")}
+						</button>
+					)}
 				</div>
+			) : !can.admin ? (
+				!model.ready && (
+					<p className="mt-3 text-sm text-dim">{t("models.askAdmin")}</p>
+				)
 			) : model.ready ? (
 				<button
 					type="button"

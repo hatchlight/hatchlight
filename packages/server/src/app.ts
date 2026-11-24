@@ -11,6 +11,7 @@ import {
 	type JobEngine,
 	LOCAL_USER,
 	type LocalModelStore,
+	type LocalModelsView,
 	MAX_CHECKPOINT_BYTES,
 	MAX_LORA_BYTES,
 	NotFoundError,
@@ -502,7 +503,24 @@ export function createApp(options: AppOptions): Hono {
 	});
 
 	// Models are shared by everyone using this installation.
-	app.get("/api/local-models", async (c) => c.json(await models.list()));
+	/** Whether the person asking may see where the server keeps its files. */
+	const seesFolders = (c: Context) =>
+		!server || ["owner", "admin"].includes(c.get("viewer").user.role);
+	app.get("/api/local-models", async (c) => {
+		const view = await models.list();
+		if (seesFolders(c)) return c.json(view);
+		// The server's folders are none of a member's business.
+		return c.json({
+			...view,
+			disk: {
+				...view.disk,
+				path: "",
+				changeable: false,
+				moving: view.disk.moving && { ...view.disk.moving, to: "" },
+				moveError: null,
+			},
+		} satisfies LocalModelsView);
+	});
 	app.post("/api/prompts/improve", async (c) => {
 		if (!options.improvePrompt) throw new NotFoundError("No writer here");
 		const body = await json(c);
@@ -989,7 +1007,14 @@ export function createApp(options: AppOptions): Hono {
 			const unsubscribeJobs = engine.subscribe((target, event) => {
 				if (target === userId) send(event);
 			});
-			const unsubscribeModels = models.subscribe(send);
+			const folders = seesFolders(c);
+			const unsubscribeModels = models.subscribe((event) =>
+				send(
+					event.type === "models.moving" && !folders
+						? { ...event, to: "" }
+						: event,
+				),
+			);
 			const unsubscribeTrainer = options.trainer?.subscribe((event) => {
 				const trainer = forViewer(userId, event.trainer);
 				send({ ...event, trainer } satisfies TrainerEvent);

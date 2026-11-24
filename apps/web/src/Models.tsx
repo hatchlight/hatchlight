@@ -929,6 +929,7 @@ function Folder({ disk }: { disk: LocalModelsView["disk"] }) {
 }
 
 export function Models() {
+	const can = useCan();
 	const { t, bytes, explain } = useI18n();
 	const view = useQuery({
 		queryKey: ["local-models"],
@@ -966,7 +967,8 @@ export function Models() {
 							</dt>
 							<dd className="font-mono text-lg">{bytes(disk.freeBytes)}</dd>
 						</div>
-						<Folder disk={disk} />
+						{/* Where the server keeps its files is for those who run it. */}
+						{can.admin && <Folder disk={disk} />}
 					</dl>
 				)}
 				<CheckpointShelf />

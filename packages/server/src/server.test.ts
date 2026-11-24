@@ -901,3 +901,16 @@ test("what only works on the server's own computer is left out", async () => {
 		expect(await errorCode(response)).toBe("notOnServer");
 	}
 });
+
+test("only admins and owners see where the server keeps its files", async () => {
+	const { call, setupOwner, invite } = await serverApp();
+	const owner = await setupOwner();
+	const admin = await invite(owner, { role: "admin" });
+	const member = await invite(owner);
+	type View = { disk: { path: string; changeable: boolean } };
+	const disk = async (who: Who) =>
+		((await (await call("/api/local-models", { who })).json()) as View).disk;
+	expect((await disk(owner)).path).not.toBe("");
+	expect((await disk(admin)).path).not.toBe("");
+	expect(await disk(member)).toMatchObject({ path: "", changeable: false });
+});

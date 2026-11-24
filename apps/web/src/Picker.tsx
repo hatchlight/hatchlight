@@ -16,6 +16,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { useCan } from "./Accounts";
 import { api, demoUrl } from "./api";
 import { FRAME_MS, reduceMotion } from "./Develop";
 import { remaining, usd } from "./format";
@@ -237,6 +238,7 @@ function Hero(props: {
 	)[0];
 	const total = props.hardware ? gpuMemory(props.hardware) : null;
 	const local = props.pick?.kind === "local" ? props.pick.model : undefined;
+	const can = useCan();
 	const need = local ? neededMemory(local) : null;
 	const level = local ? fitLevel(localFit(local)) : null;
 	const share = need && total ? Math.min(1, need / total) : 0;
@@ -368,16 +370,22 @@ function Hero(props: {
 							</span>
 						)}
 					</div>
-					<div className="mt-auto flex flex-wrap gap-2">
-						<button
-							type="button"
-							onClick={() => props.pick && props.onChoose(props.pick)}
-							className="cta rounded-xl px-5 py-2.5 font-display font-bold"
-						>
-							{local && !local.ready
-								? t("picker.downloadUse", { size: i18n.bytes(local.size) })
-								: t("picker.useThis")}
-						</button>
+					<div className="mt-auto flex flex-wrap items-center gap-2">
+						{local && !local.ready && !can.admin ? (
+							<p className="text-sm text-dim">{t("models.askAdmin")}</p>
+						) : (
+							<button
+								type="button"
+								onClick={() => props.pick && props.onChoose(props.pick)}
+								className="cta rounded-xl px-5 py-2.5 font-display font-bold"
+							>
+								{local && !local.ready
+									? t("picker.downloadUse", {
+											size: i18n.bytes(local.size),
+										})
+									: t("picker.useThis")}
+							</button>
+						)}
 						<button
 							type="button"
 							onClick={props.onSeeAll}
@@ -698,9 +706,10 @@ function Download(props: { model: LocalModelStatus; autoStart: boolean }) {
 		state !== "available" || install.isPending || install.isSuccess;
 	const { mutate } = install;
 	// Chosen from "Download and use": start without a second click.
+	const can = useCan();
 	// biome-ignore lint/correctness/useExhaustiveDependencies: only when the drawer opens
 	useEffect(() => {
-		if (props.autoStart && model.state === "available") mutate();
+		if (can.admin && props.autoStart && model.state === "available") mutate();
 	}, []);
 	const steps = [
 		["downloading", t("picker.stepDownload")],
@@ -770,7 +779,7 @@ function Download(props: { model: LocalModelStatus; autoStart: boolean }) {
 						)}
 					</p>
 				</>
-			) : (
+			) : can.admin ? (
 				<button
 					type="button"
 					onClick={() => install.mutate()}
@@ -778,6 +787,8 @@ function Download(props: { model: LocalModelStatus; autoStart: boolean }) {
 				>
 					{t("picker.download", { size: i18n.bytes(model.size) })}
 				</button>
+			) : (
+				<p className="text-sm text-dim">{t("models.askAdmin")}</p>
 			)}
 			{error && <p className="text-sm text-danger">{error}</p>}
 		</div>
@@ -787,6 +798,7 @@ function Download(props: { model: LocalModelStatus; autoStart: boolean }) {
 /** Pasting a key for one of the services that offer a cloud model. */
 function KeyForm(props: { routes: ModelSpec[]; providers: ProviderStatus[] }) {
 	const { t, explain } = useI18n();
+	const can = useCan();
 	const client = useQueryClient();
 	const options = props.providers.filter(
 		(p) => p.requiresKey && props.routes.some((r) => r.providerId === p.id),
@@ -802,6 +814,10 @@ function KeyForm(props: { routes: ModelSpec[]; providers: ProviderStatus[] }) {
 		},
 	});
 	if (!provider) return null;
+	// A server's keys are its owner's to add.
+	if (!can.owner) {
+		return <p className="text-sm text-dim">{t("settings.providersServer")}</p>;
+	}
 
 	return (
 		<form

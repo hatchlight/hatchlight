@@ -822,25 +822,62 @@ function Terms({
 					</label>
 				</>
 			)}
+			{/* biome-ignore lint/a11y/noLabelWithoutControl: the input is inside */}
 			<label className="flex items-center gap-2">
 				{t("users.limit")}
-				<input
-					type="number"
-					min={0}
-					step="any"
-					value={terms.monthlyLimitUsd ?? ""}
+				<LimitInput
+					value={terms.monthlyLimitUsd}
 					placeholder={t("users.noLimit")}
-					onChange={(event) =>
-						setTerms({
-							...terms,
-							monthlyLimitUsd:
-								event.target.value === "" ? null : Number(event.target.value),
-						})
+					onCommit={(monthlyLimitUsd) =>
+						setTerms({ ...terms, monthlyLimitUsd })
 					}
-					className="w-24 rounded-md border border-line bg-bg px-2 py-1.5 font-mono text-sm"
 				/>
 			</label>
 		</div>
+	);
+}
+
+/**
+ * A dollar amount, or nothing for no limit. Saved when the field is left or
+ * Enter is pressed, not at every key.
+ */
+function LimitInput({
+	value,
+	placeholder,
+	onCommit,
+}: {
+	value: number | null;
+	placeholder: string;
+	onCommit(value: number | null): void;
+}) {
+	const [draft, setDraft] = useState(value == null ? "" : String(value));
+	// What the server says wins once it changes.
+	useEffect(() => setDraft(value == null ? "" : String(value)), [value]);
+	const commit = () => {
+		const next = draft.trim() === "" ? null : Number(draft);
+		if (next !== null && !(Number.isFinite(next) && next >= 0)) {
+			setDraft(value == null ? "" : String(value));
+			return;
+		}
+		if (next !== value) onCommit(next);
+	};
+	return (
+		<input
+			type="number"
+			min={0}
+			step="any"
+			value={draft}
+			placeholder={placeholder}
+			onChange={(event) => setDraft(event.target.value)}
+			onBlur={commit}
+			onKeyDown={(event) => {
+				if (event.key === "Enter") {
+					event.preventDefault();
+					commit();
+				}
+			}}
+			className="w-24 rounded-md border border-line bg-bg px-2 py-1.5 font-mono text-sm"
+		/>
 	);
 }
 
