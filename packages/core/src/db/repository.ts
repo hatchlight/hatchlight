@@ -16,6 +16,7 @@ import {
 	type TurnView,
 	type UserContext,
 } from "../types";
+import { SqliteAccounts } from "./accounts";
 import * as schema from "./schema";
 
 export type JobPatch = Partial<
@@ -32,6 +33,8 @@ export type JobPatch = Partial<
 		| "params"
 	>
 >;
+
+export type SpendingEntry = typeof schema.spending.$inferInsert;
 
 export interface GalleryQuery {
 	query?: string;
@@ -60,6 +63,9 @@ export interface Repository {
 	): Promise<void>;
 	listEntries(ctx: UserContext, sessionId: string): Promise<AssistantEntry[]>;
 
+	/** Writes down a charge, which nothing removes. */
+	addSpending(entry: SpendingEntry): Promise<void>;
+
 	// Used by the job engine, which acts across users.
 	findJob(id: string): Promise<JobView | null>;
 	updateJob(id: string, patch: JobPatch): Promise<void>;
@@ -83,6 +89,11 @@ export class SqliteRepository implements Repository {
 
 	close(): void {
 		this.sqlite.close();
+	}
+
+	/** The accounts of a server, kept in the same database. */
+	accounts(): SqliteAccounts {
+		return new SqliteAccounts(this.sqlite);
 	}
 
 	async createSession(session: Session) {
@@ -227,6 +238,10 @@ export class SqliteRepository implements Repository {
 			...job,
 			assets: assets.filter((a) => a.jobId === job.id),
 		}));
+	}
+
+	async addSpending(entry: SpendingEntry) {
+		this.db.insert(schema.spending).values(entry).run();
 	}
 
 	async createAsset(asset: Asset) {

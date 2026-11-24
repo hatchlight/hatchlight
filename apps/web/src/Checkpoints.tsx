@@ -1,6 +1,7 @@
 import type { CheckpointInfo } from "@hatchlight/core/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
+import { useCan } from "./Accounts";
 import { ApiError, api } from "./api";
 
 /** The largest file the server takes, as it says. */
@@ -12,6 +13,7 @@ import { baseText } from "./Loras";
 /** One model added by hand: how it runs, and a way to delete it. */
 function CheckpointRow({ checkpoint }: { checkpoint: CheckpointInfo }) {
 	const { t, bytes, explain } = useI18n();
+	const can = useCan();
 	const client = useQueryClient();
 	const refresh = () => client.invalidateQueries({ queryKey: ["checkpoints"] });
 	const [confirming, setConfirming] = useState(false);
@@ -55,7 +57,7 @@ function CheckpointRow({ checkpoint }: { checkpoint: CheckpointInfo }) {
 				<span className="font-mono text-xs text-dim">
 					{bytes(checkpoint.size)}
 				</span>
-				{confirming ? (
+				{!can.admin ? null : confirming ? (
 					<div className="flex gap-2">
 						<button
 							type="button"
@@ -84,62 +86,65 @@ function CheckpointRow({ checkpoint }: { checkpoint: CheckpointInfo }) {
 					</button>
 				)}
 			</div>
-			<form
-				className="flex flex-wrap items-end gap-3 text-sm text-dim"
-				onSubmit={(event) => {
-					event.preventDefault();
-					save.mutate();
-				}}
-			>
-				<label className="flex flex-col gap-1">
-					{t("checkpoints.steps")}
-					<input
-						type="number"
-						min={1}
-						max={150}
-						step={1}
-						value={steps}
-						onChange={(event) => setSteps(event.target.value)}
-						className={field}
-					/>
-				</label>
-				<label className="flex flex-col gap-1">
-					{t("checkpoints.guidance")}
-					<input
-						type="number"
-						min={0}
-						max={30}
-						step={0.5}
-						value={cfgScale}
-						onChange={(event) => setCfgScale(event.target.value)}
-						className={field}
-					/>
-				</label>
-				<label className="flex flex-col gap-1">
-					{t("checkpoints.clipSkip")}
-					<select
-						value={clipSkip}
-						onChange={(event) => setClipSkip(event.target.value)}
-						className={field}
-					>
-						<option value="">{t("checkpoints.clipSkipNone")}</option>
-						{Array.from({ length: 12 }, (_, i) => String(i + 1)).map((n) => (
-							<option key={n} value={n}>
-								{n}
-							</option>
-						))}
-					</select>
-				</label>
-				{changed && (
-					<button
-						type="submit"
-						disabled={save.isPending || !complete}
-						className="rounded-md bg-accent px-3 py-1.5 font-medium text-accent-ink disabled:opacity-40"
-					>
-						{t("checkpoints.save")}
-					</button>
-				)}
-			</form>
+			{/* Settings are shared: only admins change them. */}
+			<fieldset disabled={!can.admin} className="contents">
+				<form
+					className="flex flex-wrap items-end gap-3 text-sm text-dim"
+					onSubmit={(event) => {
+						event.preventDefault();
+						save.mutate();
+					}}
+				>
+					<label className="flex flex-col gap-1">
+						{t("checkpoints.steps")}
+						<input
+							type="number"
+							min={1}
+							max={150}
+							step={1}
+							value={steps}
+							onChange={(event) => setSteps(event.target.value)}
+							className={field}
+						/>
+					</label>
+					<label className="flex flex-col gap-1">
+						{t("checkpoints.guidance")}
+						<input
+							type="number"
+							min={0}
+							max={30}
+							step={0.5}
+							value={cfgScale}
+							onChange={(event) => setCfgScale(event.target.value)}
+							className={field}
+						/>
+					</label>
+					<label className="flex flex-col gap-1">
+						{t("checkpoints.clipSkip")}
+						<select
+							value={clipSkip}
+							onChange={(event) => setClipSkip(event.target.value)}
+							className={field}
+						>
+							<option value="">{t("checkpoints.clipSkipNone")}</option>
+							{Array.from({ length: 12 }, (_, i) => String(i + 1)).map((n) => (
+								<option key={n} value={n}>
+									{n}
+								</option>
+							))}
+						</select>
+					</label>
+					{changed && (
+						<button
+							type="submit"
+							disabled={save.isPending || !complete}
+							className="rounded-md bg-accent px-3 py-1.5 font-medium text-accent-ink disabled:opacity-40"
+						>
+							{t("checkpoints.save")}
+						</button>
+					)}
+				</form>
+			</fieldset>
 			<p className="text-xs leading-relaxed text-dim">
 				{t("checkpoints.settingsHint")}
 			</p>
@@ -155,6 +160,7 @@ function CheckpointRow({ checkpoint }: { checkpoint: CheckpointInfo }) {
 /** Whole models added from a file: community fine-tunes of SDXL or SD 1.5. */
 export function CheckpointShelf() {
 	const { t, bytes, explain } = useI18n();
+	const can = useCan();
 	const client = useQueryClient();
 	const checkpoints = useQuery({
 		queryKey: ["checkpoints"],
@@ -183,14 +189,16 @@ export function CheckpointShelf() {
 						{t("checkpoints.intro")}
 					</p>
 				</div>
-				<button
-					type="button"
-					onClick={() => input.current?.click()}
-					disabled={adding != null}
-					className="rounded-md border border-line px-4 py-2 text-sm hover:border-dim disabled:opacity-40"
-				>
-					{t("checkpoints.add")}
-				</button>
+				{can.admin && (
+					<button
+						type="button"
+						onClick={() => input.current?.click()}
+						disabled={adding != null}
+						className="rounded-md border border-line px-4 py-2 text-sm hover:border-dim disabled:opacity-40"
+					>
+						{t("checkpoints.add")}
+					</button>
+				)}
 				<input
 					ref={input}
 					type="file"

@@ -7,6 +7,10 @@ export type ErrorParams = Record<string, string | number>;
 export const ERROR_CODES = [
 	"assetNotFound",
 	"assistantBusy",
+	"badCredentials",
+	"badPassword",
+	"badSetupCode",
+	"badTotp",
 	"captionNeedsModel",
 	"checkpointMissing",
 	"checkpointNeedsEngine",
@@ -32,14 +36,19 @@ export const ERROR_CODES = [
 	"folderNotAbsolute",
 	"folderNotShared",
 	"folderNotWritable",
+	"forbidden",
 	"hashMismatch",
 	"improveFailed",
 	"interrupted",
+	"inviteInvalid",
 	"jobNotFound",
 	"jobNotRetryable",
+	"lastOwner",
 	"localAssistantUnavailable",
 	"loraMissing",
+	"loraQuotaReached",
 	"loraTooLarge",
+	"loraUploadBusy",
 	"loraUnknownBase",
 	"loraUnreadable",
 	"loraWrongBase",
@@ -51,6 +60,7 @@ export const ERROR_CODES = [
 	"modelsMoveLeftCopies",
 	"modelsMoving",
 	"modelUnavailable",
+	"monthlyLimitReached",
 	"needsPicture",
 	"noApiKey",
 	"noConnection",
@@ -61,16 +71,25 @@ export const ERROR_CODES = [
 	"noResult",
 	"notEnoughDisk",
 	"notInstalled",
+	"notOnServer",
+	"paidNotAllowed",
+	"passwordChangeRequired",
+	"passwordTooShort",
 	"providerBusy",
 	"referenceNotFound",
 	"referenceNotImage",
 	"referenceUnreadable",
+	"resetInvalid",
 	"resultDownloadFailed",
 	"resultNotHttps",
 	"resultTooLarge",
+	"serverBusy",
 	"sessionNotFound",
+	"signInRequired",
+	"tooManyAttempts",
 	"tooManyLoras",
 	"tooManyReferences",
+	"totpRequired",
 	"trainerBusy",
 	"trainerInstallFailed",
 	"trainerMissing",
@@ -89,6 +108,8 @@ export const ERROR_CODES = [
 	"unknownProvider",
 	"unknownVariant",
 	"uploadType",
+	"usernameInvalid",
+	"usernameTaken",
 	"variantDoesNotRun",
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -127,6 +148,23 @@ export interface Retry {
 export class ValidationError extends CodedError {}
 
 export class NotFoundError extends CodedError {}
+
+/**
+ * Who is asking may not: 401 when nobody is signed in or the sign-in failed,
+ * 403 when the person may not do this, 409 when one of theirs is already
+ * under way, 429 when they tried too often, 503
+ * when the server is too busy checking passwords to take more.
+ */
+export class AccessError extends CodedError {
+	constructor(
+		message: string,
+		code: ErrorCode,
+		readonly status: 401 | 403 | 409 | 429 | 503,
+		params: ErrorParams = {},
+	) {
+		super(message, code, params);
+	}
+}
 
 /** What to tell a person about an error: its message, and a code when known. */
 export function describeError(error: unknown): {

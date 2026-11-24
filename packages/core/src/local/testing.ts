@@ -186,3 +186,18 @@ export function safetensors(
 	file.set(json, 8);
 	return file;
 }
+
+/**
+ * Argon2id at the lowest cost, for tests only: the same algorithm as in
+ * production, fast enough that slow machines finish the tests in time.
+ */
+export const FAST_HASHER = {
+	hash: (password: string) =>
+		Bun.password.hash(password, {
+			algorithm: "argon2id",
+			memoryCost: 8,
+			timeCost: 1,
+		}),
+	verify: (password: string, hash: string) =>
+		Bun.password.verify(password, hash),
+};

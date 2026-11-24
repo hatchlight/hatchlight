@@ -1,4 +1,4 @@
-import { mkdir, rename } from "node:fs/promises";
+import { mkdir, readdir, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { UserContext } from "./types";
 
@@ -37,5 +37,29 @@ export class FsAssetStore implements AssetStore {
 	async get(ctx: UserContext, hash: string): Promise<Blob | null> {
 		const file = Bun.file(this.path(ctx, hash));
 		return (await file.exists()) ? file : null;
+	}
+
+	/** Gives `from`'s files to `to`, as when a server's first owner takes over. */
+	async moveUser(from: string, to: string): Promise<void> {
+		const source = join(this.root, from);
+		const target = join(this.root, to);
+		const shards = await readdir(source).catch(() => null);
+		if (!shards) return;
+		await mkdir(this.root, { recursive: true });
+		if (
+			!(await rename(source, target).then(
+				() => true,
+				() => false,
+			))
+		) {
+			// The target exists: the files are merged in, shard by shard.
+			for (const shard of shards) {
+				await mkdir(join(target, shard), { recursive: true });
+				for (const file of await readdir(join(source, shard))) {
+					await rename(join(source, shard, file), join(target, shard, file));
+				}
+			}
+			await rm(source, { recursive: true, force: true });
+		}
 	}
 }

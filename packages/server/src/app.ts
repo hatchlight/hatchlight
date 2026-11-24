@@ -1,4 +1,6 @@
 import {
+	AccessError,
+	type AccountService,
 	type Captioner,
 	CodedError,
 	type ErrorCode,
@@ -9,22 +11,39 @@ import {
 	type JobEngine,
 	LOCAL_USER,
 	type LocalModelStore,
+	type LocalModelsView,
 	MAX_CHECKPOINT_BYTES,
 	MAX_LORA_BYTES,
 	NotFoundError,
+	type PaidRefusal,
+	paidError,
 	type ReelService,
 	type SettingsStore,
 	TRANSLATE_WITH,
 	type Trainer,
+	type TrainerEvent,
+	type TrainerStatus,
+	type TrainingView,
 	type UserContext,
 	ValidationError,
 } from "@hatchlight/core";
 import type { Assistant } from "@hatchlight/tools";
-import { type Context, Hono } from "hono";
+import { type Context, Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
+import { mountAccounts } from "./accounts-routes";
 import type { Agents } from "./agents";
+import { requireAccess } from "./auth";
+import { DeviceCookies } from "./devices";
 import type { AssistantBrain, ImproveRequest } from "./runtime";
+import {
+	DEFAULT_LORA_QUOTA,
+	hostName,
+	isLoopback,
+	type LoraQuota,
+	requestOrigin,
+	type ServerTransport,
+} from "./transport";
 
 export interface AppOptions {
 	service: ReelService;
@@ -36,6 +55,23 @@ export interface AppOptions {
 	settings?: SettingsStore;
 	/** Extra origins allowed to call the API, e.g. the Vite dev server. */
 	allowedOrigins?: string[];
+	/**
+	 * Server mode: several people reach this server over the network, at its
+	 * public address. Absent on a personal install, which only answers this
+	 * computer.
+	 */
+	server?: ServerTransport;
+	/** LoRAs each member may add, on a server. Defaults to 20 files, 10 GB. */
+	loraQuota?: LoraQuota;
+	/**
+	 * Signs device cookies; kept in the data directory so they outlive a
+	 * restart. Without it, a new one each start.
+	 */
+	deviceKey?: Uint8Array;
+	/** The people of a server, who sign in; needed in server mode. */
+	accounts?: AccountService;
+	/** Why a person may not spend on paid models now, or null; servers only. */
+	paidRefusal?: (userId: string) => PaidRefusal | null;
 	/** Maps a request to its user. Local installs have a single user. */
 	resolveUser?: (c: Context) => UserContext;
 	/** Connects AI agents to this installation; absent where it cannot. */
@@ -92,6 +128,51 @@ function hostname(host: string): string {
 	return host.replace(/:\d+$/, "");
 }
 
+/** Methods that change something, which another website must never send. */
+const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+/**
+ * What the built interface needs and nothing more: its own scripts, styles
+ * and fonts, pictures it draws itself (data: and blob:), the event stream,
+ * and the desktop app's bridge (ipc:), which the desktop window talks to.
+ */
+const CONTENT_SECURITY_POLICY = [
+	"default-src 'self'",
+	"script-src 'self'",
+	"style-src 'self'",
+	"img-src 'self' data: blob:",
+	"media-src 'self' blob:",
+	"font-src 'self' data:",
+	"connect-src 'self' ipc: http://ipc.localhost",
+	"object-src 'none'",
+	"base-uri 'none'",
+	"form-action 'self'",
+	"frame-ancestors 'none'",
+].join("; ");
+
+const SECURITY_HEADERS: Record<string, string> = {
+	"content-security-policy": CONTENT_SECURITY_POLICY,
+	"x-frame-options": "DENY",
+	"referrer-policy": "no-referrer",
+	"x-content-type-options": "nosniff",
+	"permissions-policy":
+		"camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+};
+
+/** The connection's address, which the server passes in as `peer`. */
+const peerOf = (c: Context): string | null =>
+	(c.env as { peer?: string } | undefined)?.peer ?? null;
+
+/** Answer for what a server reached over the network must not do. */
+const notOnServer = (c: Context) =>
+	c.json(
+		{
+			error: "Not available when Hatchlight runs as a server",
+			code: "notOnServer",
+		},
+		403,
+	);
+
 /**
  * Reads a single-range `Range` header. Anything else (no header, several
  * ranges, another unit) is answered with the whole file, as HTTP allows.
@@ -147,30 +228,134 @@ function serveFile(c: Context, blob: Blob, mime: string): Response {
 	});
 }
 
+/**
+ * Refuses a file upload that says it is too large. One that does not say
+ * (sent in chunks) is not held in memory to find out: the shelf counts it
+ * as it is written and stops at the limit.
+ */
+function declaredSize(options: {
+	maxSize: number;
+	onError: (c: Context) => Response;
+}): MiddlewareHandler {
+	return async (c, next) => {
+		const length = c.req.header("content-length");
+		if (
+			length !== undefined &&
+			!c.req.header("transfer-encoding") &&
+			Number(length) > options.maxSize
+		) {
+			return options.onError(c);
+		}
+		await next();
+	};
+}
+
 export function createApp(options: AppOptions): Hono {
 	const { service, engine, models } = options;
-	const user = options.resolveUser ?? (() => LOCAL_USER);
+	const server = options.server;
+	// A personal install has no accounts, even when given them.
+	const accounts = server ? options.accounts : undefined;
+	if (server && !accounts) throw new Error("Server mode needs accounts");
+	const user =
+		options.resolveUser ??
+		(server
+			? (c: Context): UserContext => ({ userId: c.get("viewer").user.id })
+			: () => LOCAL_USER);
 	const app = new Hono();
+
+	// Every answer, the page included, keeps to what the interface needs.
+	app.use("*", async (c, next) => {
+		await next();
+		const headers = c.res.headers;
+		for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+			// Stored files keep their stricter sandbox.
+			if (!headers.has(name)) headers.set(name, value);
+		}
+		if (c.get("https")) {
+			headers.set("strict-transport-security", "max-age=31536000");
+		}
+	});
 
 	// The server holds API keys and spends money, and browsers let any website
 	// send requests to localhost. Refuse anything that is not same-origin.
-	app.use("*", async (c, next) => {
-		// Bun builds the request URL from the Host header.
-		const host = new URL(c.req.url).host;
-		if (!LOCAL_HOSTS.includes(hostname(host))) {
-			return c.json({ error: "Forbidden host" }, 403);
-		}
-		// Compared as text: `Origin` can be "null" or otherwise not a URL.
-		const origin = c.req.header("origin");
-		if (
-			origin &&
-			origin !== `http://${host}` &&
-			!options.allowedOrigins?.includes(origin)
-		) {
-			return c.json({ error: "Forbidden origin" }, 403);
-		}
-		await next();
-	});
+	app.use(
+		"*",
+		server
+			? async (c, next) => {
+					// Behind a proxy, the address people used comes in its headers.
+					const seen = requestOrigin(
+						new URL(c.req.url),
+						c.req.raw.headers,
+						peerOf(c),
+						server.trustedProxies,
+					);
+					const name = hostName(seen.host);
+					// Loopback stays allowed for health checks from the machine itself.
+					if (
+						!name ||
+						!(server.allowedHosts.includes(name) || LOCAL_HOSTS.includes(name))
+					) {
+						return c.json({ error: "Forbidden host" }, 403);
+					}
+					c.set("https", seen.scheme === "https");
+					c.set("client", seen.client);
+					const origin = c.req.header("origin");
+					const own = new URL(`${seen.scheme}://${seen.host}`).origin;
+					if (origin) {
+						if (origin !== own && !options.allowedOrigins?.includes(origin)) {
+							return c.json({ error: "Forbidden origin" }, 403);
+						}
+					} else if (
+						UNSAFE_METHODS.has(c.req.method) &&
+						c.req.header("sec-fetch-site") !== "same-origin" &&
+						// Programs sign with a token, which no other site can send;
+						// with a cookie beside it, it could be a browser.
+						!(
+							/^Bearer\s/i.test(c.req.header("authorization") ?? "") &&
+							c.req.header("cookie") === undefined
+						)
+					) {
+						// Browsers name the origin of every such request; without
+						// it, nothing shows it comes from this site.
+						return c.json({ error: "Missing origin" }, 403);
+					}
+					await next();
+				}
+			: async (c, next) => {
+					// Without login, only this computer may come in, whatever
+					// address the server was told to listen on.
+					const peer = peerOf(c);
+					if (peer !== null && !isLoopback(peer)) {
+						return c.json({ error: "Forbidden address" }, 403);
+					}
+					// Bun builds the request URL from the Host header.
+					const host = new URL(c.req.url).host;
+					if (!LOCAL_HOSTS.includes(hostname(host))) {
+						return c.json({ error: "Forbidden host" }, 403);
+					}
+					// Compared as text: `Origin` can be "null" or otherwise not a URL.
+					const origin = c.req.header("origin");
+					if (
+						origin &&
+						origin !== `http://${host}` &&
+						!options.allowedOrigins?.includes(origin)
+					) {
+						return c.json({ error: "Forbidden origin" }, 403);
+					}
+					await next();
+				},
+	);
+
+	// For container and proxy health checks: says nothing but that it is up.
+	app.get("/api/health", (c) => c.json({ ok: true }));
+	// Lets the interface leave out what only works on this computer, and warn
+	// when passwords would cross the network unencrypted.
+	app.get("/api/server", (c) =>
+		c.json({
+			mode: server ? "server" : "personal",
+			secure: c.get("https") === true,
+		}),
+	);
 
 	// Bodies are small JSON, except for the routes that take files, which
 	// set their own limits.
@@ -186,12 +371,18 @@ export function createApp(options: AppOptions): Hono {
 	});
 
 	app.onError((error, c) => {
+		// The browser went away: nobody to answer, nothing to log.
+		if (c.req.raw.signal.aborted) return new Response(null, { status: 499 });
 		// The code and its values let the interface say it in the reader's language.
 		const body = (e: CodedError) => ({
 			error: e.message,
 			...(e.code && { code: e.code, params: e.params }),
 		});
 		if (error instanceof ValidationError) return c.json(body(error), 400);
+		if (error instanceof AccessError) {
+			if (error.status === 503) c.header("retry-after", "5");
+			return c.json(body(error), error.status);
+		}
 		if (error instanceof NotFoundError) return c.json(body(error), 404);
 		// Something the server relies on failed in a way a person can be told.
 		if (error instanceof CodedError && error.code) {
@@ -212,17 +403,42 @@ export function createApp(options: AppOptions): Hono {
 		return body;
 	};
 
+	if (accounts) {
+		// On a server, every route but the public ones needs a signed-in person.
+		app.use("/api/*", requireAccess(accounts));
+		mountAccounts(
+			app,
+			accounts,
+			json,
+			new DeviceCookies(
+				options.deviceKey ?? crypto.getRandomValues(new Uint8Array(32)),
+			),
+		);
+	}
+
+	/** Why the person asking may not spend on paid models now, if they may not. */
+	const paidRefusal = (c: Context) =>
+		server ? (options.paidRefusal?.(user(c).userId) ?? null) : null;
+
 	app.get("/api/models", (c) => c.json(service.listModels()));
 
-	app.get("/api/providers", async (c) =>
-		c.json(await service.listProviders(user(c))),
-	);
+	app.get("/api/providers", async (c) => {
+		const providers = await service.listProviders(user(c));
+		// A key from the environment is not theirs to use either.
+		return c.json(
+			paidRefusal(c)
+				? providers.map((p) => (p.requiresKey ? { ...p, hasKey: false } : p))
+				: providers,
+		);
+	});
 
 	// Connecting agents writes to their settings, on the person's request.
 	const agents = options.agents;
 	if (agents) {
 		app.get("/api/agents", async (c) => c.json(await agents.status()));
 		app.put("/api/agents/claude-desktop", async (c) => {
+			// It writes settings on the machine that runs the server.
+			if (server) return notOnServer(c);
 			const body = (await c.req.json().catch(() => null)) as {
 				allowPaid?: unknown;
 				spendLimitUsd?: unknown;
@@ -244,6 +460,7 @@ export function createApp(options: AppOptions): Hono {
 			return c.body(null, 204);
 		});
 		app.delete("/api/agents/claude-desktop", async (c) => {
+			if (server) return notOnServer(c);
 			await agents.disconnectClaudeDesktop();
 			return c.body(null, 204);
 		});
@@ -281,6 +498,22 @@ export function createApp(options: AppOptions): Hono {
 		}
 		if (body.sessionId != null && typeof body.sessionId !== "string") {
 			throw new ValidationError("sessionId must be a string");
+		}
+		const refusal = paidRefusal(c);
+		if (refusal) {
+			const paid = new Set(
+				(await service.listProviders(user(c)))
+					.filter((p) => p.requiresKey)
+					.map((p) => p.id),
+			);
+			const byId = new Map(service.listModels().map((m) => [m.id, m]));
+			if (
+				(body.modelIds as string[]).some((id) =>
+					paid.has(byId.get(id)?.providerId ?? ""),
+				)
+			) {
+				throw paidError(refusal);
+			}
 		}
 		// The remaining fields are validated by the service's schema.
 		const result = await service.createTurn(user(c), body as never);
@@ -325,7 +558,24 @@ export function createApp(options: AppOptions): Hono {
 	});
 
 	// Models are shared by everyone using this installation.
-	app.get("/api/local-models", async (c) => c.json(await models.list()));
+	/** Whether the person asking may see where the server keeps its files. */
+	const seesFolders = (c: Context) =>
+		!server || ["owner", "admin"].includes(c.get("viewer").user.role);
+	app.get("/api/local-models", async (c) => {
+		const view = await models.list();
+		if (seesFolders(c)) return c.json(view);
+		// The server's folders are none of a member's business.
+		return c.json({
+			...view,
+			disk: {
+				...view.disk,
+				path: "",
+				changeable: false,
+				moving: view.disk.moving && { ...view.disk.moving, to: "" },
+				moveError: null,
+			},
+		} satisfies LocalModelsView);
+	});
 	app.post("/api/prompts/improve", async (c) => {
 		if (!options.improvePrompt) throw new NotFoundError("No writer here");
 		const body = await json(c);
@@ -426,6 +676,8 @@ export function createApp(options: AppOptions): Hono {
 
 	// The move goes on after the answer; its progress comes as events.
 	app.post("/api/local-models/location", async (c) => {
+		// A path typed in a browser names a folder on another machine.
+		if (server) return notOnServer(c);
 		const body = await json(c);
 		if (typeof body.path !== "string" || !body.path.trim()) {
 			throw new ValidationError("path must name a folder");
@@ -439,10 +691,12 @@ export function createApp(options: AppOptions): Hono {
 		return c.body(null, 204);
 	});
 	// LoRAs, like models, are shared by everyone using this installation.
+	/** People with a LoRA upload under way, held to one each. */
+	const loraUploads = new Set<string>();
 	app.get("/api/loras", async (c) => c.json(await models.loras.list()));
 	app.post(
 		"/api/loras",
-		bodyLimit({
+		declaredSize({
 			maxSize: MAX_LORA_BYTES,
 			onError: (c) =>
 				c.json(
@@ -465,11 +719,56 @@ export function createApp(options: AppOptions): Hono {
 			}
 			const body = c.req.raw.body;
 			if (!body) throw new ValidationError("Empty upload", "loraUnreadable");
-			return c.json(await models.loras.add(body, name), 201);
+			// On a server, members may add only so many: the disk is shared.
+			const uploader = accounts ? c.get("viewer").user : null;
+			const quota = options.loraQuota ?? DEFAULT_LORA_QUOTA;
+			const limited =
+				uploader && accounts && !["owner", "admin"].includes(uploader.role);
+			const over = () =>
+				new AccessError(
+					"You added as many LoRAs as this server allows",
+					"loraQuotaReached",
+					403,
+					{ files: quota.files, maxBytes: quota.bytes },
+				);
+			if (!limited || !uploader || !accounts) {
+				const lora = await models.loras.add(body, name);
+				if (uploader)
+					accounts?.recordLoraUpload(uploader.id, lora.id, lora.size);
+				return c.json(lora, 201);
+			}
+			// One at a time each: two at once would both fit what is left.
+			if (loraUploads.has(uploader.id)) {
+				throw new AccessError(
+					"Another of your LoRAs is still uploading",
+					"loraUploadBusy",
+					409,
+				);
+			}
+			loraUploads.add(uploader.id);
+			try {
+				const used = accounts.loraUsage(
+					uploader.id,
+					new Set((await models.loras.list()).map((l) => l.id)),
+				);
+				const left = quota.bytes - used.bytes;
+				const incoming = Number(c.req.header("content-length") ?? 0) || 0;
+				if (used.files >= quota.files || incoming > left) throw over();
+				// The upload stops as soon as it passes what is left.
+				const lora = await models.loras.add(body, name, {
+					maxBytes: left,
+					error: over,
+				});
+				accounts.recordLoraUpload(uploader.id, lora.id, lora.size);
+				return c.json(lora, 201);
+			} finally {
+				loraUploads.delete(uploader.id);
+			}
 		},
 	);
 	app.delete("/api/loras/:id", async (c) => {
 		await models.loras.remove(c.req.param("id"));
+		accounts?.forgetLoraUpload(c.req.param("id"));
 		return c.body(null, 204);
 	});
 
@@ -479,7 +778,7 @@ export function createApp(options: AppOptions): Hono {
 	);
 	app.post(
 		"/api/checkpoints",
-		bodyLimit({
+		declaredSize({
 			maxSize: MAX_CHECKPOINT_BYTES,
 			onError: (c) =>
 				c.json(
@@ -525,7 +824,29 @@ export function createApp(options: AppOptions): Hono {
 		if (!options.trainer) throw new NotFoundError("No trainer here");
 		return options.trainer;
 	};
-	app.get("/api/trainer", async (c) => c.json(await trainer().status()));
+	// On a server, a training shows only to who started it, and to those who
+	// run the server: its name and samples are theirs.
+	const runsServer = (c: Context) =>
+		["owner", "admin"].includes(c.get("viewer").user.role);
+	const maySee = (c: Context, training: TrainingView) =>
+		!server || training.startedBy?.userId === user(c).userId || runsServer(c);
+	const forViewer = (c: Context, status: TrainerStatus): TrainerStatus =>
+		status.training && !maySee(c, status.training)
+			? { ...status, training: null }
+			: status;
+	const assertMayManageTraining = async (c: Context) => {
+		const training = (await trainer().status()).training;
+		if (training && !maySee(c, training)) {
+			throw new AccessError(
+				"Only who started this training can stop it",
+				"forbidden",
+				403,
+			);
+		}
+	};
+	app.get("/api/trainer", async (c) =>
+		c.json(forViewer(c, await trainer().status())),
+	);
 	app.post("/api/trainer/install", async (c) => {
 		await trainer().install();
 		return c.body(null, 202);
@@ -588,20 +909,33 @@ export function createApp(options: AppOptions): Hono {
 				caption: typeof caption === "string" ? caption.slice(0, 500) : "",
 			});
 		}
-		return c.json(
-			await trainer().train({ name, trigger, steps, pictures: read }),
-			202,
-		);
+		const viewer = server ? c.get("viewer").user : null;
+		const training = await trainer().train({
+			name,
+			trigger,
+			steps,
+			pictures: read,
+			startedBy: viewer
+				? { userId: viewer.id, name: viewer.displayName }
+				: undefined,
+		});
+		return c.json(training, 202);
 	});
-	app.post("/api/trainings/cancel", (c) => {
+	app.post("/api/trainings/cancel", async (c) => {
+		await assertMayManageTraining(c);
 		trainer().cancelTraining();
 		return c.body(null, 204);
 	});
-	app.post("/api/trainings/finish", (c) => {
+	app.post("/api/trainings/finish", async (c) => {
+		await assertMayManageTraining(c);
 		trainer().finishTraining();
 		return c.body(null, 204);
 	});
 	app.get("/api/trainings/:id/samples/:step", async (c) => {
+		const training = (await trainer().status()).training;
+		if (!training || !maySee(c, training)) {
+			throw new NotFoundError("Sample not found");
+		}
 		const file = trainer().sampleFile(
 			c.req.param("id"),
 			Number(c.req.param("step")),
@@ -768,7 +1102,7 @@ export function createApp(options: AppOptions): Hono {
 	app.get("/api/events", (c) => {
 		const { userId } = user(c);
 		return streamSSE(c, async (stream) => {
-			const send = (event: { type: string }) =>
+			const send = (event: { type: string } | TrainerEvent) =>
 				void stream.writeSSE({
 					event: event.type,
 					data: JSON.stringify(event),
@@ -776,8 +1110,18 @@ export function createApp(options: AppOptions): Hono {
 			const unsubscribeJobs = engine.subscribe((target, event) => {
 				if (target === userId) send(event);
 			});
-			const unsubscribeModels = models.subscribe(send);
-			const unsubscribeTrainer = options.trainer?.subscribe(send);
+			const folders = seesFolders(c);
+			const unsubscribeModels = models.subscribe((event) =>
+				send(
+					event.type === "models.moving" && !folders
+						? { ...event, to: "" }
+						: event,
+				),
+			);
+			const unsubscribeTrainer = options.trainer?.subscribe((event) => {
+				const trainer = forViewer(c, event.trainer);
+				send({ ...event, trainer } satisfies TrainerEvent);
+			});
 			const unsubscribeAssistant = options.assistant?.subscribe(
 				(target, event) => {
 					if (target === userId) send(event);

@@ -1,9 +1,12 @@
 import type {
+	AccountView,
 	Asset,
 	AssistantView,
+	AuthSessionView,
 	CheckpointInfo,
 	CreateTurnInput,
 	GalleryItem,
+	InviteView,
 	LocalModelsView,
 	LoraInfo,
 	ModelSpec,
@@ -13,7 +16,9 @@ import type {
 	TrainerStatus,
 	TrainingView,
 	TurnView,
+	UserRole,
 } from "@hatchlight/core/types";
+import { useQuery } from "@tanstack/react-query";
 
 /** What the assistant thinks with: this computer, a service, or nothing. */
 export type AssistantBrain =
@@ -61,10 +66,51 @@ export class ApiError extends Error {
 	}
 }
 
+/** True when Hatchlight runs as a server, where machine settings are left out. */
+export function useServerMode(): boolean {
+	const server = useQuery({
+		queryKey: ["server"],
+		queryFn: api.server,
+		staleTime: Number.POSITIVE_INFINITY,
+	});
+	return server.data?.mode === "server";
+}
+
+/** What the person may grant: a role and what it may do. */
+export interface InviteTerms {
+	role: UserRole;
+	canUsePaid: boolean;
+	canTrain: boolean;
+	monthlyLimitUsd: number | null;
+}
+
+/** How Hatchlight runs, and whether it is reached over https. */
+export interface ServerInfo {
+	mode: "personal" | "server";
+	secure: boolean;
+}
+
+let signedOut: (() => void) | null = null;
+
+/** Calls `handler` when the server says the session is gone. */
+export function whenSignedOut(handler: () => void): () => void {
+	signedOut = handler;
+	return () => {
+		if (signedOut === handler) signedOut = null;
+	};
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
 	const response = await fetch(path, init);
 	if (!response.ok) {
 		const body = await response.json().catch(() => null);
+		// Signed out elsewhere, or a temporary password: back to the gate.
+		if (
+			body?.code === "signInRequired" ||
+			body?.code === "passwordChangeRequired"
+		) {
+			signedOut?.();
+		}
 		throw new ApiError(
 			body?.error ?? `Request failed (HTTP ${response.status})`,
 			typeof body?.code === "string" ? body.code : undefined,
@@ -139,6 +185,65 @@ export const api = {
 		),
 	cancelJob: (id: string) =>
 		request<void>(`/api/jobs/${id}/cancel`, { method: "POST" }),
+	/** Whether this is a personal install or a server reached over the network. */
+	server: () => request<ServerInfo>("/api/server"),
+	setupNeeded: () => request<{ needed: boolean }>("/api/setup"),
+	setup: (input: { code: string; username: string; password: string }) =>
+		request<AccountView>("/api/setup", send("POST", input)),
+	login: (input: { username: string; password: string; totp?: string }) =>
+		request<AccountView>("/api/login", send("POST", input)),
+	logout: () => request<void>("/api/logout", { method: "POST" }),
+	account: () => request<AccountView>("/api/account"),
+	dismissResetNotice: () =>
+		request<void>("/api/account/reset-notice", { method: "DELETE" }),
+	changePassword: (input: { current: string; next: string }) =>
+		request<void>("/api/account/password", send("PUT", input)),
+	accountSessions: () => request<AuthSessionView[]>("/api/account/sessions"),
+	revokeSession: (id: string) =>
+		request<void>(`/api/account/sessions/${id}`, { method: "DELETE" }),
+	revokeOtherSessions: () =>
+		request<void>("/api/account/sessions", { method: "DELETE" }),
+	startTotp: () =>
+		request<{ secret: string; uri: string }>("/api/account/totp", {
+			method: "POST",
+		}),
+	enableTotp: (input: {
+		secret: string;
+		code: string;
+		password: string;
+		current?: string;
+	}) => request<void>("/api/account/totp", send("PUT", input)),
+	disableTotp: (input: { password: string; code?: string }) =>
+		request<void>("/api/account/totp", send("DELETE", input)),
+	invite: (token: string) =>
+		request<{ role: UserRole; expiresAt: number }>(`/api/invites/${token}`),
+	acceptInvite: (
+		token: string,
+		input: { username: string; password: string },
+	) =>
+		request<AccountView>(`/api/invites/${token}/accept`, send("POST", input)),
+	invites: () => request<InviteView[]>("/api/invites"),
+	createInvite: (terms: InviteTerms) =>
+		request<{ token: string; invite: InviteView }>(
+			"/api/invites",
+			send("POST", terms),
+		),
+	deleteInvite: (id: string) =>
+		request<void>(`/api/invites/${id}`, { method: "DELETE" }),
+	users: () => request<AccountView[]>("/api/users"),
+	updateUser: (
+		id: string,
+		change: Partial<InviteTerms> & { disabled?: boolean },
+	) => request<AccountView>(`/api/users/${id}`, send("PATCH", change)),
+	/** A link for the person to choose a new password. */
+	resetPassword: (id: string) =>
+		request<{ token: string; expiresAt: number }>(`/api/users/${id}/password`, {
+			method: "POST",
+		}),
+	passwordReset: (token: string) =>
+		request<{ username: string }>(`/api/password-resets/${token}`),
+	setPasswordFromLink: (token: string, password: string) =>
+		request<void>(`/api/password-resets/${token}`, send("POST", { password })),
 	agents: () => request<AgentsStatus>("/api/agents"),
 	connectClaudeDesktop: (policy: AgentPolicy) =>
 		request<void>("/api/agents/claude-desktop", send("PUT", policy)),

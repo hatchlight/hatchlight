@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FileKeyStore } from "./keys";
+import { FileKeyStore, SERVER_KEYS, SharedKeyStore } from "./keys";
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -44,4 +44,26 @@ describe("API keys on disk", () => {
 		expect(typeof Object.prototype.toString).toBe("function");
 		expect(await keys.get(me, "fal")).toBe("k1");
 	});
+});
+
+test("the first owner of a server takes the keys of the install", async () => {
+	const keys = await store();
+	await keys.set(me, "fal", "fal-key");
+	await keys.moveUser("local", SERVER_KEYS.userId);
+	expect(await keys.list(me)).toEqual([]);
+	expect(await keys.get(SERVER_KEYS, "fal")).toBe("fal-key");
+	// Nothing to move is fine.
+	await keys.moveUser("local", SERVER_KEYS.userId);
+});
+
+test("a server's keys serve only those allowed to spend", async () => {
+	const inner = await store();
+	const shared = new SharedKeyStore(inner, (userId) => userId === "usr_paid");
+	await shared.set({ userId: "usr_owner" }, "fal", "fal-key");
+	expect(await shared.get({ userId: "usr_paid" }, "fal")).toBe("fal-key");
+	expect(await shared.list({ userId: "usr_paid" })).toEqual(["fal"]);
+	expect(await shared.get({ userId: "usr_free" }, "fal")).toBeUndefined();
+	expect(await shared.list({ userId: "usr_free" })).toEqual([]);
+	await shared.delete({ userId: "usr_owner" }, "fal");
+	expect(await inner.list(SERVER_KEYS)).toEqual([]);
 });

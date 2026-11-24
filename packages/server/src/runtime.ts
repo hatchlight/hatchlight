@@ -1,7 +1,15 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
 import {
+	existsSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
+import { mkdir } from "node:fs/promises";
+import { hostname as osHostname, uptime as osUptime } from "node:os";
+import { join, resolve } from "node:path";
+import {
+	AccountService,
 	appEnv,
 	assistantChoice,
 	type Captioner,
@@ -16,6 +24,7 @@ import {
 	improvePrompt,
 	JobEngine,
 	type LanguageModel,
+	LOCAL_USER,
 	type LocalEngineSpec,
 	LocalEyes,
 	type LocalModelSpec,
@@ -23,14 +32,23 @@ import {
 	LocalProvider,
 	LocalTranslator,
 	legacyName,
+	mayUsePaid,
+	newId,
+	type PaidRefusal,
+	type PasswordHasher,
 	type ProviderAdapter,
 	ProviderRegistry,
+	paidError,
 	promptStyle,
 	ReelService,
+	SERVER_KEYS,
 	type SettingsStore,
+	SharedKeyStore,
 	SqliteRepository,
 	Trainer,
 	type TrainerOptions,
+	type Translator,
+	tryFileLock,
 	type UserContext,
 	ValidationError,
 	writerChoice,
@@ -44,9 +62,16 @@ import {
 	type CloudTranslatorId,
 } from "@hatchlight/providers";
 import { Assistant, type Reel } from "@hatchlight/tools";
+import { deviceKey } from "./devices";
 
 export interface Runtime {
 	service: ReelService;
+	/** The people of a server; unused on a personal install. */
+	accounts: AccountService;
+	/** Signs device cookies; servers only. */
+	deviceKey?: Uint8Array;
+	/** Why a person may not spend on paid models now; servers only. */
+	paidRefusal?: (userId: string) => PaidRefusal | null;
 	engine: JobEngine;
 	models: LocalModelStore;
 	/** Trains LoRAs on this computer. */
@@ -137,51 +162,243 @@ class FakeChatModel implements ChatModel {
 	}
 }
 
+/**
+ * What one call to a cloud language model counts as against a monthly
+ * limit: more than a translation or a prompt costs, and about what a long
+ * assistant step costs on the larger models.
+ */
+export const LANGUAGE_CALL_USD = 0.01;
+
 /** Another Hatchlight process is already using the data directory. */
 export class DataDirInUseError extends Error {}
 
 /**
  * Two processes on one data directory would each run the other's jobs, so the
- * directory is claimed with a lock file holding the owner's process id.
+ * directory is claimed with a lock file the owner rewrites every few seconds:
+ * one not rewritten for 30 seconds, on the folder's own clock, belongs to a
+ * process that died. Process ids say nothing in containers, where every
+ * server is process 1, nor across machines sharing a volume.
  */
-function lockDataDir(dataDir: string): () => void {
+export function lockDataDir(
+	dataDir: string,
+	options: { staleMs?: number; heartbeatMs?: number } = {},
+): () => void {
 	const name = "hatchlight.lock";
-	const path = join(dataDir, name);
-	takeLock(path);
+	const path = resolve(dataDir, name);
+	if (heldLocks.has(path)) {
+		throw new DataDirInUseError(
+			`Hatchlight is already running on this data directory (process ${process.pid})`,
+		);
+	}
+	// A lock from a version without the heartbeat is judged as it would be.
+	const previous = readLock(path);
+	let replaced: LockOwner | null = null;
+	if (previous && !previous.heartbeat) {
+		const verdict = oldLockVerdict(path, previous, null);
+		if (!verdict.stale) throw verdict.error;
+		rmSync(path, { force: true });
+		replaced = previous;
+	}
+	const release = tryFileLock(path, {
+		owner: JSON.stringify({
+			...lockOwner(),
+			heartbeat: true,
+			token: crypto.randomUUID(),
+		}),
+		...options,
+	});
+	if (!release) {
+		const owner = readLock(path);
+		throw inUse(owner ?? { pid: Number.NaN });
+	}
+	heldLocks.add(path);
+	// The old twin of a heartbeat lock that went stale is stale too.
+	replaced ??= previous;
 	// A version from before the rename locks the directory under the old
 	// name, and only looks there: both are held, so neither starts beside
-	// the other.
-	const legacy = join(dataDir, legacyName(name));
+	// the other. That file keeps the bare process id older versions read.
+	const legacy = resolve(dataDir, legacyName(name));
 	try {
-		takeLock(legacy);
+		takeLock(legacy, String(process.pid), replaced);
 	} catch (error) {
-		rmSync(path, { force: true });
+		heldLocks.delete(path);
+		release();
 		throw error;
 	}
 	return () => {
-		rmSync(legacy, { force: true });
-		rmSync(path, { force: true });
+		releaseLock(legacy);
+		heldLocks.delete(path);
+		release();
 	};
 }
 
-/** Creates the lock file at `path`, unless a live process holds it. */
-function takeLock(path: string): void {
+function readLock(path: string): (LockOwner & { heartbeat?: boolean }) | null {
+	try {
+		const text = readFileSync(path, "utf8");
+		const owner = readOwner(text);
+		try {
+			const parsed = JSON.parse(text) as { heartbeat?: unknown };
+			return { ...owner, heartbeat: parsed?.heartbeat === true };
+		} catch {
+			return owner;
+		}
+	} catch {
+		return null;
+	}
+}
+
+function inUse(owner: LockOwner): DataDirInUseError {
+	const where =
+		owner.host && owner.host !== osHostname() ? ` on ${owner.host}` : "";
+	const who = Number.isFinite(owner.pid)
+		? ` (process ${owner.pid}${where})`
+		: "";
+	return new DataDirInUseError(
+		`Hatchlight is already running on this data directory${who}. If it stopped, start again in 30 seconds`,
+	);
+}
+
+/** Who holds a lock: older versions wrote only the process id. */
+interface LockOwner {
+	pid: number;
+	/** The machine's name: containers get a new one when recreated. */
+	host?: string;
+	/** Changes each time the machine starts; Linux only. */
+	bootId?: string;
+	startedAt?: string;
+}
+
+/** Lock files this process holds, which its own id cannot tell apart. */
+const heldLocks = new Set<string>();
+
+function lockOwner(): LockOwner {
+	return {
+		pid: process.pid,
+		host: osHostname(),
+		bootId: bootId(),
+		startedAt: new Date().toISOString(),
+	};
+}
+
+function bootId(): string | undefined {
+	try {
+		return (
+			readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() ||
+			undefined
+		);
+	} catch {
+		return undefined;
+	}
+}
+
+function readOwner(text: string): LockOwner {
+	try {
+		const owner = JSON.parse(text) as Partial<LockOwner> | null;
+		if (typeof owner?.pid === "number") {
+			return {
+				pid: owner.pid,
+				host: typeof owner.host === "string" ? owner.host : undefined,
+				bootId: typeof owner.bootId === "string" ? owner.bootId : undefined,
+			};
+		}
+	} catch {
+		// A bare process id, from before.
+	}
+	return { pid: Number(text) };
+}
+
+/**
+ * Whether the owner of a lock is gone. In a container a process gets the
+ * same id every time it starts, so a lock left by a crash would otherwise
+ * look alive for ever; this process's own locks are in `heldLocks`.
+ */
+/**
+ * Whether a lock in the old format (no heartbeat) belongs to a process that
+ * is gone; when it cannot be told, the error says what to do.
+ */
+function oldLockVerdict(
+	path: string,
+	owner: LockOwner,
+	replaced: LockOwner | null,
+): { stale: true } | { stale: false; error: DataDirInUseError } {
+	// The old-style twin of a lock already found stale.
+	if (replaced && owner.host === undefined && owner.pid === replaced.pid) {
+		return { stale: true };
+	}
+	if (owner.host !== undefined) {
+		if (owner.host !== osHostname()) {
+			return {
+				stale: false,
+				error: new DataDirInUseError(
+					`Another Hatchlight (process ${owner.pid} on ${owner.host}) holds this data directory. Stop that container or server; if it is gone, delete ${path}`,
+				),
+			};
+		}
+		// This machine: its process ids mean something here.
+		const boot = bootId();
+		if (
+			owner.pid === process.pid ||
+			(owner.bootId && boot && owner.bootId !== boot) ||
+			!isRunning(owner.pid)
+		) {
+			return { stale: true };
+		}
+		return { stale: false, error: inUse(owner) };
+	}
+	// A bare process id says nothing of where it ran: only a file from
+	// before this machine started is surely stale.
+	if (writtenBeforeBoot(path)) return { stale: true };
+	return {
+		stale: false,
+		error: new DataDirInUseError(
+			`An older Hatchlight (process ${owner.pid}) holds this data directory. If no other Hatchlight uses it, delete ${path}`,
+		),
+	};
+}
+
+function writtenBeforeBoot(path: string): boolean {
+	try {
+		return statSync(path).mtimeMs < Date.now() - osUptime() * 1000;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Creates the lock file at `path`, unless a live process holds it. Returns
+ * the owner of a stale lock it replaced.
+ */
+function takeLock(
+	path: string,
+	content: string,
+	replaced: LockOwner | null = null,
+): LockOwner | null {
+	if (heldLocks.has(path)) {
+		throw new DataDirInUseError(
+			`Hatchlight is already running on this data directory (process ${process.pid})`,
+		);
+	}
+	let stale: LockOwner | null = null;
 	for (let attempt = 0; attempt < 2; attempt++) {
 		try {
-			writeFileSync(path, String(process.pid), { flag: "wx" });
-			return;
+			writeFileSync(path, content, { flag: "wx" });
+			heldLocks.add(path);
+			return stale;
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-			const owner = Number(readFileSync(path, "utf8"));
-			if (isRunning(owner)) {
-				throw new DataDirInUseError(
-					`Hatchlight is already running on this data directory (process ${owner})`,
-				);
-			}
+			const owner = readOwner(readFileSync(path, "utf8"));
+			const verdict = oldLockVerdict(path, owner, replaced);
+			if (!verdict.stale) throw verdict.error;
+			stale = owner;
 			rmSync(path, { force: true }); // left behind by a process that died
 		}
 	}
 	throw new DataDirInUseError("Could not lock the data directory");
+}
+
+function releaseLock(path: string): void {
+	heldLocks.delete(path);
+	rmSync(path, { force: true });
 }
 
 function isRunning(pid: number): boolean {
@@ -221,6 +438,13 @@ export interface RuntimeOptions {
 	checkEngine?: (executable: string) => Promise<string | null>;
 	/** Where the LoRA trainer is installed. Defaults to `trainer` in the data directory. */
 	trainerDir?: string;
+	/**
+	 * Several people share this server: keys become the server's, and only
+	 * those allowed may spend them.
+	 */
+	server?: boolean;
+	/** How passwords are hashed; argon2id with its default cost unless a test says. */
+	passwordHasher?: PasswordHasher;
 	/** Stand-ins for the trainer's downloads and programs, in tests. */
 	trainerOptions?: Partial<
 		Pick<TrainerOptions, "fetch" | "run" | "freeMemory">
@@ -297,7 +521,35 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		options.migrationsDir,
 	);
 	const assets = new FsAssetStore(join(options.dataDir, "assets"));
-	const keys = new FileKeyStore(join(options.dataDir, "auth.json"));
+	const fileKeys = new FileKeyStore(join(options.dataDir, "auth.json"));
+	const settings = new FileSettingsStore(
+		join(options.dataDir, "settings.json"),
+	);
+	const accounts = new AccountService(repo.accounts(), {
+		hasher: options.passwordHasher,
+		// What the install had becomes the first owner's; its keys, the server's.
+		adoptLocal: async (ownerId) => {
+			await settings.moveUser(LOCAL_USER.userId, ownerId);
+			await assets.moveUser(LOCAL_USER.userId, ownerId);
+			await fileKeys.moveUser(LOCAL_USER.userId, SERVER_KEYS.userId);
+		},
+	});
+	// A setup cut short by a crash is finished now.
+	if (options.server) await accounts.resumeAdoption();
+	// On a server, spending is for those allowed, up to their monthly limit.
+	const paidRefusal = (userId: string): PaidRefusal | null => {
+		const user = accounts.getUser(userId);
+		if (!user || user.disabledAt != null || !mayUsePaid(user)) {
+			return "paidNotAllowed";
+		}
+		return user.monthlyLimitUsd != null &&
+			accounts.spentThisMonth(userId) >= user.monthlyLimitUsd
+			? "monthlyLimitReached"
+			: null;
+	};
+	const refusePaid = options.server ? paidRefusal : undefined;
+	const mayPay = (userId: string) => !refusePaid?.(userId);
+	const keys = options.server ? new SharedKeyStore(fileKeys, mayPay) : fileKeys;
 	// Puts prompts into English for the models that read only English, once
 	// its model is installed.
 	const translatorModel = catalog.find((m) =>
@@ -324,22 +576,42 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	// moved: Windows does neither to an open file.
 	models.onLetGo(() => local.unloadIdle());
 	models.onLetGo(() => translator.stopAndWait());
-	const settings = new FileSettingsStore(
-		join(options.dataDir, "settings.json"),
-	);
 	// One per service and key, so the jobs of a turn share a translation.
 	const clouds = new Map<string, CloudTranslator>();
 	const keyFor = async (ctx: UserContext, service: CloudTranslatorId) => {
 		const adapter = registry.adapter(service);
+		// A key from the environment is the server's too.
+		if (!mayPay(ctx.userId)) return undefined;
 		return (
 			(await keys.get(ctx, service)) ??
 			(adapter?.keyEnv ? process.env[adapter.keyEnv] : undefined)
 		);
 	};
+	/**
+	 * On a server, a call to a language service with the server's key is
+	 * checked against the person's limit first, and counted after. The
+	 * services do not all report usage, so each call counts as a
+	 * conservative estimate of what one costs.
+	 */
+	const metered = async <T>(userId: string, call: () => Promise<T>) => {
+		if (!refusePaid) return call();
+		const refusal = refusePaid(userId);
+		if (refusal) throw paidError(refusal);
+		const result = await call();
+		await repo.addSpending({
+			id: newId("spd"),
+			userId,
+			kind: "language",
+			jobId: null,
+			costUsd: LANGUAGE_CALL_USD,
+			createdAt: Date.now(),
+		});
+		return result;
+	};
 	const cloudFor = async (
 		ctx: UserContext,
 		service: CloudTranslatorId,
-	): Promise<CloudTranslator | null> => {
+	): Promise<(Translator & LanguageModel) | null> => {
 		const key = await keyFor(ctx, service);
 		if (!key) return null;
 		const id = `${service}:${key}`;
@@ -348,7 +620,15 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 			cloud = new CloudTranslator(service, key, options.fetch);
 			clouds.set(id, cloud);
 		}
-		return cloud;
+		const model = cloud;
+		return {
+			toEnglish: (prompt, signal) =>
+				metered(ctx.userId, () => model.toEnglish(prompt, signal)),
+			reply: (instructions, text, signal, replyOptions) =>
+				metered(ctx.userId, () =>
+					model.reply(instructions, text, signal, replyOptions),
+				),
+		};
 	};
 	const translatorFor = async (userId: string) => {
 		const ctx = { userId };
@@ -395,13 +675,21 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 			brain = new CloudChatModel(choice, key, options.fetch);
 			brains.set(id, brain);
 		}
-		return brain;
+		const model = brain;
+		return {
+			vision: model.vision,
+			chat: (instructions, messages, tools, signal) =>
+				metered(ctx.userId, () =>
+					model.chat(instructions, messages, tools, signal),
+				),
+		};
 	};
 	const engine = new JobEngine({
 		repo,
 		assets,
 		registry,
 		keys,
+		paidRefusal: refusePaid,
 		translator: translatorFor,
 	});
 	const service = new ReelService({ repo, assets, registry, keys, engine });
@@ -428,6 +716,11 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	});
 	return {
 		service,
+		accounts,
+		deviceKey: options.server
+			? deviceKey(join(options.dataDir, "device.key"))
+			: undefined,
+		paidRefusal: refusePaid,
 		engine,
 		models,
 		trainer,

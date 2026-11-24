@@ -1,9 +1,11 @@
+import { sql } from "drizzle-orm";
 import {
 	index,
 	integer,
 	real,
 	sqliteTable,
 	text,
+	uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 import type { ErrorParams } from "../errors";
 import type {
@@ -11,6 +13,8 @@ import type {
 	AssistantEntryBody,
 	GenerationParams,
 	JobStatus,
+	SpendingKind,
+	UserRole,
 } from "../types";
 
 export const sessions = sqliteTable(
@@ -104,4 +108,131 @@ export const messages = sqliteTable(
 		createdAt: integer("created_at").notNull(),
 	},
 	(t) => [index("messages_session_created").on(t.sessionId, t.createdAt)],
+);
+
+/** People who may use a server. A personal install has none. */
+export const users = sqliteTable(
+	"users",
+	{
+		id: text("id").primaryKey(),
+		username: text("username").notNull(),
+		displayName: text("display_name").notNull(),
+		passwordHash: text("password_hash").notNull(),
+		role: text("role").$type<UserRole>().notNull(),
+		canUsePaid: integer("can_use_paid", { mode: "boolean" }).notNull(),
+		canTrain: integer("can_train", { mode: "boolean" }).notNull(),
+		monthlyLimitUsd: real("monthly_limit_usd"),
+		totpSecret: text("totp_secret"),
+		/** The last two-step code's time step, which cannot be used again. */
+		totpLastCounter: integer("totp_last_counter"),
+		/** Set by a reset: the next sign-in must choose a new password. */
+		mustChangePassword: integer("must_change_password", { mode: "boolean" })
+			.notNull()
+			.default(false),
+		disabledAt: integer("disabled_at"),
+		createdAt: integer("created_at").notNull(),
+	},
+	(t) => [uniqueIndex("users_username").on(sql`lower(${t.username})`)],
+);
+
+/** Signed-in browsers. The id is the SHA-256 of the cookie's token. */
+export const authSessions = sqliteTable(
+	"auth_sessions",
+	{
+		id: text("id").primaryKey(),
+		userId: text("user_id")
+			.notNull()
+			.references(() => users.id, { onDelete: "cascade" }),
+		createdAt: integer("created_at").notNull(),
+		lastSeenAt: integer("last_seen_at").notNull(),
+		expiresAt: integer("expires_at").notNull(),
+		userAgent: text("user_agent"),
+		ip: text("ip"),
+	},
+	(t) => [index("auth_sessions_user").on(t.userId)],
+);
+
+/** Links that let someone make an account. The id is the token's SHA-256. */
+export const invites = sqliteTable("invites", {
+	id: text("id").primaryKey(),
+	role: text("role").$type<UserRole>().notNull(),
+	canUsePaid: integer("can_use_paid", { mode: "boolean" }).notNull(),
+	canTrain: integer("can_train", { mode: "boolean" }).notNull(),
+	monthlyLimitUsd: real("monthly_limit_usd"),
+	expiresAt: integer("expires_at").notNull(),
+	createdBy: text("created_by")
+		.notNull()
+		.references(() => users.id, { onDelete: "cascade" }),
+	createdAt: integer("created_at").notNull(),
+	usedBy: text("used_by").references(() => users.id, { onDelete: "set null" }),
+	usedAt: integer("used_at"),
+});
+
+/** Tokens programs use instead of a browser session. The id is the SHA-256. */
+export const apiTokens = sqliteTable(
+	"api_tokens",
+	{
+		id: text("id").primaryKey(),
+		userId: text("user_id")
+			.notNull()
+			.references(() => users.id, { onDelete: "cascade" }),
+		name: text("name").notNull(),
+		scopes: text("scopes", { mode: "json" }).$type<string[]>().notNull(),
+		spendLimitUsd: real("spend_limit_usd"),
+		createdAt: integer("created_at").notNull(),
+		lastUsedAt: integer("last_used_at"),
+		expiresAt: integer("expires_at"),
+	},
+	(t) => [index("api_tokens_user").on(t.userId)],
+);
+
+/**
+ * What each person spent on paid services, one row per charge. Only added
+ * to: deleting a session or a job leaves what it cost, so monthly limits
+ * count everything.
+ */
+export const spending = sqliteTable(
+	"spending",
+	{
+		id: text("id").primaryKey(),
+		userId: text("user_id").notNull(),
+		/** `generation` for pictures and videos; `language` for text models. */
+		kind: text("kind").$type<SpendingKind>().notNull(),
+		/** The job it paid for, if any; no foreign key, so it outlives the job. */
+		jobId: text("job_id"),
+		costUsd: real("cost_usd").notNull(),
+		createdAt: integer("created_at").notNull(),
+	},
+	(t) => [index("spending_user_created").on(t.userId, t.createdAt)],
+);
+
+/**
+ * Links that let someone choose a new password, given by an admin or owner.
+ * The id is the token's SHA-256.
+ */
+export const passwordResets = sqliteTable("password_resets", {
+	id: text("id").primaryKey(),
+	userId: text("user_id")
+		.notNull()
+		.references(() => users.id, { onDelete: "cascade" }),
+	createdBy: text("created_by")
+		.notNull()
+		.references(() => users.id, { onDelete: "cascade" }),
+	createdAt: integer("created_at").notNull(),
+	expiresAt: integer("expires_at").notNull(),
+	usedAt: integer("used_at"),
+	/** When the person saw that their password was reset this way. */
+	noticedAt: integer("noticed_at"),
+});
+
+/** Who added which LoRA on a server, to hold each person to a quota. */
+export const loraUploads = sqliteTable(
+	"lora_uploads",
+	{
+		loraId: text("lora_id").primaryKey(),
+		userId: text("user_id").notNull(),
+		sizeBytes: integer("size_bytes").notNull(),
+		createdAt: integer("created_at").notNull(),
+	},
+	(t) => [index("lora_uploads_user").on(t.userId)],
 );

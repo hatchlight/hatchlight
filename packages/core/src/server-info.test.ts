@@ -37,6 +37,11 @@ test("a server that is gone, or a file that says too much, is not found", async 
 	await writeServerInfo(dir, { pid: 123, url: "http://127.0.0.1:4100" });
 	expect(await readServerInfo(dir, () => false)).toBeNull();
 	// Only this machine's loopback: the file is not trusted to point elsewhere.
+	await writeServerInfo(dir, { pid: process.pid, url: "http://[::1]:4096" });
+	expect((await readServerInfo(dir))?.url).toBe("http://[::1]:4096");
+	// A server listening on a network address is not found on its own.
+	await writeServerInfo(dir, { pid: process.pid, url: "http://10.0.0.2:4096" });
+	expect(await readServerInfo(dir)).toBeNull();
 	await writeServerInfo(dir, { pid: process.pid, url: "http://evil.example" });
 	expect(await readServerInfo(dir)).toBeNull();
 	await writeFile(serverInfoFile(dir), "not json");

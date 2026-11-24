@@ -6,6 +6,7 @@ import {
 } from "@hatchlight/core/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
+import { useCan } from "./Accounts";
 import { api } from "./api";
 import { type I18n, useI18n } from "./i18n";
 import { TrainPanel } from "./Training";
@@ -38,6 +39,7 @@ export function useLoras() {
 /** One LoRA on the shelf: what it is for, and a way to delete it. */
 function LoraRow({ lora, models }: { lora: LoraInfo; models: ModelSpec[] }) {
 	const { t, bytes, explain } = useI18n();
+	const can = useCan();
 	const [confirming, setConfirming] = useState(false);
 	const client = useQueryClient();
 	const remove = useMutation({
@@ -72,7 +74,7 @@ function LoraRow({ lora, models }: { lora: LoraInfo; models: ModelSpec[] }) {
 				)}
 			</div>
 			<span className="font-mono text-xs text-dim">{bytes(lora.size)}</span>
-			{confirming ? (
+			{!can.admin ? null : confirming ? (
 				<div className="flex gap-2">
 					<button
 						type="button"
@@ -117,6 +119,7 @@ export function LoraShelf() {
 	});
 	const adding = add.isPending ? add.variables : null;
 	const [training, setTraining] = useState(false);
+	const can = useCan();
 	return (
 		<section className="mt-10">
 			<div className="flex flex-wrap items-end justify-between gap-3">
@@ -128,7 +131,7 @@ export function LoraShelf() {
 						{t("loras.intro")}
 					</p>
 				</div>
-				<div className="flex gap-2">
+				<div className={`flex gap-2 ${can.train ? "" : "hidden"}`}>
 					<button
 						type="button"
 						onClick={() => setTraining((open) => !open)}
@@ -158,7 +161,7 @@ export function LoraShelf() {
 					}}
 				/>
 			</div>
-			{training && <TrainPanel />}
+			{training && can.train && <TrainPanel />}
 			{adding && (
 				<p className="mt-3 text-sm text-dim" role="status">
 					{t("loras.adding", { name: adding.name, size: bytes(adding.size) })}

@@ -76,7 +76,9 @@ async function readInfo(
 		if (
 			typeof info.pid !== "number" ||
 			typeof info.url !== "string" ||
-			!/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(info.url)
+			// Only loopback: a server reached over the network is not
+			// found on its own, nor would it let an agent in without a token.
+			!/^http:\/\/(127\.0\.0\.1|localhost|\[::1\]):\d+$/.test(info.url)
 		) {
 			return null;
 		}
