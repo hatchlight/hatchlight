@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
 	appEnv,
 	assistantChoice,
+	type Captioner,
 	type ChatMessage,
 	type ChatModel,
 	type ChatReply,
@@ -50,6 +51,8 @@ export interface Runtime {
 	models: LocalModelStore;
 	/** Trains LoRAs on this computer. */
 	trainer: Trainer;
+	/** Captions training pictures, with the model that looks at pictures. */
+	captioner?: Captioner;
 	settings: SettingsStore;
 	/** Makes and changes pictures by talking with the person. */
 	assistant: Assistant;
@@ -270,6 +273,11 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 			}
 			return { file, scratch: runtime.scratch };
 		},
+		// Declared below; only called once a training has the GPU.
+		letGo: async () => {
+			await local.unloadIdle();
+			await translator.stopAndWait();
+		},
 		...options.trainerOptions,
 	});
 	// Installed local models are offered next to the remote ones.
@@ -421,6 +429,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		engine,
 		models,
 		trainer,
+		captioner: eyes ?? undefined,
 		settings,
 		assistant,
 		// A model standing in (tests, trying the app) shows as this computer's.

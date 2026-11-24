@@ -9,7 +9,7 @@ import {
 	stat,
 } from "node:fs/promises";
 import { freemem } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { CodedError, describeError, ValidationError } from "../errors";
 import type {
 	TrainerEvent,
@@ -78,6 +78,53 @@ export const MAX_TRAINING_PICTURES = 200;
 export const MIN_TRAINING_STEPS = 100;
 export const MAX_TRAINING_STEPS = 4000;
 export const DEFAULT_TRAINING_STEPS = 800;
+
+/** Sample pictures are this size: a full 1024 is slower and costs memory. */
+const SAMPLE_SIZE = 768;
+const SAMPLE_STEPS = 20;
+/** The same seed each time, so samples differ only by what was learned. */
+const SAMPLE_SEED = 42;
+
+/**
+ * How often the LoRA is saved and a sample made: four times a training,
+ * on a round number, and not so often that sampling slows it down.
+ */
+export function sampleEvery(steps: number): number {
+	return Math.max(100, Math.round(steps / 4 / 50) * 50);
+}
+
+/**
+ * The prompt samples are made with: the trigger and the first caption. The
+ * scripts read `--` as the start of an option, so captions cannot say it.
+ */
+export function samplePrompt(
+	trigger: string,
+	captions: string[],
+	size = SAMPLE_SIZE,
+): string {
+	const caption = (captions.find((c) => c.trim()) ?? "").trim();
+	const prompt = (caption ? `${trigger}, ${caption}` : trigger)
+		.replace(/-{2,}/g, "-")
+		.replace(/\s+/g, " ");
+	return [
+		prompt,
+		`--w ${size} --h ${size} --s ${SAMPLE_STEPS} --l 6 --d ${SAMPLE_SEED}`,
+		"--n blurry, low quality",
+	].join(" ");
+}
+
+/** The scripts ran out of memory before training a single step. */
+export function outOfMemoryEarly(error: unknown, view: TrainingView): boolean {
+	if (view.step > 0 || !(error instanceof CodedError)) return false;
+	if (error.code !== "trainingFailed") return false;
+	return /out of memory|OUT_OF_MEMORY|Cannot allocate memory/i.test(
+		String(error.params?.reason ?? ""),
+	);
+}
+
+/** A saved step's LoRA, as the scripts name it. */
+const stepFile = (step: number) =>
+	`lora-step${String(step).padStart(8, "0")}.safetensors`;
 
 /** Starts a program; tests replace it with a fake one. */
 export type RunProgram = (
@@ -194,6 +241,11 @@ export interface TrainerOptions {
 	/** System memory free now. */
 	freeMemory?: () => Promise<number>;
 	memoryCheckMs?: number;
+	/**
+	 * Unloads what keeps memory busy (a model kept loaded between
+	 * pictures, the translator), before training needs it all.
+	 */
+	letGo?: () => Promise<void>;
 }
 
 /** A plain word: it goes in captions and prompts, and is read back as a tag. */
@@ -236,8 +288,12 @@ const toml = (text: string) => JSON.stringify(text);
 
 export class Trainer {
 	private options: Required<
-		Omit<TrainerOptions, "platform" | "memoryCheckMs">
-	> & { platform: NodeJS.Platform; memoryCheckMs: number };
+		Omit<TrainerOptions, "platform" | "memoryCheckMs" | "letGo">
+	> & {
+		platform: NodeJS.Platform;
+		memoryCheckMs: number;
+		letGo: () => Promise<void>;
+	};
 	private listeners = new Set<(event: TrainerEvent) => void>();
 	private installing: {
 		step: TrainerInstallStep;
@@ -253,6 +309,8 @@ export class Trainer {
 	private starting = false;
 	private lastEmit = 0;
 	private pending: ReturnType<typeof setTimeout> | null = null;
+	/** Stops the training under way and keeps its latest saved LoRA. */
+	private finishing: (() => void) | null = null;
 
 	constructor(options: TrainerOptions) {
 		this.options = {
@@ -262,11 +320,14 @@ export class Trainer {
 			freeMemory,
 			memoryCheckMs: MEMORY_CHECK_MS,
 			...options,
+			letGo: options.letGo ?? (async () => {}),
 		};
 		// Pictures of a training that a closed app left behind.
-		void rm(this.path("runs"), { recursive: true, force: true }).catch(
-			() => {},
-		);
+		for (const folder of ["runs", "samples"]) {
+			void rm(this.path(folder), { recursive: true, force: true }).catch(
+				() => {},
+			);
+		}
 	}
 
 	subscribe(listener: (event: TrainerEvent) => void): () => void {
@@ -756,6 +817,9 @@ export class Trainer {
 			finishedAt: null,
 			freeMemoryBytes: null,
 			loraId: null,
+			samples: [],
+			savedStep: null,
+			keptStep: null,
 			error: null,
 		};
 		this.changed(true);
@@ -791,6 +855,30 @@ export class Trainer {
 		this.trainingController?.abort();
 	}
 
+	/**
+	 * Stops the training under way and puts its latest saved LoRA on the
+	 * shelf: for when the samples already look right.
+	 */
+	finishTraining(): void {
+		const view = this.training;
+		if (view?.state !== "running" || view.savedStep == null) {
+			throw new ValidationError(
+				"Nothing is saved to keep yet",
+				"trainingNothingSaved",
+			);
+		}
+		// At the last step it is saving the whole LoRA: that one is kept.
+		if (view.step >= view.steps) return;
+		this.finishing?.();
+	}
+
+	/** A sample picture of the latest training, by its step. */
+	sampleFile(id: string, step: number): string | null {
+		const view = this.training;
+		if (!view || view.id !== id || !view.samples.includes(step)) return null;
+		return this.path("samples", id, `${step}.png`);
+	}
+
 	private async trainNow(
 		view: TrainingView,
 		request: TrainingRequest,
@@ -801,6 +889,8 @@ export class Trainer {
 		try {
 			// The pictures and their captions, the trigger first in each.
 			const pictures = join(run, "dataset", "10_subject");
+			// Samples of an earlier training go: only the latest is shown.
+			await rm(this.path("samples"), { recursive: true, force: true });
 			for (const [i, picture] of request.pictures.entries()) {
 				const file = join(pictures, String(i).padStart(3, "0"));
 				await Bun.write(`${file}.${picture.extension}`, picture.data);
@@ -829,6 +919,13 @@ export class Trainer {
 					"",
 				].join("\n"),
 			);
+			await Bun.write(
+				join(run, "samples.txt"),
+				samplePrompt(
+					request.trigger,
+					request.pictures.map((p) => p.caption),
+				),
+			);
 
 			// The whole graphics card: it runs only once nothing else does.
 			const acquiring = this.options.gpu.acquire(TRAINING_GPU_BYTES, signal);
@@ -836,6 +933,8 @@ export class Trainer {
 			while (!next.done) next = await acquiring.next();
 			const hold = next.value;
 			try {
+				// Training needs most of the memory a model kept loaded holds.
+				await this.options.letGo().catch(() => {});
 				// Found again: the models may have moved while it waited.
 				const model = await this.named(
 					await this.options.baseModel().catch(() => base),
@@ -843,7 +942,30 @@ export class Trainer {
 					run,
 				);
 				try {
-					return await this.runTraining(view, request, model.file, run, signal);
+					try {
+						return await this.runTraining(
+							view,
+							request,
+							model.file,
+							run,
+							signal,
+						);
+					} catch (error) {
+						// Preparing the pictures peaks just under 12 GB of graphics
+						// memory, and a little more in use elsewhere tips it over now
+						// and then: once more, before a step is trained.
+						if (signal.aborted || !outOfMemoryEarly(error, view)) throw error;
+						await rm(join(run, "out"), { recursive: true, force: true });
+						view.stage = "loading";
+						this.changed(true);
+						return await this.runTraining(
+							view,
+							request,
+							model.file,
+							run,
+							signal,
+						);
+					}
 				} finally {
 					if (model.made) await rm(model.file, { force: true }).catch(() => {});
 				}
@@ -882,6 +1004,45 @@ export class Trainer {
 		}
 	}
 
+	/** Moves the samples the scripts made to where they are served from. */
+	private async collectSamples(
+		view: TrainingView,
+		out: string,
+		ended = false,
+	): Promise<void> {
+		try {
+			await this.moveSamples(view, out, ended);
+		} catch {
+			// Samples only show how it goes: training does not depend on them.
+		}
+	}
+
+	private async moveSamples(
+		view: TrainingView,
+		out: string,
+		ended: boolean,
+	): Promise<void> {
+		const folder = join(out, "sample");
+		const names = await readdir(folder).catch(() => [] as string[]);
+		for (const name of names) {
+			// lora_000200_00_20261119160000_42.png
+			const step = Number(name.match(/^lora_(\d{6})_/)?.[1]);
+			if (!step || view.samples.includes(step)) continue;
+			// Still being written until the steps go past it, or the scripts end.
+			if (!ended && step >= view.step) continue;
+			const target = this.path("samples", view.id, `${step}.png`);
+			await mkdir(dirname(target), { recursive: true });
+			if (
+				await rename(join(folder, name), target).then(
+					() => true,
+					() => false,
+				)
+			) {
+				view.samples = [...view.samples, step].sort((a, b) => a - b);
+			}
+		}
+	}
+
 	private async runTraining(
 		view: TrainingView,
 		request: TrainingRequest,
@@ -892,6 +1053,7 @@ export class Trainer {
 		view.stage = "loading";
 		this.changed(true);
 		const out = join(run, "out");
+		const every = sampleEvery(request.steps);
 		const child = this.options.run(
 			[
 				this.python,
@@ -940,21 +1102,49 @@ export class Trainer {
 				"42",
 				"--max_data_loader_n_workers",
 				"0",
+				// A LoRA saved and a sample made every so often: they show
+				// how it learns, and training can stop at one and keep it.
+				"--save_every_n_steps",
+				String(every),
+				"--sample_every_n_steps",
+				String(every),
+				"--sample_prompts",
+				join(run, "samples.txt"),
+				"--sample_sampler",
+				"euler_a",
 			],
 			{ cwd: this.scripts, env: this.uvEnv },
 		);
 		let outOfMemory = false;
+		let keep = false;
 		const stop = () => child.kill();
 		signal.addEventListener("abort", stop, { once: true });
+		this.finishing = () => {
+			keep = true;
+			child.kill();
+		};
+		let watching = true;
+		let checking = false;
 		const watch = setInterval(async () => {
+			if (checking) return;
+			checking = true;
+			try {
+				await check();
+			} finally {
+				checking = false;
+			}
+		}, this.options.memoryCheckMs);
+		const check = async () => {
 			const free = await this.options.freeMemory().catch(() => null);
+			if (!watching) return;
 			view.freeMemoryBytes = free;
 			if (free != null && free < MIN_FREE_MEMORY_BYTES && !outOfMemory) {
 				outOfMemory = true;
 				child.kill();
 			}
-			this.changed();
-		}, this.options.memoryCheckMs);
+			await this.collectSamples(view, out);
+			if (watching) this.changed();
+		};
 		const tail: string[] = [];
 		try {
 			for await (const line of child.output) {
@@ -965,17 +1155,45 @@ export class Trainer {
 					view.stage = progress.step >= progress.steps ? "saving" : "training";
 					view.step = progress.step;
 					view.secondsLeft = progress.secondsLeft;
+					// A step's LoRA is whole once the steps have gone past it:
+					// the scripts save it before they go on.
+					const saved = Math.floor((progress.step - 1) / every) * every;
+					if (
+						saved > (view.savedStep ?? 0) &&
+						(await stat(join(out, stepFile(saved))).catch(() => null))
+					) {
+						view.savedStep = saved;
+					}
 					this.changed();
 					continue;
 				}
 				const stage = trainingStage(line);
-				if (stage && !(view.stage === "training" && stage === "loading")) {
+				// Once training, what it says is a step saved or a sample made:
+				// the steps tell when it is saving the whole LoRA.
+				if (stage && view.stage !== "training") {
 					view.stage = stage;
 					this.changed();
 				}
 			}
 			const code = await child.exited;
 			signal.throwIfAborted();
+			watching = false;
+			await this.collectSamples(view, out, true);
+			const whole =
+				code === 0 &&
+				!outOfMemory &&
+				(await stat(join(out, "lora.safetensors")).catch(() => null)) != null;
+			// Asked to keep a step, unless it had already finished it all.
+			if (keep && !whole && view.savedStep != null) {
+				view.stage = "saving";
+				this.changed(true);
+				const lora = await this.options.loras.add(
+					Bun.file(join(out, stepFile(view.savedStep))),
+					`${request.name}.safetensors`,
+				);
+				view.keptStep = view.savedStep;
+				return lora.id;
+			}
 			if (outOfMemory) {
 				throw new CodedError(
 					"Training stopped before the computer ran out of memory",
@@ -992,8 +1210,10 @@ export class Trainer {
 				});
 			}
 		} finally {
+			watching = false;
 			clearInterval(watch);
 			signal.removeEventListener("abort", stop);
+			this.finishing = null;
 			child.kill();
 		}
 		view.stage = "saving";

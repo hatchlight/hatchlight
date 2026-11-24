@@ -191,9 +191,18 @@ export const api = {
 		trigger: string;
 		steps: number;
 		pictures: { assetId: string; caption: string }[];
+		consent: boolean;
 	}) => request<TrainingView>("/api/trainings", send("POST", input)),
 	cancelTraining: () =>
 		request<void>("/api/trainings/cancel", { method: "POST" }),
+	finishTraining: () =>
+		request<void>("/api/trainings/finish", { method: "POST" }),
+	captioner: () => request<{ ready: boolean }>("/api/captioner"),
+	caption: (assetId: string, signal: AbortSignal) =>
+		request<{ caption: string }>("/api/captions", {
+			...send("POST", { assetId }),
+			signal,
+		}),
 	loras: () => request<LoraInfo[]>("/api/loras"),
 	addLora: (file: File) =>
 		request<LoraInfo>(
@@ -224,6 +233,9 @@ export const api = {
 
 export const GALLERY_PAGE = 60;
 export const assetUrl = (id: string) => `/api/assets/${id}`;
+/** A picture a training made along the way, at a step. */
+export const sampleUrl = (trainingId: string, step: number) =>
+	`/api/trainings/${trainingId}/samples/${step}`;
 /** A running job's latest picture; `version` changes the address per picture. */
 export const previewUrl = (jobId: string, version: number) =>
 	`/api/jobs/${jobId}/preview?v=${version}`;

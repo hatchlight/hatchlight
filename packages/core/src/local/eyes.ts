@@ -12,6 +12,35 @@ const MAX_TOKENS = 200;
 /** The longest request quoted to the model. */
 const MAX_ASKED = 500;
 
+/** Enough for a line of short phrases. */
+const MAX_CAPTION_TOKENS = 120;
+/** The longest caption kept: training reads at most 500 characters. */
+const MAX_CAPTION_LENGTH = 400;
+
+/**
+ * What the model is asked to caption a training picture with. What a caption
+ * names, the LoRA learns as separate from the trigger word; what it leaves
+ * out, the trigger word takes in. So it names what changes from picture to
+ * picture, not who or what the subject is.
+ */
+export const CAPTION_PROMPT =
+	"Write a caption for this picture, to train an image model with: one line in English of phrases of a few words each, separated by commas, such as: sitting on a wooden table, soft window light, close-up, plain gray background. Say where it is, what the subject does or how it is posed, what it wears or holds, the light, the framing and the background. Do not say who or what the main subject is, nor its colors or art style. No full sentences, no quotes.";
+
+/** One line of phrases, without what a model adds around it. */
+export function cleanCaption(said: string): string {
+	const line = said
+		.replace(/^\s*(caption|description)\s*:\s*/i, "")
+		.replace(/["“”]/g, "")
+		.replace(/\s+/g, " ")
+		.trim()
+		.replace(/\.$/, "");
+	if (line.length <= MAX_CAPTION_LENGTH) return line;
+	// Cut at the last whole phrase.
+	const cut = line.slice(0, MAX_CAPTION_LENGTH);
+	const comma = cut.lastIndexOf(",");
+	return (comma > 0 ? cut.slice(0, comma) : cut).trim();
+}
+
 /** What the model is asked about one picture. */
 export function lookPrompt(asked: string): string {
 	const request = asked.trim().slice(0, MAX_ASKED);
@@ -21,6 +50,13 @@ export function lookPrompt(asked: string): string {
 			: "The person asked for a picture.",
 		"In two or three sentences, in English: say what the picture shows, then say plainly whether it matches what was asked and what, if anything, is off (something missing, cut off, the wrong number of things, misspelled text).",
 	].join(" ");
+}
+
+/** Writes training captions; absent where no model can see. */
+export interface Captioner {
+	/** Whether the model and its engine are installed. */
+	ready(): Promise<boolean>;
+	caption(picture: SeenPicture, signal: AbortSignal): Promise<string>;
 }
 
 export interface LocalEyesOptions {
@@ -36,7 +72,7 @@ export interface LocalEyesOptions {
  * per picture with llama.cpp's multimodal program: it works from WSL too,
  * where llama.cpp's server on the Windows side cannot be reached.
  */
-export class LocalEyes implements Eyes {
+export class LocalEyes implements Eyes, Captioner {
 	private store: LocalModelStore;
 	private model: string;
 	private run: RunOnce;
@@ -60,6 +96,36 @@ export class LocalEyes implements Eyes {
 		asked: string,
 		signal: AbortSignal,
 	): Promise<string> {
+		const said: string[] = [];
+		for (const picture of pictures.slice(0, MAX_LOOKED_AT)) {
+			const text = await this.ask(
+				picture,
+				lookPrompt(asked),
+				MAX_TOKENS,
+				signal,
+			);
+			said.push(picture.label ? `${picture.label}: ${text}` : text);
+		}
+		return said.join("\n");
+	}
+
+	/**
+	 * A caption to train a LoRA with: what the picture shows, in short
+	 * phrases, leaving the subject itself to the trigger word.
+	 */
+	async caption(picture: SeenPicture, signal: AbortSignal): Promise<string> {
+		return cleanCaption(
+			await this.ask(picture, CAPTION_PROMPT, MAX_CAPTION_TOKENS, signal),
+		);
+	}
+
+	/** Runs the model once on one picture, and returns what it said. */
+	private async ask(
+		picture: SeenPicture,
+		prompt: string,
+		maxTokens: number,
+		signal: AbortSignal,
+	): Promise<string> {
 		const runtime = await this.store.runtime(this.model);
 		const model = runtime.files.model;
 		const projector = runtime.files.llm_vision;
@@ -74,46 +140,41 @@ export class LocalEyes implements Eyes {
 			basename(runtime.executable).replace("llama-server", "llama-mtmd-cli"),
 		);
 		await mkdir(runtime.scratch, { recursive: true });
-		const said: string[] = [];
-		for (const picture of pictures.slice(0, MAX_LOOKED_AT)) {
-			const extension = picture.mimeType.split("/")[1] ?? "jpeg";
-			const file = join(
-				runtime.scratch,
-				`${crypto.randomUUID()}.look.${extension}`,
+		const extension = picture.mimeType.split("/")[1] ?? "jpeg";
+		const file = join(
+			runtime.scratch,
+			`${crypto.randomUUID()}.look.${extension}`,
+		);
+		await Bun.write(file, Buffer.from(picture.data, "base64"));
+		try {
+			const { code, stdout, stderr } = await this.run(
+				[
+					program,
+					"-m",
+					await path(model),
+					"--mmproj",
+					await path(projector),
+					"--image",
+					await path(file),
+					"-p",
+					prompt,
+					"-n",
+					String(maxTokens),
+					"--temp",
+					"0.2",
+					"--no-perf",
+				],
+				signal,
 			);
-			await Bun.write(file, Buffer.from(picture.data, "base64"));
-			try {
-				const { code, stdout, stderr } = await this.run(
-					[
-						program,
-						"-m",
-						await path(model),
-						"--mmproj",
-						await path(projector),
-						"--image",
-						await path(file),
-						"-p",
-						lookPrompt(asked),
-						"-n",
-						String(MAX_TOKENS),
-						"--temp",
-						"0.2",
-						"--no-perf",
-					],
-					signal,
+			if (code !== 0) {
+				const reason = stderr.trim().split(/\r?\n/).at(-1);
+				throw new Error(
+					`Looking at the picture failed: ${reason ?? `code ${code}`}`,
 				);
-				if (code !== 0) {
-					const reason = stderr.trim().split(/\r?\n/).at(-1);
-					throw new Error(
-						`Looking at the picture failed: ${reason ?? `code ${code}`}`,
-					);
-				}
-				const text = stdout.replace(/\s+/g, " ").trim();
-				said.push(picture.label ? `${picture.label}: ${text}` : text);
-			} finally {
-				await rm(file, { force: true });
 			}
+			return stdout.replace(/\s+/g, " ").trim();
+		} finally {
+			await rm(file, { force: true });
 		}
-		return said.join("\n");
 	}
 }
