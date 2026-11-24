@@ -892,7 +892,12 @@ test("API tokens are made in a browser, shown once, and revoked there or by an a
 	const made = await call("/api/account/tokens", {
 		method: "POST",
 		who: member,
-		body: { name: "laptop", scopes: ["read"], expiresInDays: 30 },
+		body: {
+			name: "laptop",
+			scopes: ["read"],
+			expiresInDays: 30,
+			password: PASSWORD,
+		},
 	});
 	expect(made.status).toBe(201);
 	const { token, id } = (await made.json()) as { token: string; id: string };
@@ -942,7 +947,7 @@ test("API tokens are made in a browser, shown once, and revoked there or by an a
 		await call("/api/account/tokens", {
 			method: "POST",
 			who: member,
-			body: { name: "ci", scopes: ["read"] },
+			body: { name: "ci", scopes: ["read"], password: PASSWORD },
 		})
 	).json()) as { token: string; id: string };
 	const memberId = userId(member.username);
@@ -983,7 +988,7 @@ test("a token pays only with the paid scope, and up to its own limit", async () 
 				await call("/api/account/tokens", {
 					method: "POST",
 					who: member,
-					body: { name: "agent", ...body },
+					body: { name: "agent", password: PASSWORD, ...body },
 				})
 			).json()) as { token: string; id: string }
 		).token;
@@ -1070,6 +1075,82 @@ test("a token pays only with the paid scope, and up to its own limit", async () 
 	expect(
 		detail.turns.flatMap((t) => t.jobs).find((j) => j.id === jobId)?.errorCode,
 	).toBe("tokenNotPaid");
+});
+
+test("making a token takes the password, and the code with two-step sign-in", async () => {
+	const { call, setupOwner, runtime, userId } = await serverApp();
+	const owner = await setupOwner();
+	const make = (body: Record<string, unknown>) =>
+		call("/api/account/tokens", {
+			method: "POST",
+			who: owner,
+			body: { name: "agent", scopes: ["read"], ...body },
+		});
+	// A stolen session alone cannot mint a token.
+	expect((await make({})).status).toBe(400);
+	const wrong = await make({ password: "not the password at all" });
+	expect(wrong.status).toBe(403);
+	expect(await errorCode(wrong)).toBe("badPassword");
+	const made = await make({ password: PASSWORD });
+	expect(made.status).toBe(201);
+	// Left out, the expiry is 90 days; null is never.
+	const { createdAt, expiresAt } = (await made.json()) as {
+		createdAt: number;
+		expiresAt: number | null;
+	};
+	expect(expiresAt).toBe(createdAt + 90 * 24 * 60 * 60 * 1000);
+	expect(
+		(
+			(await (
+				await make({ password: PASSWORD, expiresInDays: null })
+			).json()) as {
+				expiresAt: number | null;
+			}
+		).expiresAt,
+	).toBeNull();
+
+	// With two-step sign-in on, the code too.
+	const { secret } = runtime.accounts.startTotp(userId("owner"));
+	const code = (step: number) =>
+		totp(
+			base32Decode(secret) as Uint8Array,
+			Math.floor(Date.now() / 1000) + 30 * step,
+		);
+	await runtime.accounts.enableTotp(userId("owner"), {
+		secret,
+		code: code(0),
+		password: PASSWORD,
+	});
+	const noCode = await make({ password: PASSWORD });
+	expect(noCode.status).toBe(403);
+	expect(await errorCode(noCode)).toBe("totpRequired");
+	expect((await make({ password: PASSWORD, code: code(1) })).status).toBe(201);
+});
+
+test("signing out elsewhere can end the API tokens too", async () => {
+	const { call, setupOwner, runtime, userId } = await serverApp();
+	const owner = await setupOwner();
+	const id = userId("owner");
+	const make = () =>
+		runtime.accounts.createApiToken(id, { name: "t", scopes: ["read"] }).token;
+	const kept = make();
+	await call("/api/account/sessions", { method: "DELETE", who: owner });
+	expect((await call("/api/models", { who: { token: kept } })).status).toBe(
+		200,
+	);
+	const ended = make();
+	await call("/api/account/sessions?tokens=true", {
+		method: "DELETE",
+		who: owner,
+	});
+	expect((await call("/api/models", { who: { token: ended } })).status).toBe(
+		401,
+	);
+	expect((await call("/api/models", { who: { token: kept } })).status).toBe(
+		401,
+	);
+	// This browser stays signed in.
+	expect((await call("/api/account", { who: owner })).status).toBe(200);
 });
 
 /** Who may call a route, by its access, signed in with a browser. */

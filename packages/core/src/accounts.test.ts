@@ -522,8 +522,11 @@ test("tokens are listed without their secret, and revoked one by one", async () 
 		scopes: ["read", "generate"],
 		spendLimitUsd: 5,
 		spentUsd: 0,
-		expiresAt: null,
 	});
+	// Left out, the expiry is 90 days.
+	expect(listed[1]?.expiresAt).toBe(
+		(listed[1]?.createdAt ?? 0) + 90 * 24 * 60 * 60 * 1000,
+	);
 	expect(JSON.stringify(listed)).not.toContain(first.token);
 	expect(JSON.stringify(listed)).not.toContain(first.token.slice(3));
 	accounts.revokeApiToken(owner.user.id, first.view.id);

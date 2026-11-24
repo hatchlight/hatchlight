@@ -127,12 +127,15 @@ Each token has:
   models_ (only for people allowed them) and _train LoRAs_ (likewise).
 - **A spending limit** on paid models, on top of the person's monthly one,
   whichever key pays.
-- **An expiry**: 30, 90 or 365 days, or none.
+- **An expiry**: 30, 90 (the default) or 365 days, or none.
 
-The token is shown once. Lists show its name, permissions, when it was last
+Making a token takes the person's password, and their two-step code when
+it is on, so a stolen browser session alone cannot mint one. The token is
+shown once. Lists show its name, permissions, when it was last
 used and what it spent; its person revokes it there, and admins and owners
 revoke it from **Settings > People**. Changing the person's password or role,
-or disabling them, ends all their tokens.
+or disabling them, ends all their tokens, and so does **Sign out everywhere
+else** unless its box is unticked.
 
 An agent connects in one of two ways:
 
@@ -144,7 +147,18 @@ An agent connects in one of two ways:
     https://hatchlight.example.com/mcp --header "Authorization: Bearer hl_…"
   ```
 
-  `--scope user` makes it available in every project. `/mcp` takes the token
+  `--scope user` makes it available in every project. The token lands in the
+  shell's history, unless the command starts with a space in a shell set to
+  skip those, and Claude Code keeps it in its settings file (`~/.claude.json`).
+  To keep it off the command line, read it first:
+
+  ```sh
+  read -s HATCHLIGHT_TOKEN
+  claude mcp add --transport http --scope user hatchlight \
+    https://hatchlight.example.com/mcp --header "Authorization: Bearer $HATCHLIGHT_TOKEN"
+  ```
+
+  `/mcp` takes the token
   only, never a browser's sign-in, and refuses requests from other websites.
   It is served in server mode only.
 

@@ -220,12 +220,18 @@ export const api = {
 	accountSessions: () => request<AuthSessionView[]>("/api/account/sessions"),
 	revokeSession: (id: string) =>
 		request<void>(`/api/account/sessions/${id}`, { method: "DELETE" }),
-	revokeOtherSessions: () =>
-		request<void>("/api/account/sessions", { method: "DELETE" }),
+	/** Signs out every other browser; with `tokens`, ends API tokens too. */
+	revokeOtherSessions: (tokens: boolean) =>
+		request<void>(`/api/account/sessions${tokens ? "?tokens=true" : ""}`, {
+			method: "DELETE",
+		}),
 	/** The person's API tokens, for agents and programs. */
 	tokens: () => request<ApiTokenView[]>("/api/account/tokens"),
 	/** A new token: the answer is the only time it is shown. */
 	createToken: (input: {
+		/** Shows it is the person: a stolen session alone cannot make one. */
+		password: string;
+		code?: string;
 		name: string;
 		scopes: TokenScope[];
 		spendLimitUsd: number | null;

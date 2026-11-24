@@ -15,6 +15,7 @@ import { Logo } from "@/components/Logo";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -1053,9 +1054,14 @@ function Sessions() {
 		mutationFn: api.revokeSession,
 		onSuccess: refresh,
 	});
+	// A stolen session could have made tokens: ended too, unless unticked.
+	const [endTokens, setEndTokens] = useState(true);
 	const others = useMutation({
-		mutationFn: api.revokeOtherSessions,
-		onSuccess: refresh,
+		mutationFn: () => api.revokeOtherSessions(endTokens),
+		onSuccess: () => {
+			void client.invalidateQueries({ queryKey: ["tokens"] });
+			return refresh();
+		},
 	});
 	return (
 		<div className={cn(PANEL, "flex flex-col gap-4")}>
@@ -1068,7 +1074,15 @@ function Sessions() {
 						confirm={t("account.signOutOthers")}
 						disabled={others.isPending}
 						onConfirm={() => others.mutate()}
-					/>
+					>
+						<Label className="min-h-9 gap-3 font-normal">
+							<Checkbox
+								checked={endTokens}
+								onCheckedChange={(checked) => setEndTokens(checked)}
+							/>
+							{t("account.signOutOthersTokens")}
+						</Label>
+					</ConfirmButton>
 				)}
 			</div>
 			<ul className="flex flex-col divide-y divide-line">

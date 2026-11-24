@@ -34,6 +34,8 @@ export const SESSION_MS = 30 * DAY_MS;
 /** Sessions are written to at most this often as they are used. */
 const TOUCH_MS = 60 * 1000;
 const INVITE_MS = 7 * DAY_MS;
+/** How long a token lasts when its maker does not say. */
+const DEFAULT_TOKEN_DAYS = 90;
 /** API tokens each person may have at once. */
 const MAX_TOKENS = 50;
 const MAX_TOKEN_NAME = 64;
@@ -417,8 +419,17 @@ export class AccountService {
 		}
 	}
 
-	revokeOtherSessions(userId: string, keep: string | null): void {
+	/**
+	 * Signs out every browser but `keep`; with `tokens`, ends every API
+	 * token too, as when a session may have been stolen.
+	 */
+	revokeOtherSessions(
+		userId: string,
+		keep: string | null,
+		options: { tokens?: boolean } = {},
+	): void {
 		this.repo.deleteSessionsOf(userId, keep ?? undefined);
+		if (options.tokens) this.repo.deleteTokensOf(userId);
 	}
 
 	/** Changes one's own password; other browsers are signed out. */
@@ -843,7 +854,11 @@ export class AccountService {
 		if (limit !== null && !(Number.isFinite(limit) && limit >= 0)) {
 			throw new ValidationError("The spending limit must be 0 or more");
 		}
-		const days = input.expiresInDays ?? null;
+		// Left out, a token lasts 90 days; null asks for one that never ends.
+		const days =
+			input.expiresInDays === undefined
+				? DEFAULT_TOKEN_DAYS
+				: input.expiresInDays;
 		if (!TOKEN_EXPIRY_DAYS.includes(days as TokenExpiryDays)) {
 			throw new ValidationError(
 				"A token lasts 30, 90 or 365 days, or until revoked",
@@ -869,6 +884,22 @@ export class AccountService {
 		};
 		this.repo.createToken(row);
 		return { token, view: this.tokenView(row) };
+	}
+
+	/**
+	 * A token made by the person themselves, who shows it is them with
+	 * their password (and the code from their app, when two-step sign-in
+	 * is on): a stolen browser session alone cannot mint a lasting token.
+	 */
+	async createApiTokenConfirmed(
+		userId: string,
+		proof: { password: string; code?: string },
+		input: Parameters<AccountService["createApiToken"]>[1],
+		signal?: AbortSignal,
+	): Promise<{ token: string; view: ApiTokenView }> {
+		const user = this.mustGet(userId);
+		await this.assertOwnsAccount(user, proof.password, proof.code, signal);
+		return this.createApiToken(userId, input);
 	}
 
 	/** A person's tokens, newest first; never the tokens themselves. */

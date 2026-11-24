@@ -14,7 +14,7 @@ import {
 	useQueryClient,
 } from "@tanstack/react-query";
 import { PenLineIcon, XIcon } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -112,6 +112,7 @@ export function ConfirmButton({
 	confirm,
 	disabled,
 	onConfirm,
+	children,
 }: {
 	label: string;
 	ariaLabel?: string;
@@ -119,6 +120,8 @@ export function ConfirmButton({
 	confirm: string;
 	disabled?: boolean;
 	onConfirm(): void;
+	/** Choices that go with the answer, under the question. */
+	children?: ReactNode;
 }) {
 	const { t } = useI18n();
 	const [open, setOpen] = useState(false);
@@ -140,6 +143,7 @@ export function ConfirmButton({
 				<AlertDialogHeader>
 					<AlertDialogTitle>{question}</AlertDialogTitle>
 				</AlertDialogHeader>
+				{children}
 				<AlertDialogFooter>
 					<AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
 					<AlertDialogAction

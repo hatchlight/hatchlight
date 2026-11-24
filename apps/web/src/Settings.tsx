@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import { AccountSettings, UsersSettings, useCan } from "./Accounts";
+import { AccountSettings, UsersSettings, useAccount, useCan } from "./Accounts";
 import { type AgentPolicy, api, useServerMode } from "./api";
 import { type I18n, useI18n } from "./i18n";
 import { useModelProgress } from "./live";
@@ -810,8 +810,11 @@ function snippets(origin: string, token: string, paid: boolean) {
 	// The token goes in the environment, where a process list does not show it.
 	const local = ["mcp", ...(paid ? ["--allow-paid"] : []), "--url", origin];
 	return {
-		// For every project, not only the one it is run in.
-		claudeCode: `claude mcp add --transport http --scope user hatchlight ${origin}/mcp --header "Authorization: Bearer ${token}"`,
+		// For every project, not only the one it is run in. Started with a
+		// space, most shells keep it out of their history.
+		claudeCode: ` claude mcp add --transport http --scope user hatchlight ${origin}/mcp --header "Authorization: Bearer ${token}"`,
+		// The token read without showing, and kept out of the command.
+		claudeCodeHidden: `read -s HATCHLIGHT_TOKEN\nclaude mcp add --transport http --scope user hatchlight ${origin}/mcp --header "Authorization: Bearer $HATCHLIGHT_TOKEN"`,
 		// Claude Desktop's file takes commands only: the command line connects.
 		claudeDesktop: JSON.stringify(
 			{
@@ -852,6 +855,9 @@ function NewToken({
 			<h4 className="mt-5 text-sm font-medium">Claude Code</h4>
 			<p className="mt-1 text-sm text-dim">{t("tokens.claudeCode")}</p>
 			<CopyLine text={lines.claudeCode} />
+			<p className="mt-2 text-sm text-dim">{t("tokens.claudeCodeHistory")}</p>
+			<CopyLine text={lines.claudeCodeHidden} />
+			<p className="mt-2 text-sm text-dim">{t("tokens.claudeCodeConfig")}</p>
 			<h4 className="mt-5 text-sm font-medium">Claude Desktop</h4>
 			<p className="mt-1 text-sm text-dim">{t("tokens.claudeDesktop")}</p>
 			<CopyLine text={lines.claudeDesktop} />
@@ -882,6 +888,10 @@ export function AgentTokens() {
 	const [scopes, setScopes] = useState<TokenScope[]>(["read", "generate"]);
 	const [limit, setLimit] = useState("");
 	const [days, setDays] = useState<TokenExpiryDays>(90);
+	// The person shows it is them: a stolen session alone mints nothing.
+	const [password, setPassword] = useState("");
+	const [code, setCode] = useState("");
+	const twoStep = useAccount()?.totp === true;
 	const [made, setMade] = useState<(ApiTokenView & { token: string }) | null>(
 		null,
 	);
@@ -898,6 +908,8 @@ export function AgentTokens() {
 	const create = useMutation({
 		mutationFn: () =>
 			api.createToken({
+				password,
+				code: twoStep ? code.trim() : undefined,
 				name: name.trim(),
 				scopes,
 				spendLimitUsd: scopes.includes("paid") ? limitUsd : null,
@@ -906,6 +918,8 @@ export function AgentTokens() {
 		onSuccess: (token) => {
 			setMade(token);
 			setName("");
+			setPassword("");
+			setCode("");
 			return refresh();
 		},
 	});
@@ -1025,11 +1039,50 @@ export function AgentTokens() {
 								</Select>
 							</div>
 						</div>
+						<div className="flex flex-wrap items-end gap-4">
+							<div className="flex flex-col gap-2">
+								<Label
+									htmlFor={`${id}-password`}
+									className="font-normal text-dim"
+								>
+									{t("tokens.password")}
+								</Label>
+								<Input
+									id={`${id}-password`}
+									type="password"
+									autoComplete="current-password"
+									value={password}
+									onChange={(event) => setPassword(event.target.value)}
+									className="h-10 w-64"
+								/>
+							</div>
+							{twoStep && (
+								<div className="flex flex-col gap-2">
+									<Label
+										htmlFor={`${id}-code`}
+										className="font-normal text-dim"
+									>
+										{t("signin.code")}
+									</Label>
+									<Input
+										id={`${id}-code`}
+										inputMode="numeric"
+										autoComplete="one-time-code"
+										placeholder="123456"
+										value={code}
+										onChange={(event) => setCode(event.target.value)}
+										className="h-10 w-36 font-mono tracking-widest"
+									/>
+								</div>
+							)}
+						</div>
 						<Button
 							type="submit"
 							variant="aurora"
 							disabled={
 								!name.trim() ||
+								!password ||
+								(twoStep && !code.trim()) ||
 								scopes.length === 0 ||
 								!validLimit ||
 								create.isPending

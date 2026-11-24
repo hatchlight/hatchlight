@@ -204,7 +204,10 @@ export function mountAccounts(
 	});
 	app.delete("/api/account/sessions", (c) => {
 		const { user, sessionId } = c.get("viewer");
-		accounts.revokeOtherSessions(user.id, sessionId);
+		// ?tokens=true ends the API tokens too.
+		accounts.revokeOtherSessions(user.id, sessionId, {
+			tokens: c.req.query("tokens") === "true",
+		});
 		return c.body(null, 204);
 	});
 	app.delete("/api/account/sessions/:id", (c) => {
@@ -236,16 +239,29 @@ export function mountAccounts(
 		if (spend !== null && typeof spend !== "number") {
 			throw new ValidationError("spendLimitUsd must be a number or null");
 		}
-		const days = body.expiresInDays ?? null;
-		if (days !== null && typeof days !== "number") {
+		// Left out, 90 days; null for a token that never ends.
+		const days = body.expiresInDays;
+		if (days !== undefined && days !== null && typeof days !== "number") {
 			throw new ValidationError("expiresInDays must be a number or null");
 		}
-		const { token, view } = accounts.createApiToken(user.id, {
-			name: text(body.name, "name"),
-			scopes: body.scopes as string[],
-			spendLimitUsd: spend,
-			expiresInDays: days,
-		});
+		// The password, and the two-step code when it is on, as for any
+		// change a stolen session must not make; guessing slows down.
+		const { token, view } = await guarded(c, user.username, "signIn", () =>
+			accounts.createApiTokenConfirmed(
+				user.id,
+				{
+					password: text(body.password, "password"),
+					code: optionalText(body.code, "code"),
+				},
+				{
+					name: text(body.name, "name"),
+					scopes: body.scopes as string[],
+					spendLimitUsd: spend,
+					expiresInDays: days,
+				},
+				c.req.raw.signal,
+			),
+		);
 		// The only time the token is shown.
 		return c.json({ ...view, token }, 201);
 	});
