@@ -200,6 +200,23 @@ export function bestLocalModel(
 		)[0];
 }
 
+/** Models that can be used now: ready, and paid only when allowed. */
+export async function usableModels(
+	reel: Pick<Reel, "models" | "providers">,
+	allowPaid: boolean,
+): Promise<ModelSpec[]> {
+	const [models, providers] = await Promise.all([
+		reel.models(),
+		reel.providers(),
+	]);
+	const ready = new Set(
+		providers.filter((p) => p.hasKey || !p.requiresKey).map((p) => p.id),
+	);
+	return models.filter(
+		(m) => ready.has(m.providerId) && (allowPaid || isLocal(m)),
+	);
+}
+
 export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 	const waitMs = options.waitMs ?? 15 * 60_000;
 	const pollMs = options.pollMs ?? 1000;
@@ -208,19 +225,7 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 		? "Picture ids (ast_…) or image file paths"
 		: "Picture ids (ast_…)";
 
-	/** Models the agent may use now: ready, and paid only when allowed. */
-	async function usable(): Promise<ModelSpec[]> {
-		const [models, providers] = await Promise.all([
-			reel.models(),
-			reel.providers(),
-		]);
-		const ready = new Set(
-			providers.filter((p) => p.hasKey || !p.requiresKey).map((p) => p.id),
-		);
-		return models.filter(
-			(m) => ready.has(m.providerId) && (options.allowPaid || isLocal(m)),
-		);
-	}
+	const usable = () => usableModels(reel, options.allowPaid);
 
 	/** Why some references cannot be used here: paths where only ids are. */
 	function notIds(given: string[]): ToolResult | null {

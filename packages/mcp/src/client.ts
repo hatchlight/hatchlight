@@ -1,6 +1,7 @@
 import type {
 	Asset,
 	CreateTurnInput,
+	EngineEvent,
 	GalleryItem,
 	ModelSpec,
 	ProviderStatus,
@@ -43,8 +44,11 @@ export class HatchlightClient implements Reel {
 				body?.code ?? null,
 			);
 		}
+		if (response.status === 204) return undefined as T;
 		return (await response.json()) as T;
 	}
+
+	private post = (path: string) => this.request<void>(path, { method: "POST" });
 
 	models = () => this.request<ModelSpec[]>("/api/models");
 	providers = () => this.request<ProviderStatus[]>("/api/providers");
@@ -84,6 +88,44 @@ export class HatchlightClient implements Reel {
 			data: new Uint8Array(await response.arrayBuffer()),
 			mime: response.headers.get("content-type") ?? "application/octet-stream",
 		};
+	}
+
+	cancelJob = (id: string) =>
+		this.post(`/api/jobs/${encodeURIComponent(id)}/cancel`);
+	retryJob = (id: string) =>
+		this.post(`/api/jobs/${encodeURIComponent(id)}/retry`);
+
+	/** How jobs move, as the server tells it, until `signal` stops it. */
+	async *events(signal: AbortSignal): AsyncGenerator<EngineEvent> {
+		const response = await this.fetch(`${this.baseUrl}/api/events`, {
+			signal,
+		});
+		if (!response.ok || !response.body) return;
+		let buffer = "";
+		try {
+			for await (const chunk of response.body.pipeThrough(
+				new TextDecoderStream(),
+			)) {
+				// Over the whole buffer: a "\r\n" may come cut in two.
+				buffer = (buffer + chunk).replaceAll("\r\n", "\n");
+				for (;;) {
+					const end = buffer.indexOf("\n\n");
+					if (end < 0) break;
+					const block = buffer.slice(0, end);
+					buffer = buffer.slice(end + 2);
+					const data = block
+						.split("\n")
+						.filter((line) => line.startsWith("data:"))
+						.map((line) => line.slice(5).trimStart())
+						.join("\n");
+					if (!data) continue;
+					const event = JSON.parse(data) as { type?: string };
+					if (event.type?.startsWith("job.")) yield event as EngineEvent;
+				}
+			}
+		} catch (error) {
+			if (!signal.aborted) throw error;
+		}
 	}
 
 	/** Where a person can see a session in the app. */

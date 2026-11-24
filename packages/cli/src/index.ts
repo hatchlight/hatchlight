@@ -23,18 +23,41 @@ import {
 	serveWeb,
 } from "@hatchlight/server";
 
+import { COMMANDS, commandList } from "./commands";
+import { openInBrowser } from "./launcher";
+
+const [first, ...rest] = process.argv.slice(2);
+
 // An agent's connection: it has its own options, and never serves the app.
-if (process.argv[2] === "mcp") {
+if (first === "mcp") {
 	const { mcp } = await import("./mcp");
-	await mcp(process.argv.slice(3));
+	await mcp(rest);
 	process.exit(0);
+}
+
+// A command typed in a terminal: it uses the server, and never serves the app.
+if (first != null && Object.hasOwn(COMMANDS, first)) {
+	const { runCommand } = await import("./client");
+	process.exit(await runCommand(first, rest));
+}
+
+if (first != null && !first.startsWith("-") && first !== "serve") {
+	console.error(
+		`Unknown command: ${first}\nSee the commands with: hatchlight --help`,
+	);
+	process.exit(2);
 }
 
 const HELP = `Hatchlight — one interface for many image generation models
 
-Usage: hatchlight [options]
-       hatchlight mcp [options]   Connect an AI agent (see hatchlight mcp --help)
+Usage: hatchlight [serve] [options]   Start the app
+       hatchlight <command> [options]
 
+Commands (see hatchlight <command> --help):
+${commandList()}
+  mcp       Connect an AI agent
+
+Options for serve:
   --port <n>       Port to listen on (default 4096; 0 picks a free one)
   --data-dir <p>   Where sessions, images and keys are stored
                    (default ${defaultDataDir()})
@@ -49,6 +72,7 @@ Usage: hatchlight [options]
 `;
 
 const { values } = parseArgs({
+	args: first === "serve" ? rest : process.argv.slice(2),
 	options: {
 		port: { type: "string", default: "4096" },
 		"data-dir": { type: "string" },
@@ -167,19 +191,7 @@ if (modelsDir !== join(dataDir, "models")) {
 	say(`Local models: ${modelsDir}`);
 }
 
-if (!values.dev && !values["no-open"]) {
-	const opener =
-		process.platform === "darwin"
-			? "open"
-			: process.platform === "win32"
-				? "explorer"
-				: "xdg-open";
-	try {
-		Bun.spawn([opener, url], { stdio: ["ignore", "ignore", "ignore"] });
-	} catch {
-		// No browser launcher available; the URL is printed above.
-	}
-}
+if (!values.dev && !values["no-open"]) openInBrowser(url);
 
 let stopping = false;
 async function shutdown(): Promise<void> {

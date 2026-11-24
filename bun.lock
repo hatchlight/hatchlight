@@ -66,6 +66,7 @@
         "@hatchlight/core": "workspace:*",
         "@hatchlight/mcp": "workspace:*",
         "@hatchlight/server": "workspace:*",
+        "@hatchlight/tools": "workspace:*",
       },
     },
     "packages/core": {
