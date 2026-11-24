@@ -12,3 +12,9 @@ with requirements, first run, backups and troubleshooting, is
 | [`unraid/hatchlight.xml`](unraid/hatchlight.xml)   | An Unraid template                                          |
 
 A Cloudflare Tunnel and TrueNAS SCALE are covered in the guide.
+
+The Hatchlight service runs with `no-new-privileges` and only the
+capabilities its entrypoint needs to hand the volumes to `PUID:PGID`; the
+app itself runs with none. The Tailscale and Caddy images are named by
+version, not pinned by digest, on purpose: they are the parts facing the
+network, and should get their security fixes when you pull.

@@ -13,6 +13,7 @@ name: hatchlight
 
 services:
   tailscale:
+    # A version, not a digest, on purpose: it gets its security fixes.
     image: tailscale/tailscale:v1.104
     container_name: hatchlight-tailscale
     hostname: hatchlight
@@ -44,7 +45,23 @@ services:
     network_mode: service:tailscale
     depends_on:
       - tailscale
+    # Only what the entrypoint needs, as root, to hand the volumes to PUID:PGID
+    # and become that user; the app itself ends up with no capabilities.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN # give the volumes to PUID:PGID
+      - DAC_OVERRIDE # ... whatever their current owner allows
+      - FOWNER # make /data and /trainer private
+      - SETUID # become PUID
+      - SETGID # become PGID
+      - SETPCAP # drop every capability before starting the app
     environment:
+      # Tailscale's proxy and the health check use loopback: nothing else
+      # on the tailnet reaches Hatchlight around the proxy.
+      HATCHLIGHT_HOST: 127.0.0.1
       HATCHLIGHT_PUBLIC_URL: https://hatchlight.${TAILNET:?Set TAILNET to your tailnet name, such as example-tailnet.ts.net}
       # The proxy is on loopback: its X-Forwarded-* headers are believed.
       HATCHLIGHT_TRUSTED_PROXIES: 127.0.0.1,::1

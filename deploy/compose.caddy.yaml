@@ -12,6 +12,7 @@ name: hatchlight
 
 services:
   caddy:
+    # A version, not a digest, on purpose: it gets its security fixes.
     image: caddy:2.11
     container_name: hatchlight-caddy
     restart: unless-stopped
@@ -35,6 +36,19 @@ services:
     image: ${HATCHLIGHT_IMAGE:-ghcr.io/hatchlight/hatchlight:latest}
     container_name: hatchlight
     restart: unless-stopped
+    # Only what the entrypoint needs, as root, to hand the volumes to PUID:PGID
+    # and become that user; the app itself ends up with no capabilities.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN # give the volumes to PUID:PGID
+      - DAC_OVERRIDE # ... whatever their current owner allows
+      - FOWNER # make /data and /trainer private
+      - SETUID # become PUID
+      - SETGID # become PGID
+      - SETPCAP # drop every capability before starting the app
     # No ports: only Caddy, on the network below, reaches it.
     environment:
       HATCHLIGHT_PUBLIC_URL: https://${DOMAIN}

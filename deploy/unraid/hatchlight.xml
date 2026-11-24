@@ -7,12 +7,12 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/hatchlight/hatchlight/issues</Support>
   <Project>https://hatchlight.app</Project>
-  <Overview>Make pictures with local and cloud AI models, for the people of your home, on your server's NVIDIA card. Accounts, a shared gallery each person keeps private, and LoRA training. Needs the Nvidia Driver plugin (driver 570 or newer). The first time, open the WebUI and enter the setup code from the container's log.</Overview>
+  <Overview>Make pictures with local and cloud AI models, for the people of your home, on your server's NVIDIA card. Accounts, a shared gallery each person keeps private, and LoRA training. Needs the Nvidia Driver plugin (driver 570 or newer). The first time, open the WebUI and enter the setup code from the container's log. The port is published on every address of the server: to reach it only through a reverse proxy, remove the port and put the container on the proxy's network, or give it its own address with a custom network (br0).</Overview>
   <Category>MediaApp:Photos Tools:</Category>
   <WebUI>http://[IP]:[PORT:4096]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/hatchlight/hatchlight/main/deploy/unraid/hatchlight.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/hatchlight/hatchlight/main/apps/web/public/favicon.svg</Icon>
-  <ExtraParams>--runtime=nvidia --stop-timeout 30</ExtraParams>
+  <ExtraParams>--runtime=nvidia --stop-timeout 30 --security-opt no-new-privileges:true --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --cap-add SETUID --cap-add SETGID --cap-add SETPCAP</ExtraParams>
   <PostArgs/>
   <Requires>The Nvidia Driver plugin, with an NVIDIA card and driver 570 or newer.</Requires>
   <Config Name="WebUI port" Target="4096" Default="4096" Mode="tcp" Description="Port of the web app." Type="Port" Display="always" Required="true" Mask="false">4096</Config>

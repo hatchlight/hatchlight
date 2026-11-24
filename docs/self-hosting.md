@@ -47,7 +47,7 @@ docker compose logs hatchlight
 Or with `docker run`:
 
 ```sh
-docker run -d --name hatchlight --gpus all -p 4096:4096 \
+docker run -d --name hatchlight --gpus all -p 192.168.1.20:4096:4096 \
   -e HATCHLIGHT_PUBLIC_URL=http://192.168.1.20:4096 \
   -e PUID=1000 -e PGID=1000 \
   -v hatchlight-data:/data -v hatchlight-models:/models -v hatchlight-trainer:/trainer \
@@ -56,8 +56,16 @@ docker run -d --name hatchlight --gpus all -p 4096:4096 \
 ```
 
 In the Compose files, `HATCHLIGHT_PORT` changes the port on the host (4096
-by default), and `HATCHLIGHT_IMAGE` pins a version, such as
+by default), `HATCHLIGHT_BIND` the address it is published on, and
+`HATCHLIGHT_IMAGE` pins a version, such as
 `ghcr.io/hatchlight/hatchlight:0.3.0`.
+
+**Docker's published ports go around the host's firewall:** Docker adds its
+own rules ahead of ufw and firewalld, so a port published on every address
+(`-p 4096:4096`, or `HATCHLIGHT_BIND` left at `0.0.0.0`) is open to every
+network the machine is on, whatever the firewall says. Publish it on the LAN
+address only (`-p 192.168.1.20:4096:4096`, `HATCHLIGHT_BIND=192.168.1.20`),
+or on `127.0.0.1` behind a proxy, or use Tailscale, which publishes nothing.
 
 `HATCHLIGHT_PUBLIC_URL` is the address people type in their browser. Use this
 machine's address on your network (`192.168.1.20` above is an example). The
@@ -231,7 +239,7 @@ Images are signed with [cosign](https://docs.sigstore.dev): verify one with
 
 ```sh
 cosign verify ghcr.io/hatchlight/hatchlight:latest \
-  --certificate-identity-regexp '^https://github.com/hatchlight/hatchlight/' \
+  --certificate-identity-regexp '^https://github.com/hatchlight/hatchlight/\.github/workflows/docker\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 

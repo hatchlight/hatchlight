@@ -13,8 +13,24 @@ services:
     image: ${HATCHLIGHT_IMAGE:-ghcr.io/hatchlight/hatchlight:latest}
     container_name: hatchlight
     restart: unless-stopped
+    # Only what the entrypoint needs, as root, to hand the volumes to PUID:PGID
+    # and become that user; the app itself ends up with no capabilities.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN # give the volumes to PUID:PGID
+      - DAC_OVERRIDE # ... whatever their current owner allows
+      - FOWNER # make /data and /trainer private
+      - SETUID # become PUID
+      - SETGID # become PGID
+      - SETPCAP # drop every capability before starting the app
     ports:
-      - "${HATCHLIGHT_PORT:-4096}:4096" # host port : container port
+      # Docker's published ports go around ufw and firewalld: bind them to
+      # this machine's LAN address (HATCHLIGHT_BIND=192.168.1.20), or to
+      # 127.0.0.1 behind a proxy, rather than to every interface.
+      - "${HATCHLIGHT_BIND:-0.0.0.0}:${HATCHLIGHT_PORT:-4096}:4096"
     environment:
       # The address people type in their browser: this machine's address on
       # your network, with the port above.
