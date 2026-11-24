@@ -1,6 +1,7 @@
-# Advisories osv-scanner (and so OpenSSF Scorecard) reports that this project
-# cannot fix itself. Each comes with Tauri's own dependencies; drop an entry
-# once Tauri moves past it. Anything not listed here must be fixed.
+# Advisories osv-scanner (and so OpenSSF Scorecard) reports for this
+# Cargo.lock that this project cannot fix itself. Each comes with Tauri's own
+# dependencies; drop an entry once Tauri moves past it. Anything not listed
+# here must be fixed. osv-scanner reads this file next to the lockfile.
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0429"
