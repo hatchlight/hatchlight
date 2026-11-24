@@ -1,6 +1,6 @@
 [package]
 name = "hatchlight"
-version = "0.3.0"
+version = "0.4.0"
 description = "One interface for many image and video generation models"
 license = "MIT"
 edition = "2021"
