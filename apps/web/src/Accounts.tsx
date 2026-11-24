@@ -124,7 +124,7 @@ function ServerGate({
 		screen = null;
 	} else if (reset) {
 		// Whoever is signed in here, the link is for its own person.
-		screen = <ResetPassword token={reset} />;
+		screen = <ResetPassword token={reset} signedIn={account.data != null} />;
 	} else if (account.data && !account.data.mustChangePassword) {
 		return (
 			<AccountContext.Provider value={account.data}>
@@ -473,7 +473,14 @@ function AcceptInvite({ token }: { token: string }) {
 }
 
 /** A link from an admin or owner, to choose a new password. */
-function ResetPassword({ token }: { token: string }) {
+function ResetPassword({
+	token,
+	signedIn,
+}: {
+	token: string;
+	/** Someone is signed in here already: the way on is the app. */
+	signedIn: boolean;
+}) {
 	const { t } = useI18n();
 	const [password, setPassword] = useState("");
 	const [again, setAgain] = useState("");
@@ -496,7 +503,7 @@ function ResetPassword({ token }: { token: string }) {
 					<Problem error={reset.error} />
 				)}
 				<button type="button" onClick={reload} className={primary}>
-					{t("signin.title")}
+					{signedIn && !save.isSuccess ? t("reset.open") : t("signin.title")}
 				</button>
 			</>
 		);
@@ -694,25 +701,33 @@ function TwoStep({ enabled }: { enabled: boolean }) {
 	const { t } = useI18n();
 	const client = useQueryClient();
 	const [code, setCode] = useState("");
+	const [current, setCurrent] = useState("");
 	const [password, setPassword] = useState("");
 	const refresh = () => client.invalidateQueries({ queryKey: ["account"] });
 	const done = () => {
 		setCode("");
+		setCurrent("");
 		setPassword("");
 		return refresh();
 	};
+	// A new secret: to turn it on, or to move it to another app.
 	const start = useMutation({ mutationFn: api.startTotp });
-	// Changing it takes the password, and the current code when it is on.
+	// Changing it takes the password, and the current app's code when on.
 	const enable = useMutation({
 		mutationFn: () =>
-			api.enableTotp({ secret: start.data?.secret ?? "", code, password }),
+			api.enableTotp({
+				secret: start.data?.secret ?? "",
+				code,
+				password,
+				current: enabled ? current : undefined,
+			}),
 		onSuccess: () => {
 			start.reset();
 			return done();
 		},
 	});
 	const disable = useMutation({
-		mutationFn: () => api.disableTotp({ password, code }),
+		mutationFn: () => api.disableTotp({ password, code: current }),
 		onSuccess: done,
 	});
 	const passwordField = (
@@ -727,15 +742,37 @@ function TwoStep({ enabled }: { enabled: boolean }) {
 		/>
 	);
 	const codeField = (
+		value: string,
+		set: (value: string) => void,
+		label: string,
+	) => (
 		<input
-			value={code}
-			onChange={(event) => setCode(event.target.value)}
+			value={value}
+			onChange={(event) => set(event.target.value)}
 			placeholder="123456"
-			aria-label={t("signin.code")}
+			aria-label={label}
+			title={label}
 			inputMode="numeric"
 			autoComplete="one-time-code"
 			className={`w-36 font-mono tracking-widest ${input}`}
 		/>
+	);
+	const newApp = start.data && (
+		<>
+			<p className="text-sm">{t("account.twoStepAdd")}</p>
+			<a
+				href={start.data.uri}
+				className="break-all font-mono text-xs text-accent underline"
+			>
+				{start.data.uri}
+			</a>
+			<p className="text-sm">
+				{t("account.twoStepSecret")}{" "}
+				<code className="font-mono text-sm tracking-wider">
+					{start.data.secret.replace(/(.{4})/g, "$1 ").trim()}
+				</code>
+			</p>
+		</>
 	);
 	return (
 		<div className="mt-4 rounded-lg border border-line bg-panel p-4">
@@ -750,24 +787,74 @@ function TwoStep({ enabled }: { enabled: boolean }) {
 			<p className="mt-2 text-sm leading-relaxed text-dim">
 				{t("account.twoStepIntro")}
 			</p>
-			{enabled ? (
+			{enabled && start.data ? (
 				<form
-					className="mt-3 flex flex-wrap gap-2"
+					className="mt-3 flex flex-col gap-3"
 					onSubmit={(event) => {
 						event.preventDefault();
-						disable.mutate();
+						enable.mutate();
 					}}
 				>
-					{passwordField}
-					{codeField}
-					<button
-						type="submit"
-						disabled={!password || !code || disable.isPending}
-						className={secondary}
-					>
-						{t("account.twoStepDisable")}
-					</button>
+					{newApp}
+					<p className="text-sm text-dim">{t("account.twoStepMoveHint")}</p>
+					<div className="flex flex-wrap gap-2">
+						{passwordField}
+						{codeField(current, setCurrent, t("account.twoStepOldCode"))}
+						{codeField(code, setCode, t("account.twoStepNewCode"))}
+					</div>
+					<div className="flex gap-2">
+						<button
+							type="submit"
+							disabled={!password || !current || !code || enable.isPending}
+							className={primary}
+						>
+							{t("account.twoStepMoveConfirm")}
+						</button>
+						<button
+							type="button"
+							onClick={() => {
+								start.reset();
+								enable.reset();
+								setCode("");
+								setCurrent("");
+							}}
+							className={secondary}
+						>
+							{t("common.cancel")}
+						</button>
+					</div>
 				</form>
+			) : enabled ? (
+				<>
+					<form
+						className="mt-3 flex flex-wrap gap-2"
+						onSubmit={(event) => {
+							event.preventDefault();
+							disable.mutate();
+						}}
+					>
+						{passwordField}
+						{codeField(current, setCurrent, t("signin.code"))}
+						<button
+							type="submit"
+							disabled={!password || !current || disable.isPending}
+							className={secondary}
+						>
+							{t("account.twoStepDisable")}
+						</button>
+					</form>
+					<button
+						type="button"
+						onClick={() => {
+							disable.reset();
+							start.mutate();
+						}}
+						disabled={start.isPending}
+						className={`mt-3 ${secondary}`}
+					>
+						{t("account.twoStepMove")}
+					</button>
+				</>
 			) : start.data ? (
 				<form
 					className="mt-3 flex flex-col gap-3"
@@ -776,22 +863,10 @@ function TwoStep({ enabled }: { enabled: boolean }) {
 						enable.mutate();
 					}}
 				>
-					<p className="text-sm">{t("account.twoStepAdd")}</p>
-					<a
-						href={start.data.uri}
-						className="break-all font-mono text-xs text-accent underline"
-					>
-						{start.data.uri}
-					</a>
-					<p className="text-sm">
-						{t("account.twoStepSecret")}{" "}
-						<code className="font-mono text-sm tracking-wider">
-							{start.data.secret.replace(/(.{4})/g, "$1 ").trim()}
-						</code>
-					</p>
+					{newApp}
 					<div className="flex flex-wrap gap-2">
 						{passwordField}
-						{codeField}
+						{codeField(code, setCode, t("signin.code"))}
 						<button
 							type="submit"
 							disabled={!code || !password || enable.isPending}
@@ -914,21 +989,25 @@ function Terms({
 	const roles: UserRole[] = owner ? ["member", "admin", "owner"] : ["member"];
 	return (
 		<div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-			<select
-				value={terms.role}
-				onChange={(event) =>
-					setTerms({ ...terms, role: event.target.value as UserRole })
-				}
-				aria-label={t("users.role")}
-				disabled={!roles.includes(terms.role)}
-				className="rounded-md border border-line bg-bg px-2 py-1.5 text-sm"
-			>
-				{(roles.includes(terms.role) ? roles : [terms.role]).map((role) => (
-					<option key={role} value={role}>
-						{roleText(t, role)}
-					</option>
-				))}
-			</select>
+			{owner ? (
+				<select
+					value={terms.role}
+					onChange={(event) =>
+						setTerms({ ...terms, role: event.target.value as UserRole })
+					}
+					aria-label={t("users.role")}
+					className="rounded-md border border-line bg-bg px-2 py-1.5 text-sm"
+				>
+					{roles.map((role) => (
+						<option key={role} value={role}>
+							{roleText(t, role)}
+						</option>
+					))}
+				</select>
+			) : (
+				// Admins make members only: nothing to choose.
+				<span className="text-dim">{roleText(t, terms.role)}</span>
+			)}
 			{terms.role === "member" && (
 				<>
 					<label className="flex items-center gap-2">

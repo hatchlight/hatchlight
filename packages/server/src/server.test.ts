@@ -1369,3 +1369,63 @@ test("a member uploads one LoRA at a time", async () => {
 	finish();
 	expect((await first).status).toBe(201);
 });
+
+test("two-step sign-in moves to another app with the password and both codes", async () => {
+	const { call, setupOwner } = await serverApp();
+	const owner = await setupOwner();
+	const start = async () =>
+		(await (
+			await call("/api/account/totp", { method: "POST", who: owner })
+		).json()) as { secret: string };
+	const codes = (secret: string) => {
+		const now = Math.floor(Date.now() / 1000);
+		const key = base32Decode(secret) as Uint8Array;
+		return [totp(key, now), totp(key, now + 30)] as const;
+	};
+	const old = await start();
+	const [oldNow, oldNext] = codes(old.secret);
+	await call("/api/account/totp", {
+		method: "PUT",
+		who: owner,
+		body: { secret: old.secret, code: oldNow, password: PASSWORD },
+	});
+	const fresh = await start();
+	const [newNow, newNext] = codes(fresh.secret);
+	const move = (body: Record<string, unknown>) =>
+		call("/api/account/totp", { method: "PUT", who: owner, body });
+	// Without the code of the app in use, it stays where it is.
+	const without = await move({
+		secret: fresh.secret,
+		code: newNow,
+		password: PASSWORD,
+	});
+	expect(await errorCode(without)).toBe("totpRequired");
+	expect(
+		(
+			await move({
+				secret: fresh.secret,
+				code: newNow,
+				password: PASSWORD,
+				current: oldNext,
+			})
+		).status,
+	).toBe(204);
+	const login = (totpCode: string) =>
+		call("/api/login", {
+			method: "POST",
+			body: { username: "owner", password: PASSWORD, totp: totpCode },
+			peer: "198.51.100.8",
+		});
+	// The old app's codes no longer work; the new app's do.
+	expect(
+		await errorCode(
+			await login(
+				totp(
+					base32Decode(old.secret) as Uint8Array,
+					Math.floor(Date.now() / 1000) + 30,
+				),
+			),
+		),
+	).toBe("badTotp");
+	expect((await login(newNext)).status).toBe(200);
+});
