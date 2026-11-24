@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	type ChatModel,
@@ -18,8 +18,10 @@ import {
 	createRuntime,
 	DataDirInUseError,
 	databaseFile,
+	ROUTE_ACCESS,
 	type Runtime,
 	type RuntimeOptions,
+	serverConfig,
 } from "./index";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -301,6 +303,22 @@ test("a second process cannot take over a data directory in use", async () => {
 	expect(created.status).toBe(201);
 });
 
+/** The owner a lock file names, in either of its formats. */
+async function lockPid(path: string): Promise<number> {
+	const text = await Bun.file(path).text();
+	return text.startsWith("{") ? JSON.parse(text).pid : Number(text);
+}
+
+/** A live process that is not this one, for as long as the test runs. */
+function otherProcess(): number {
+	const child = Bun.spawn(["sleep", "60"]);
+	cleanups.push(async () => {
+		child.kill();
+		await child.exited;
+	});
+	return child.pid;
+}
+
 test("a lock left by a dead process is taken over", async () => {
 	const root = await mkdtemp(join(tmpdir(), "hatchlight-lock-"));
 	await Bun.write(join(root, "hatchlight.lock"), "2147483646");
@@ -308,24 +326,77 @@ test("a lock left by a dead process is taken over", async () => {
 		dataDir: root,
 		providers: [new FakeProvider()],
 	});
-	expect(await Bun.file(join(root, "hatchlight.lock")).text()).toBe(
-		String(process.pid),
-	);
+	const lock = JSON.parse(await Bun.file(join(root, "hatchlight.lock")).text());
+	expect(lock).toMatchObject({ pid: process.pid, host: hostname() });
+	expect(typeof lock.startedAt).toBe("string");
 	runtime.close();
 	expect(await Bun.file(join(root, "hatchlight.lock")).exists()).toBe(false);
 	await rm(root, { recursive: true });
 });
 
+test("a lock with this process's own id was left by a crash", async () => {
+	// In a container the server gets the same process id every start.
+	for (const content of [
+		String(process.pid),
+		JSON.stringify({ pid: process.pid, host: "old-container" }),
+	]) {
+		const root = await mkdtemp(join(tmpdir(), "hatchlight-lock-"));
+		cleanups.push(() => rm(root, { recursive: true }));
+		await Bun.write(join(root, "hatchlight.lock"), content);
+		await Bun.write(join(root, `${LEGACY_NAME}.lock`), String(process.pid));
+		const runtime = await createRuntime({
+			dataDir: root,
+			providers: [new FakeProvider()],
+		});
+		runtime.close();
+	}
+});
+
+test("a lock from before this machine last started is taken over", async () => {
+	const root = await mkdtemp(join(tmpdir(), "hatchlight-lock-"));
+	cleanups.push(() => rm(root, { recursive: true }));
+	// Its process id now belongs to something else that runs.
+	const pid = otherProcess();
+	await Bun.write(
+		join(root, "hatchlight.lock"),
+		JSON.stringify({ pid, host: hostname(), bootId: "an earlier start" }),
+	);
+	await Bun.write(join(root, `${LEGACY_NAME}.lock`), String(pid));
+	const started = createRuntime({
+		dataDir: root,
+		providers: [new FakeProvider()],
+	});
+	// Only Linux tells when the machine started.
+	if (await Bun.file("/proc/sys/kernel/random/boot_id").exists()) {
+		(await started).close();
+	} else {
+		await expect(started).rejects.toBeInstanceOf(DataDirInUseError);
+	}
+});
+
+test("a live owner on another machine keeps its lock", async () => {
+	const root = await mkdtemp(join(tmpdir(), "hatchlight-lock-"));
+	cleanups.push(() => rm(root, { recursive: true }));
+	await Bun.write(
+		join(root, "hatchlight.lock"),
+		JSON.stringify({ pid: otherProcess(), host: "elsewhere", bootId: "x" }),
+	);
+	await expect(
+		createRuntime({ dataDir: root, providers: [new FakeProvider()] }),
+	).rejects.toThrow("on elsewhere");
+});
+
 test("a process from before the rename keeps its data directory", async () => {
 	const root = await mkdtemp(join(tmpdir(), "hatchlight-lock-"));
 	cleanups.push(() => rm(root, { recursive: true }));
-	await Bun.write(join(root, `${LEGACY_NAME}.lock`), String(process.pid));
+	const pid = otherProcess();
+	await Bun.write(join(root, `${LEGACY_NAME}.lock`), String(pid));
 	await expect(
 		createRuntime({ dataDir: root, providers: [new FakeProvider()] }),
 	).rejects.toBeInstanceOf(DataDirInUseError);
 	// Its lock is left as it was, and no new one stays behind.
 	expect(await Bun.file(join(root, `${LEGACY_NAME}.lock`)).text()).toBe(
-		String(process.pid),
+		String(pid),
 	);
 	expect(await Bun.file(join(root, "hatchlight.lock")).exists()).toBe(false);
 });
@@ -341,8 +412,10 @@ test("the data directory is locked under both names, and freed under both", asyn
 		providers: [new FakeProvider()],
 	});
 	for (const lock of [join(root, "hatchlight.lock"), legacy]) {
-		expect(await Bun.file(lock).text()).toBe(String(process.pid));
+		expect(await lockPid(lock)).toBe(process.pid);
 	}
+	// Older versions read the legacy lock as a bare process id.
+	expect(await Bun.file(legacy).text()).toBe(String(process.pid));
 	runtime.close();
 	for (const lock of [join(root, "hatchlight.lock"), legacy]) {
 		expect(await Bun.file(lock).exists()).toBe(false);

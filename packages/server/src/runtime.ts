@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { hostname as osHostname } from "node:os";
+import { join, resolve } from "node:path";
 import {
 	appEnv,
 	assistantChoice,
@@ -142,46 +143,141 @@ export class DataDirInUseError extends Error {}
 
 /**
  * Two processes on one data directory would each run the other's jobs, so the
- * directory is claimed with a lock file holding the owner's process id.
+ * directory is claimed with a lock file saying which process owns it.
  */
 function lockDataDir(dataDir: string): () => void {
 	const name = "hatchlight.lock";
-	const path = join(dataDir, name);
-	takeLock(path);
+	const path = resolve(dataDir, name);
+	const replaced = takeLock(path, JSON.stringify(lockOwner()));
 	// A version from before the rename locks the directory under the old
 	// name, and only looks there: both are held, so neither starts beside
-	// the other.
-	const legacy = join(dataDir, legacyName(name));
+	// the other. That file keeps the bare process id older versions read.
+	const legacy = resolve(dataDir, legacyName(name));
 	try {
-		takeLock(legacy);
+		takeLock(legacy, String(process.pid), replaced);
 	} catch (error) {
-		rmSync(path, { force: true });
+		releaseLock(path);
 		throw error;
 	}
 	return () => {
-		rmSync(legacy, { force: true });
-		rmSync(path, { force: true });
+		releaseLock(legacy);
+		releaseLock(path);
 	};
 }
 
-/** Creates the lock file at `path`, unless a live process holds it. */
-function takeLock(path: string): void {
+/** Who holds a lock: older versions wrote only the process id. */
+interface LockOwner {
+	pid: number;
+	/** The machine's name: containers get a new one when recreated. */
+	host?: string;
+	/** Changes each time the machine starts; Linux only. */
+	bootId?: string;
+	startedAt?: string;
+}
+
+/** Lock files this process holds, which its own id cannot tell apart. */
+const heldLocks = new Set<string>();
+
+function lockOwner(): LockOwner {
+	return {
+		pid: process.pid,
+		host: osHostname(),
+		bootId: bootId(),
+		startedAt: new Date().toISOString(),
+	};
+}
+
+function bootId(): string | undefined {
+	try {
+		return (
+			readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() ||
+			undefined
+		);
+	} catch {
+		return undefined;
+	}
+}
+
+function readOwner(text: string): LockOwner {
+	try {
+		const owner = JSON.parse(text) as Partial<LockOwner> | null;
+		if (typeof owner?.pid === "number") {
+			return {
+				pid: owner.pid,
+				host: typeof owner.host === "string" ? owner.host : undefined,
+				bootId: typeof owner.bootId === "string" ? owner.bootId : undefined,
+			};
+		}
+	} catch {
+		// A bare process id, from before.
+	}
+	return { pid: Number(text) };
+}
+
+/**
+ * Whether the owner of a lock is gone. In a container a process gets the
+ * same id every time it starts, so a lock left by a crash would otherwise
+ * look alive for ever; this process's own locks are in `heldLocks`.
+ */
+function isStale(owner: LockOwner, replaced: LockOwner | null): boolean {
+	if (owner.pid === process.pid) return true;
+	// The same machine, started again since.
+	const boot = bootId();
+	if (
+		owner.host === osHostname() &&
+		owner.bootId &&
+		boot &&
+		owner.bootId !== boot
+	) {
+		return true;
+	}
+	// The old-style twin of a lock already found stale.
+	if (replaced && owner.host === undefined && owner.pid === replaced.pid) {
+		return true;
+	}
+	return !isRunning(owner.pid);
+}
+
+/**
+ * Creates the lock file at `path`, unless a live process holds it. Returns
+ * the owner of a stale lock it replaced.
+ */
+function takeLock(
+	path: string,
+	content: string,
+	replaced: LockOwner | null = null,
+): LockOwner | null {
+	if (heldLocks.has(path)) {
+		throw new DataDirInUseError(
+			`Hatchlight is already running on this data directory (process ${process.pid})`,
+		);
+	}
+	let stale: LockOwner | null = null;
 	for (let attempt = 0; attempt < 2; attempt++) {
 		try {
-			writeFileSync(path, String(process.pid), { flag: "wx" });
-			return;
+			writeFileSync(path, content, { flag: "wx" });
+			heldLocks.add(path);
+			return stale;
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-			const owner = Number(readFileSync(path, "utf8"));
-			if (isRunning(owner)) {
+			const owner = readOwner(readFileSync(path, "utf8"));
+			if (!isStale(owner, replaced)) {
+				const where =
+					owner.host && owner.host !== osHostname() ? ` on ${owner.host}` : "";
 				throw new DataDirInUseError(
-					`Hatchlight is already running on this data directory (process ${owner})`,
+					`Hatchlight is already running on this data directory (process ${owner.pid}${where})`,
 				);
 			}
+			stale = owner;
 			rmSync(path, { force: true }); // left behind by a process that died
 		}
 	}
 	throw new DataDirInUseError("Could not lock the data directory");
+}
+
+function releaseLock(path: string): void {
+	heldLocks.delete(path);
+	rmSync(path, { force: true });
 }
 
 function isRunning(pid: number): boolean {
