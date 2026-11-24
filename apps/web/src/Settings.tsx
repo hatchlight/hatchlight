@@ -60,6 +60,7 @@ function ProviderRow({
 	editable: boolean;
 	scope?: KeyScope;
 }) {
+	const can = useCan();
 	const { t, explain } = useI18n();
 	const client = useQueryClient();
 	const [key, setKey] = useState("");
@@ -94,15 +95,22 @@ function ProviderRow({
 		<li className={PANEL}>
 			<div className="flex items-baseline justify-between gap-4">
 				<h3 className="font-medium">{provider.name}</h3>
-				<span
-					className={`font-mono text-xs ${hasKey ? "text-good" : "text-dim"}`}
-				>
-					{hasKey
-						? t("settings.keyConfigured")
-						: provider.requiresKey
-							? t("settings.noKey")
-							: t("settings.noKeyNeeded")}
-				</span>
+				{/* The server's keys are no use to someone who may not spend. */}
+				{scope === "server" && !can.paid ? (
+					<span className="font-mono text-xs text-dim">
+						{t("settings.notForYou")}
+					</span>
+				) : (
+					<span
+						className={`font-mono text-xs ${hasKey ? "text-good" : "text-dim"}`}
+					>
+						{hasKey
+							? t("settings.keyConfigured")
+							: provider.requiresKey
+								? t("settings.noKey")
+								: t("settings.noKeyNeeded")}
+					</span>
+				)}
 			</div>
 			{provider.requiresKey && editable && (
 				<form
@@ -751,14 +759,16 @@ export function Settings() {
 									</p>
 								)}
 								<ul className="grid gap-3 md:grid-cols-2">
-									{providers.data?.map((provider) => (
-										<ProviderRow
-											key={provider.id}
-											provider={provider}
-											editable={can.owner}
-											scope="server"
-										/>
-									))}
+									{providers.data
+										?.filter((provider) => provider.requiresKey)
+										.map((provider) => (
+											<ProviderRow
+												key={provider.id}
+												provider={provider}
+												editable={can.owner}
+												scope="server"
+											/>
+										))}
 								</ul>
 							</CardContent>
 						</Card>

@@ -91,6 +91,15 @@ export interface ServerInfo {
 }
 
 let signedOut: (() => void) | null = null;
+let roomChanged: (() => void) | null = null;
+
+/** Calls `handler` when the server says a person's room is full. */
+export function whenRoomFull(handler: () => void): () => void {
+	roomChanged = handler;
+	return () => {
+		if (roomChanged === handler) roomChanged = null;
+	};
+}
 
 /** Calls `handler` when the server says the session is gone. */
 export function whenSignedOut(handler: () => void): () => void {
@@ -111,6 +120,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 		) {
 			signedOut?.();
 		}
+		// The room is full: the account's usage is out of date.
+		if (body?.code === "storageFull") roomChanged?.();
 		throw new ApiError(
 			body?.error ?? `Request failed (HTTP ${response.status})`,
 			typeof body?.code === "string" ? body.code : undefined,

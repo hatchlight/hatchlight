@@ -26,7 +26,13 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import { ApiError, api, type InviteTerms, whenSignedOut } from "./api";
+import {
+	ApiError,
+	api,
+	type InviteTerms,
+	whenRoomFull,
+	whenSignedOut,
+} from "./api";
 import { type I18n, useI18n } from "./i18n";
 import { Bar, ConfirmButton, LABEL, SECTION } from "./Training";
 
@@ -130,6 +136,13 @@ function ServerGate({
 	useEffect(
 		() =>
 			whenSignedOut(() => {
+				void client.invalidateQueries({ queryKey: ["account"] });
+			}),
+		[client],
+	);
+	useEffect(
+		() =>
+			whenRoomFull(() => {
 				void client.invalidateQueries({ queryKey: ["account"] });
 			}),
 		[client],
@@ -1401,7 +1414,7 @@ function People({ me }: { me: AccountView }) {
 }
 
 function Person({ user, me }: { user: AccountView; me: AccountView }) {
-	const { t, date } = useI18n();
+	const { t, date, bytes } = useI18n();
 	const client = useQueryClient();
 	const [copied, setCopied] = useState(false);
 	// Owners manage anyone; admins only members other than themselves.
@@ -1448,6 +1461,14 @@ function Person({ user, me }: { user: AccountView; me: AccountView }) {
 					</Badge>
 				)}
 			</div>
+			<p className="text-xs text-dim">
+				{user.storage.quotaBytes == null
+					? t("users.storage", { used: bytes(user.storage.usedBytes) })
+					: t("users.storageOf", {
+							used: bytes(user.storage.usedBytes),
+							quota: bytes(user.storage.quotaBytes),
+						})}
+			</p>
 			{user.lastReset && (
 				<p className="text-xs text-dim">
 					{t("users.lastReset", {

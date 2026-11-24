@@ -597,7 +597,7 @@ export function Chat({
 							setReferences={setReferences}
 							busy={create.isPending}
 							error={create.error ? i18n.explain(create.error) : null}
-							onSubmit={(draft) => create.mutate(draft)}
+							onSubmit={(draft) => create.mutateAsync(draft)}
 							inspector={{
 								content: (
 									<Inspector

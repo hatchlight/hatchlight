@@ -151,6 +151,10 @@ export function useLiveJobs(): void {
 			)
 				progress.delete(event.job.id);
 			order = order.then(() => applyJob(client, event.job));
+			// What it made now takes room: the account says how much.
+			if (event.job.status === "succeeded") {
+				void client.invalidateQueries({ queryKey: ["account"] });
+			}
 			notify();
 		});
 		source.addEventListener("assistant.changed", (message) => {
