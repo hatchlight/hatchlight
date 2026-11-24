@@ -9,7 +9,7 @@ name: hatchlight
 
 services:
   hatchlight:
-    # HATCHLIGHT_IMAGE pins a version, such as ghcr.io/hatchlight/hatchlight:0.3.0.
+    # HATCHLIGHT_IMAGE pins a version: ghcr.io/hatchlight/hatchlight:<version>.
     image: ${HATCHLIGHT_IMAGE:-ghcr.io/hatchlight/hatchlight:latest}
     container_name: hatchlight
     restart: unless-stopped

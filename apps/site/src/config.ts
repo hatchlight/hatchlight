@@ -7,8 +7,12 @@ export const LINKS: {
 	site: string | null;
 	repository: string | null;
 	releases: string | null;
+	/** The guide to running Hatchlight as a server. */
+	selfHosting: string | null;
 } = {
 	site: "https://hatchlight.app/",
 	repository: "https://github.com/hatchlight/hatchlight",
 	releases: "https://github.com/hatchlight/hatchlight/releases/latest",
+	selfHosting:
+		"https://github.com/hatchlight/hatchlight/blob/main/docs/self-hosting.md",
 };

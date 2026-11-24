@@ -11,6 +11,7 @@ This guide covers the Docker image: `ghcr.io/hatchlight/hatchlight`.
 - [Quick start](#quick-start)
 - [First run](#first-run)
 - [Adding people](#adding-people)
+- [Agents](#agents)
 - [Reaching it: LAN, Tailscale, a domain](#reaching-it)
 - [Settings](#settings)
 - [Backups and updates](#backups-and-updates)
@@ -39,10 +40,15 @@ usual.
 With Docker Compose, using [`deploy/compose.yaml`](../deploy/compose.yaml):
 
 ```sh
-curl -O https://raw.githubusercontent.com/hatchlight/hatchlight/main/deploy/compose.yaml
-HATCHLIGHT_PUBLIC_URL=http://192.168.1.20:4096 docker compose up -d
-docker compose logs hatchlight
+git clone https://github.com/hatchlight/hatchlight.git && cd hatchlight
+docker build -t ghcr.io/hatchlight/hatchlight .
+HATCHLIGHT_PUBLIC_URL=http://192.168.1.20:4096 docker compose -f deploy/compose.yaml up -d
 ```
+
+The second line builds the image, which takes a few minutes. The image is
+published to `ghcr.io/hatchlight/hatchlight` from the next release on; then
+that line can be skipped, and Compose downloads the image instead.
+`docker compose -f deploy/compose.yaml logs hatchlight` shows the setup code.
 
 Or with `docker run`:
 
@@ -58,7 +64,7 @@ docker run -d --name hatchlight --gpus all -p 192.168.1.20:4096:4096 \
 In the Compose files, `HATCHLIGHT_PORT` changes the port on the host (4096
 by default), `HATCHLIGHT_BIND` the address it is published on, and
 `HATCHLIGHT_IMAGE` pins a version, such as
-`ghcr.io/hatchlight/hatchlight:0.3.0`.
+`ghcr.io/hatchlight/hatchlight:<version>`.
 
 **Docker's published ports go around the host's firewall:** Docker adds its
 own rules ahead of ufw and firewalld, so a port published on every address
@@ -450,6 +456,12 @@ the person running it. In short:
   and come from its own page, which stops other websites and DNS rebinding
   from acting for a signed-in person. `X-Forwarded-*` headers count only from
   trusted proxies.
+- **The data on disk.** The data folder and the database are readable by
+  the server's user only, so other users and containers on the host cannot
+  read them through a shared folder.
+- **The container.** The app runs as an unprivileged user, with no Linux
+  capabilities and `no-new-privileges`; only the entrypoint starts as root,
+  to hand the volumes to `PUID:PGID`.
 - **Downloads.** Models and engines are checked against pinned SHA-256
   hashes before they are used.
 
@@ -460,6 +472,13 @@ the person running it. In short:
   key. `docker exec` can reset any password.
 - **Traffic on a network without HTTPS.** On plain `http://`, passwords and
   pictures can be read on the network. Use Tailscale or a proxy with HTTPS.
+- **A proxy set up wrong.** `HATCHLIGHT_TRUSTED_PROXIES` trusts what those
+  addresses say about the client and the scheme. Trusting a proxy that passes
+  on headers from anyone, or a whole network others share, lets them pose as
+  someone else's address or as HTTPS.
+- **A lost secret.** Without `secret.key` (or the `HATCHLIGHT_SECRET_FILE`),
+  saved API keys cannot be read back. Keep it in your backups; anyone who has
+  it and the data can read them.
 - **The internet at large.** It has no defense against heavy traffic or
   denial of service. Put it behind Tailscale, or a proxy or Cloudflare with
   their own protections, rather than on an open port.

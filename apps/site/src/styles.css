@@ -640,6 +640,117 @@ h2 {
 	font: 500 14px var(--mono);
 }
 
+/* ---------- server ---------- */
+.server {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+	gap: 48px;
+	align-items: start;
+}
+
+@media (max-width: 860px) {
+	.server {
+		grid-template-columns: 1fr;
+	}
+}
+
+.server-points {
+	list-style: none;
+	margin: 30px 0 0;
+	padding: 0;
+	display: grid;
+	gap: 22px;
+}
+
+.server-points h3 {
+	margin: 0 0 6px;
+	font: 700 18px var(--display);
+	letter-spacing: -0.02em;
+}
+
+.server-points p {
+	margin: 0;
+	max-width: 52ch;
+	color: var(--dim);
+	line-height: 1.55;
+	font-size: 15px;
+}
+
+.server-start {
+	display: grid;
+	/* The commands scroll inside their box rather than widen the page. */
+	grid-template-columns: minmax(0, 1fr);
+	min-width: 0;
+	gap: 18px;
+	justify-items: start;
+}
+
+.terminal {
+	margin: 0;
+	width: 100%;
+	background: var(--panel);
+	border: 1px solid var(--line-strong);
+	border-radius: 18px;
+	padding: 18px 20px 20px;
+	box-shadow: 0 30px 80px rgb(0 0 0 / 0.5);
+}
+
+.terminal figcaption {
+	font: 500 12px var(--mono);
+	color: var(--dim);
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+}
+
+.terminal pre {
+	margin: 14px 0 0;
+	/* Long commands wrap under themselves instead of scrolling. */
+	white-space: pre-wrap;
+	word-break: break-all;
+	font: 400 13px / 1.7 var(--mono);
+	color: var(--fg);
+}
+
+.terminal code span {
+	display: block;
+	padding-left: 2ch;
+	text-indent: -2ch;
+}
+
+.terminal code span + span {
+	margin-top: 6px;
+}
+
+/* Not part of what is copied: only the commands are. */
+.terminal code span::before {
+	content: "$ ";
+	color: var(--pink);
+}
+
+.terminal p {
+	margin: 14px 0 0;
+	color: var(--dim);
+	font-size: 14px;
+	line-height: 1.5;
+}
+
+.needs {
+	margin: 0;
+	color: var(--dim);
+	font-size: 15px;
+	line-height: 1.55;
+}
+
+.needs a {
+	color: var(--fg);
+	text-underline-offset: 3px;
+}
+
+.needs b {
+	color: var(--fg);
+	font-weight: 600;
+}
+
 /* ---------- end ---------- */
 .end {
 	text-align: center;
