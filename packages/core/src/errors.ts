@@ -46,6 +46,7 @@ export const ERROR_CODES = [
 	"lastOwner",
 	"localAssistantUnavailable",
 	"loraMissing",
+	"loraQuotaReached",
 	"loraTooLarge",
 	"loraUnknownBase",
 	"loraUnreadable",

@@ -196,6 +196,7 @@
 	"errors.lastOwner": "The server needs at least one owner who can sign in.",
 	"errors.localAssistantUnavailable": "The assistant on this computer runs in the Windows app. Here, choose a service with your key in Settings.",
 	"errors.loraMissing": "That LoRA is no longer here. Add it again in Models.",
+	"errors.loraQuotaReached": "You added as many LoRAs as this server allows each person: {files} files, {maxBytes} in all. Delete one, or ask an admin.",
 	"errors.loraTooLarge": "This file is too large to be a LoRA.",
 	"errors.loraUnknownBase": "This file does not look like a LoRA for a model Hatchlight knows (SD 1.5, SDXL, FLUX, Wan or Z-Image).",
 	"errors.loraUnreadable": "This file is not a LoRA. Choose a .safetensors file.",

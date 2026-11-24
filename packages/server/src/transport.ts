@@ -23,12 +23,25 @@ export interface ServerTransport {
 	trustedProxies: Cidr[];
 }
 
+/** How much a person who is not an admin may add, so one cannot fill the disk. */
+export interface LoraQuota {
+	files: number;
+	bytes: number;
+}
+
+export const DEFAULT_LORA_QUOTA: LoraQuota = {
+	files: 20,
+	bytes: 10 * 1024 ** 3,
+};
+
 export interface ServerConfig {
 	mode: ServerMode;
 	/** The address to listen on. */
 	host: string;
 	/** Present in server mode only. */
 	transport: ServerTransport | null;
+	/** LoRAs each member may add; server mode only. */
+	loraQuota: LoraQuota | null;
 }
 
 /** A setting that cannot be used; the message says which and why. */
@@ -59,7 +72,7 @@ export function serverConfig(
 				`Personal mode listens only on this computer (127.0.0.1, ::1 or localhost), not on ${host}. To reach Hatchlight from other machines, run it with --mode server, which has accounts`,
 			);
 		}
-		return { mode, host, transport: null };
+		return { mode, host, transport: null, loraQuota: null };
 	}
 
 	const publicUrl = appEnv(env, "PUBLIC_URL");
@@ -74,10 +87,27 @@ export function serverConfig(
 		...list(appEnv(env, "ALLOWED_HOSTS")).map(parseHost),
 	];
 	const trustedProxies = list(appEnv(env, "TRUSTED_PROXIES")).map(parseCidr);
+	const count = (name: string, fallback: number) => {
+		const value = appEnv(env, name);
+		if (value === undefined) return fallback;
+		const number = Number(value);
+		if (!(Number.isFinite(number) && number >= 0)) {
+			throw new ConfigError(`HATCHLIGHT_${name} must be a number, 0 or more`);
+		}
+		return number;
+	};
+	const loraQuota = {
+		files: Math.floor(count("LORA_FILES_PER_PERSON", DEFAULT_LORA_QUOTA.files)),
+		bytes: Math.floor(
+			count("LORA_GB_PER_PERSON", DEFAULT_LORA_QUOTA.bytes / 1024 ** 3) *
+				1024 ** 3,
+		),
+	};
 	return {
 		mode,
 		host,
 		transport: { publicOrigin, allowedHosts, trustedProxies },
+		loraQuota,
 	};
 }
 

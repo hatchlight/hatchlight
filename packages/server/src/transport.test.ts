@@ -18,6 +18,7 @@ test("personal mode is the default and keeps to loopback", () => {
 		mode: "personal",
 		host: "127.0.0.1",
 		transport: null,
+		loraQuota: null,
 	});
 	// The network settings mean nothing to a personal install.
 	expect(
@@ -48,6 +49,7 @@ test("server mode listens everywhere and needs its public address", () => {
 		HATCHLIGHT_PUBLIC_URL: "https://Hatchlight.Example.com/",
 	});
 	expect(config.host).toBe("0.0.0.0");
+	expect(config.loraQuota).toEqual({ files: 20, bytes: 10 * 1024 ** 3 });
 	expect(config.transport).toEqual({
 		publicOrigin: "https://hatchlight.example.com",
 		allowedHosts: ["hatchlight.example.com"],

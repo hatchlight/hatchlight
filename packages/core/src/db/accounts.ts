@@ -287,6 +287,29 @@ export class SqliteAccounts {
 		});
 	}
 
+	recordLoraUpload(row: typeof schema.loraUploads.$inferInsert): void {
+		this.db
+			.insert(schema.loraUploads)
+			.values(row)
+			.onConflictDoUpdate({ target: schema.loraUploads.loraId, set: row })
+			.run();
+	}
+
+	loraUploadsOf(userId: string): (typeof schema.loraUploads.$inferSelect)[] {
+		return this.db
+			.select()
+			.from(schema.loraUploads)
+			.where(eq(schema.loraUploads.userId, userId))
+			.all();
+	}
+
+	forgetLoraUpload(loraId: string): void {
+		this.db
+			.delete(schema.loraUploads)
+			.where(eq(schema.loraUploads.loraId, loraId))
+			.run();
+	}
+
 	/** What a person spent on paid services since `since`, in dollars. */
 	spentSince(userId: string, since: number): number {
 		return (

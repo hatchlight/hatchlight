@@ -660,6 +660,37 @@ export class AccountService {
 		return token;
 	}
 
+	/** Writes down who added a LoRA, for their quota. */
+	recordLoraUpload(userId: string, loraId: string, sizeBytes: number): void {
+		this.repo.recordLoraUpload({
+			loraId,
+			userId,
+			sizeBytes,
+			createdAt: this.now(),
+		});
+	}
+
+	/**
+	 * The LoRAs a person added that are still there (`existing`), and their
+	 * size in all.
+	 */
+	loraUsage(
+		userId: string,
+		existing: Set<string>,
+	): { files: number; bytes: number } {
+		const mine = this.repo
+			.loraUploadsOf(userId)
+			.filter((upload) => existing.has(upload.loraId));
+		return {
+			files: mine.length,
+			bytes: mine.reduce((sum, upload) => sum + upload.sizeBytes, 0),
+		};
+	}
+
+	forgetLoraUpload(loraId: string): void {
+		this.repo.forgetLoraUpload(loraId);
+	}
+
 	/** What a person spent on paid models this calendar month (UTC). */
 	spentThisMonth(userId: string): number {
 		const now = new Date(this.now());

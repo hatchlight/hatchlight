@@ -70,8 +70,10 @@ Options for serve:
   --port <n>       Port to listen on (default 4096; 0 picks a free one)
   --mode <m>       personal: one person on this computer (default)
                    server: several people over the network; needs
-                   HATCHLIGHT_PUBLIC_URL, and reads HATCHLIGHT_ALLOWED_HOSTS
-                   and HATCHLIGHT_TRUSTED_PROXIES
+                   HATCHLIGHT_PUBLIC_URL, and reads HATCHLIGHT_ALLOWED_HOSTS,
+                   HATCHLIGHT_TRUSTED_PROXIES, and the LoRAs each member
+                   may add: HATCHLIGHT_LORA_FILES_PER_PERSON (default 20)
+                   and HATCHLIGHT_LORA_GB_PER_PERSON (default 10)
   --host <a>       Address to listen on (default 127.0.0.1, or 0.0.0.0 in
                    server mode)
   --data-dir <p>   Where sessions, images and keys are stored
@@ -166,6 +168,7 @@ const app = createApp({
 	...runtime,
 	allowedOrigins: values.dev ? ["http://localhost:5173"] : [],
 	server: server ?? undefined,
+	loraQuota: config.loraQuota ?? undefined,
 	agents: new Agents(() =>
 		agentsSetup({ dataDir: values["data-dir"], resources }),
 	),

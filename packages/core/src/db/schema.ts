@@ -222,3 +222,15 @@ export const passwordResets = sqliteTable("password_resets", {
 	expiresAt: integer("expires_at").notNull(),
 	usedAt: integer("used_at"),
 });
+
+/** Who added which LoRA on a server, to hold each person to a quota. */
+export const loraUploads = sqliteTable(
+	"lora_uploads",
+	{
+		loraId: text("lora_id").primaryKey(),
+		userId: text("user_id").notNull(),
+		sizeBytes: integer("size_bytes").notNull(),
+		createdAt: integer("created_at").notNull(),
+	},
+	(t) => [index("lora_uploads_user").on(t.userId)],
+);

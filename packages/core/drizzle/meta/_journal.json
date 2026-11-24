@@ -43,6 +43,13 @@
 			"when": 1795485886535,
 			"tag": "0005_account_hardening",
 			"breakpoints": true
+		},
+		{
+			"idx": 6,
+			"version": "6",
+			"when": 1795486156540,
+			"tag": "0006_lora_uploads",
+			"breakpoints": true
 		}
 	]
 }

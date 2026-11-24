@@ -11,6 +11,7 @@ import {
 	type TrainingView,
 	totp,
 } from "@hatchlight/core";
+import { safetensors } from "@hatchlight/core/testing";
 import {
 	type Access,
 	type Agents,
@@ -87,7 +88,7 @@ async function serverApp(
 		await rm(root, { recursive: true });
 	});
 	await runtime.start();
-	const { transport } = serverConfig(
+	const { transport, loraQuota } = serverConfig(
 		{ mode: "server" },
 		{
 			HATCHLIGHT_PUBLIC_URL: "http://nas.example",
@@ -100,6 +101,7 @@ async function serverApp(
 		...runtime,
 		trainer: options.trainer ?? runtime.trainer,
 		server: transport ?? undefined,
+		loraQuota: loraQuota ?? undefined,
 		agents: { status: async () => ({}) } as unknown as Agents,
 	});
 
@@ -1171,4 +1173,31 @@ test("language services on the server's keys count toward the monthly limit", as
 	const refused = await improve();
 	expect(refused.status).toBeGreaterThanOrEqual(400);
 	expect(calls).toBe(3);
+});
+
+test("members may add only so many LoRAs; admins are not held to it", async () => {
+	const { call, setupOwner, invite } = await serverApp({
+		env: { HATCHLIGHT_LORA_FILES_PER_PERSON: "1" },
+	});
+	const owner = await setupOwner();
+	const member = await invite(owner, { canTrain: true });
+	const add = (who: Who, name: string, title: string) =>
+		call(`/api/loras?${new URLSearchParams({ name })}`, {
+			method: "POST",
+			who,
+			headers: { "content-type": "application/octet-stream" },
+			body: safetensors(["lora_unet_input_blocks_4_1_proj_in.alpha"], {
+				"modelspec.title": title,
+			}),
+		});
+	const first = await add(member, "one.safetensors", "One");
+	expect(first.status).toBe(201);
+	const second = await add(member, "two.safetensors", "Two");
+	expect(second.status).toBe(403);
+	expect(await errorCode(second)).toBe("loraQuotaReached");
+	expect((await add(owner, "three.safetensors", "Three")).status).toBe(201);
+	// Deleting one makes room again.
+	const { id } = (await first.json()) as { id: string };
+	await call(`/api/loras/${id}`, { method: "DELETE", who: owner });
+	expect((await add(member, "two.safetensors", "Two")).status).toBe(201);
 });

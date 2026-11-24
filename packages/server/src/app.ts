@@ -36,8 +36,10 @@ import type { Agents } from "./agents";
 import { requireAccess } from "./auth";
 import type { AssistantBrain, ImproveRequest } from "./runtime";
 import {
+	DEFAULT_LORA_QUOTA,
 	hostName,
 	isLoopback,
+	type LoraQuota,
 	requestOrigin,
 	type ServerTransport,
 } from "./transport";
@@ -58,6 +60,8 @@ export interface AppOptions {
 	 * computer.
 	 */
 	server?: ServerTransport;
+	/** LoRAs each member may add, on a server. Defaults to 20 files, 10 GB. */
+	loraQuota?: LoraQuota;
 	/** The people of a server, who sign in; needed in server mode. */
 	accounts?: AccountService;
 	/** Why a person may not spend on paid models now, or null; servers only. */
@@ -673,11 +677,51 @@ export function createApp(options: AppOptions): Hono {
 			}
 			const body = c.req.raw.body;
 			if (!body) throw new ValidationError("Empty upload", "loraUnreadable");
-			return c.json(await models.loras.add(body, name), 201);
+			// On a server, members may add only so many: the disk is shared.
+			const uploader = accounts ? c.get("viewer").user : null;
+			const quota = options.loraQuota ?? DEFAULT_LORA_QUOTA;
+			const limited =
+				uploader && accounts && !["owner", "admin"].includes(uploader.role);
+			const usage = async () =>
+				accounts && uploader
+					? accounts.loraUsage(
+							uploader.id,
+							new Set((await models.loras.list()).map((l) => l.id)),
+						)
+					: { files: 0, bytes: 0 };
+			const over = () =>
+				new AccessError(
+					"You added as many LoRAs as this server allows",
+					"loraQuotaReached",
+					403,
+					{ files: quota.files, maxBytes: quota.bytes },
+				);
+			if (limited) {
+				const used = await usage();
+				const incoming = Number(c.req.header("content-length") ?? 0) || 0;
+				if (used.files >= quota.files || used.bytes + incoming > quota.bytes) {
+					throw over();
+				}
+			}
+			const lora = await models.loras.add(body, name);
+			if (accounts && uploader) {
+				accounts.recordLoraUpload(uploader.id, lora.id, lora.size);
+				// Sent without its size: checked once it is here.
+				if (limited) {
+					const used = await usage();
+					if (used.files > quota.files || used.bytes > quota.bytes) {
+						await models.loras.remove(lora.id);
+						accounts.forgetLoraUpload(lora.id);
+						throw over();
+					}
+				}
+			}
+			return c.json(lora, 201);
 		},
 	);
 	app.delete("/api/loras/:id", async (c) => {
 		await models.loras.remove(c.req.param("id"));
+		accounts?.forgetLoraUpload(c.req.param("id"));
 		return c.body(null, 204);
 	});
 
