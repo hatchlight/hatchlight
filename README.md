@@ -16,8 +16,8 @@ own keys. Open source, no account, no telemetry.
 - **Your own keys, no middleman.** Cloud models are called straight from your
   computer with your key.
 
-| SDXL Turbo                                   | Stable Diffusion XL                    | FLUX.1 schnell                                 | Z-Image Turbo                                   |
-| -------------------------------------------- | -------------------------------------- | ---------------------------------------------- | ----------------------------------------------- |
+| SDXL Turbo                                                    | Stable Diffusion XL                                              | FLUX.1 schnell                                                      | Z-Image Turbo                                                       |
+| ------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | ![Fox by SDXL Turbo](apps/web/public/samples/sdxl-turbo.webp) | ![Fox by Stable Diffusion XL](apps/web/public/samples/sdxl.webp) | ![Fox by FLUX.1 schnell](apps/web/public/samples/flux-schnell.webp) | ![Fox by Z-Image Turbo](apps/web/public/samples/z-image-turbo.webp) |
 
 _One prompt, four models, one RTX 4070 SUPER: "a red fox curled up in fresh
