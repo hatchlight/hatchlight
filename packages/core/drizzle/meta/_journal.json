@@ -71,6 +71,13 @@
 			"when": 1795493553370,
 			"tag": "0009_asset_usage",
 			"breakpoints": true
+		},
+		{
+			"idx": 10,
+			"version": "6",
+			"when": 1795539256759,
+			"tag": "0010_agent_tokens",
+			"breakpoints": true
 		}
 	]
 }

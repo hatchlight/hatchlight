@@ -9,7 +9,7 @@ import {
 import type { Context, MiddlewareHandler } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { matchedRoutes } from "hono/route";
-import { type Access, routeAccess } from "./access";
+import { type Access, routeAccess, routeScope } from "./access";
 
 /** Who is asking, once a server knows. */
 export interface Viewer {
@@ -110,15 +110,20 @@ export function allows(access: Access, user: UserRow): boolean {
 	}
 }
 
-/** The access the route a request reached needs. */
-function accessOf(c: Context): Access {
+/** The route a request reached, as the access registry names it. */
+function routeOf(c: Context): { method: string; path: string } | null {
 	const route = matchedRoutes(c).find(
 		(r) => r.method !== "ALL" && r.path.startsWith("/api/"),
 	);
+	const method = c.req.method === "HEAD" ? "GET" : c.req.method;
+	return route ? { method, path: route.path } : null;
+}
+
+/** The access the route a request reached needs. */
+function accessOf(c: Context): Access {
+	const route = routeOf(c);
 	// Nothing answers here: say so only to those signed in.
-	return route
-		? routeAccess(c.req.method === "HEAD" ? "GET" : c.req.method, route.path)
-		: "member";
+	return route ? routeAccess(route.method, route.path) : "member";
 }
 
 /**
@@ -134,11 +139,23 @@ export function requireAccess(accounts: AccountService): MiddlewareHandler {
 		if (!viewer) {
 			throw new AccessError("Sign in to go on", "signInRequired", 401);
 		}
-		if (
-			viewer.apiToken &&
-			(access === "account" || access === "admin" || access === "owner")
-		) {
-			throw new AccessError("Tokens cannot do this", "forbidden", 403);
+		if (viewer.apiToken) {
+			if (access === "account" || access === "admin" || access === "owner") {
+				throw new AccessError("Tokens cannot do this", "forbidden", 403);
+			}
+			// Only what the token was made for.
+			const route = routeOf(c);
+			const scope = route ? routeScope(route.method, route.path) : "read";
+			if (!scope || !viewer.apiToken.scopes.includes(scope)) {
+				throw new AccessError(
+					scope
+						? `This API token needs the ${scope} scope`
+						: "API tokens cannot do this",
+					"tokenScope",
+					403,
+					{ scope: scope ?? "" },
+				);
+			}
 		}
 		if (viewer.user.mustChangePassword && access !== "account") {
 			throw new AccessError(

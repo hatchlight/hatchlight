@@ -258,6 +258,10 @@
 	"errors.sessionNotFound": "Essa sessão não existe mais.",
 	"errors.signInRequired": "Entre para continuar.",
 	"errors.storageFull": "Suas imagens ocupam todo o espaço que você tem neste servidor ({maxBytes}). As imagens em andamento terminam; peça mais espaço a um admin.",
+	"errors.tokenLimitReached": "Este token de API chegou ao limite de gastos. Crie outro, ou peça um com limite maior.",
+	"errors.tokenNotFound": "Esse token de API não existe mais.",
+	"errors.tokenNotPaid": "Este token de API não pode usar modelos pagos. Crie um com a permissão de pagos.",
+	"errors.tokenScope": "Este token de API não pode fazer isso: ele precisa da permissão {scope}.",
 	"errors.tooManyAttempts": "Tentativas demais. Espere {seconds} segundos e tente de novo.",
 	"errors.tooManyLoras": "Dá para usar no máximo {max} LoRAs de uma vez.",
 	"errors.tooManyReferences": {

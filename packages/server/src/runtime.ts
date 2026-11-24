@@ -82,8 +82,11 @@ export interface Runtime {
 	keysLost(user: { userId: string; owner: boolean }): boolean;
 	/** The person saw that their keys were lost. */
 	dismissKeysLost(userId: string): void;
-	/** Why a person may not spend on paid models now; servers only. */
-	paidRefusal?: (userId: string, source: KeySource) => PaidRefusal | null;
+	/**
+	 * Why a person, and the API token they ask with, may not spend on paid
+	 * models now; servers only.
+	 */
+	paidRefusal?: (who: UserContext, source: KeySource) => PaidRefusal | null;
 	engine: JobEngine;
 	models: LocalModelStore;
 	/** Trains LoRAs on this computer. */
@@ -663,12 +666,27 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	// On a server, spending is for those allowed; on the server's keys, up
 	// to their monthly limit. Their own keys are their own money.
 	const paidRefusal = (
-		userId: string,
+		{ userId, tokenId }: UserContext,
 		source: KeySource,
 	): PaidRefusal | null => {
 		const user = accounts.getUser(userId);
 		if (!user || user.disabledAt != null || !mayUsePaid(user)) {
 			return "paidNotAllowed";
+		}
+		// Asked with an API token: it must be allowed paid models, still
+		// valid (a revoked one's jobs spend no more), and within its limit,
+		// whoever's key pays.
+		if (tokenId) {
+			const token = accounts.liveToken(tokenId);
+			if (!token || token.userId !== userId || !token.scopes.includes("paid")) {
+				return "tokenNotPaid";
+			}
+			if (
+				token.spendLimitUsd != null &&
+				accounts.spentByToken(tokenId) >= token.spendLimitUsd
+			) {
+				return "tokenLimitReached";
+			}
 		}
 		return source === "server" &&
 			user.monthlyLimitUsd != null &&
@@ -678,7 +696,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	};
 	const refusePaid = options.server ? paidRefusal : undefined;
 	const allowedToPay = (userId: string) =>
-		refusePaid?.(userId, "personal") !== "paidNotAllowed";
+		refusePaid?.({ userId }, "personal") !== "paidNotAllowed";
 	const keys = options.server
 		? new SharedKeyStore(fileKeys, allowedToPay)
 		: fileKeys;
@@ -724,7 +742,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		const found: FoundKey | undefined =
 			(await keys.find(ctx, service)) ??
 			(envKey ? { key: envKey, source: "server" } : undefined);
-		if (!found || refusePaid?.(ctx.userId, found.source)) return undefined;
+		if (!found || refusePaid?.(ctx, found.source)) return undefined;
 		return found;
 	};
 	/**
@@ -734,17 +752,18 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	 * one costs.
 	 */
 	const metered = async <T>(
-		userId: string,
+		who: UserContext,
 		source: KeySource,
 		call: () => Promise<T>,
 	) => {
 		if (!refusePaid) return call();
-		const refusal = refusePaid(userId, source);
+		const refusal = refusePaid(who, source);
 		if (refusal) throw paidError(refusal);
 		const result = await call();
 		await repo.addSpending({
 			id: newId("spd"),
-			userId,
+			userId: who.userId,
+			tokenId: who.tokenId ?? null,
 			kind: "language",
 			keySource: source,
 			jobId: null,
@@ -768,17 +787,14 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		const model = cloud;
 		return {
 			toEnglish: (prompt, signal) =>
-				metered(ctx.userId, found.source, () =>
-					model.toEnglish(prompt, signal),
-				),
+				metered(ctx, found.source, () => model.toEnglish(prompt, signal)),
 			reply: (instructions, text, signal, replyOptions) =>
-				metered(ctx.userId, found.source, () =>
+				metered(ctx, found.source, () =>
 					model.reply(instructions, text, signal, replyOptions),
 				),
 		};
 	};
-	const translatorFor = async (userId: string) => {
-		const ctx = { userId };
+	const translatorFor = async (ctx: UserContext) => {
 		const { translateWith } = await settings.get(ctx);
 		if (translateWith === "off") return null;
 		if (translateWith === "local") return translatorReady ? translator : null;
@@ -826,7 +842,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		return {
 			vision: model.vision,
 			chat: (instructions, messages, tools, signal) =>
-				metered(ctx.userId, found.source, () =>
+				metered(ctx, found.source, () =>
 					model.chat(instructions, messages, tools, signal),
 				),
 		};

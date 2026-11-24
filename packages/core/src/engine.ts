@@ -91,7 +91,11 @@ export interface JobEngineDeps {
 	 * Why a person may not use models that need a key, which spend money, or
 	 * null when they may. Everyone may when absent, as on a personal install.
 	 */
-	paidRefusal?: (userId: string, source: KeySource) => PaidRefusal | null;
+	/**
+	 * Why who asked for a job (a person, and the API token they asked with)
+	 * may not spend on paid models now, or null.
+	 */
+	paidRefusal?: (who: UserContext, source: KeySource) => PaidRefusal | null;
 	/** Jobs running at once per provider. Defaults to 4. */
 	concurrencyPerProvider?: number;
 	/** The wait before the first try again; it doubles each time. */
@@ -102,21 +106,26 @@ export interface JobEngineDeps {
 	 * prompts go as written.
 	 */
 	translator?: (
-		userId: string,
+		who: UserContext,
 	) => Translator | null | Promise<Translator | null>;
 }
 
 /** Why someone may not spend on paid models. */
-export type PaidRefusal = "paidNotAllowed" | "monthlyLimitReached";
+export type PaidRefusal =
+	| "paidNotAllowed"
+	| "monthlyLimitReached"
+	| "tokenNotPaid"
+	| "tokenLimitReached";
+
+const PAID_REFUSALS: Record<PaidRefusal, string> = {
+	paidNotAllowed: "This account cannot use paid models",
+	monthlyLimitReached: "This month's limit for paid models is reached",
+	tokenNotPaid: "This API token cannot use paid models",
+	tokenLimitReached: "This API token's spending limit is reached",
+};
 
 export function paidError(refusal: PaidRefusal): AccessError {
-	return new AccessError(
-		refusal === "paidNotAllowed"
-			? "This account cannot use paid models"
-			: "This month's limit for paid models is reached",
-		refusal,
-		403,
-	);
+	return new AccessError(PAID_REFUSALS[refusal], refusal, 403);
 }
 
 /** A translation that takes longer is given up on; the prompt goes as written. */
@@ -302,7 +311,11 @@ export class JobEngine {
 	 * rather than sent anew; it keeps its handle unless the provider said the
 	 * job itself failed.
 	 */
-	async retry(job: Job): Promise<void> {
+	/**
+	 * Runs a failed or canceled job again, held to the limits of who asks
+	 * now: `tokenId` is the API token they ask with, if any.
+	 */
+	async retry(job: Job, tokenId: string | null = null): Promise<void> {
 		if (job.status !== "failed" && job.status !== "canceled") {
 			throw new ValidationError(
 				"Only a job that failed or was canceled can be tried again",
@@ -321,6 +334,7 @@ export class JobEngine {
 				costUsd: null,
 				startedAt: null,
 				finishedAt: null,
+				tokenId,
 			});
 		} catch (error) {
 			this.owned.delete(job.id);
@@ -401,7 +415,10 @@ export class JobEngine {
 				(envKey ? { key: envKey, source: "server" } : undefined);
 			keySource = found?.source ?? "server";
 			const refusal = adapter.requiresKey
-				? this.deps.paidRefusal?.(job.userId, keySource)
+				? this.deps.paidRefusal?.(
+						{ userId: job.userId, tokenId: job.tokenId ?? null },
+						keySource,
+					)
 				: null;
 			if (refusal) throw paidError(refusal);
 			const apiKey = found?.key;
@@ -505,6 +522,7 @@ export class JobEngine {
 									userId: job.userId,
 									kind: "generation",
 									keySource,
+									tokenId: job.tokenId ?? null,
 									jobId,
 									costUsd,
 									createdAt: Date.now(),
@@ -598,7 +616,10 @@ export class JobEngine {
 		const { prompt } = job.params;
 		// Asking a model whether English is English costs seconds.
 		if (plainlyEnglish(prompt)) return job.params;
-		const translator = await this.deps.translator?.(job.userId);
+		const translator = await this.deps.translator?.({
+			userId: job.userId,
+			tokenId: job.tokenId ?? null,
+		});
 		if (!translator) return job.params;
 		this.emit(job.userId, {
 			type: "job.progress",

@@ -430,7 +430,10 @@ test("the console reset gives a one-time password, ends sign-ins, tokens and two
 		code: totp(base32Decode(secret) as Uint8Array, Math.floor(now() / 1000)),
 		password: PASSWORD,
 	});
-	const token = accounts.createApiToken(owner.user.id, { name: "agent" });
+	const token = accounts.createApiToken(owner.user.id, {
+		name: "agent",
+		scopes: ["read"],
+	}).token;
 	const temporary = await accounts.resetPasswordFromConsole(owner.user.id);
 	expect(accounts.resolveSession(owner.token)).toBeNull();
 	expect(accounts.resolveApiToken(token)).toBeNull();
@@ -459,7 +462,10 @@ test("a reset link sets a new password once, within a day", async () => {
 		}).token,
 		{ username: "mem", password: PASSWORD },
 	);
-	const token = accounts.createApiToken(member.user.id, { name: "agent" });
+	const token = accounts.createApiToken(member.user.id, {
+		name: "agent",
+		scopes: ["read"],
+	}).token;
 	const link = accounts.createPasswordReset(owner.user, member.user.id);
 	expect(accounts.passwordResetFor(link.token)).toEqual({ username: "mem" });
 	await accounts.usePasswordReset(link.token, "the member's own choice");
@@ -483,14 +489,107 @@ test("a reset link sets a new password once, within a day", async () => {
 
 test("API tokens act for their person until they expire", async () => {
 	const { accounts, owner, tick } = await withOwner();
-	const token = accounts.createApiToken(owner.user.id, {
+	const { token, view } = accounts.createApiToken(owner.user.id, {
 		name: "agent",
-		expiresAt: Date.UTC(2026, 10, 25),
+		scopes: ["read"],
+		expiresInDays: 30,
 	});
+	// Recognisable by secret scanners.
+	expect(token).toMatch(/^hl_[\w-]{43}$/);
 	expect(accounts.resolveApiToken(token)?.user.id).toBe(owner.user.id);
 	expect(accounts.resolveApiToken(`${token}x`)).toBeNull();
-	tick(2 * 24 * 60 * 60 * 1000);
+	// The secret without its prefix is not a token.
+	expect(accounts.resolveApiToken(token.slice(3))).toBeNull();
+	expect(view.expiresAt).toBe(view.createdAt + 30 * 24 * 60 * 60 * 1000);
+	tick(31 * 24 * 60 * 60 * 1000);
 	expect(accounts.resolveApiToken(token)).toBeNull();
+});
+
+test("tokens are listed without their secret, and revoked one by one", async () => {
+	const { accounts, owner } = await withOwner();
+	const first = accounts.createApiToken(owner.user.id, {
+		name: " laptop ",
+		scopes: ["read", "generate", "read"],
+		spendLimitUsd: 5,
+	});
+	const second = accounts.createApiToken(owner.user.id, {
+		name: "ci",
+		scopes: ["read"],
+	});
+	const listed = accounts.listApiTokens(owner.user.id);
+	expect(listed.map((t) => t.name)).toEqual(["ci", "laptop"]);
+	expect(listed[1]).toMatchObject({
+		scopes: ["read", "generate"],
+		spendLimitUsd: 5,
+		spentUsd: 0,
+		expiresAt: null,
+	});
+	expect(JSON.stringify(listed)).not.toContain(first.token);
+	expect(JSON.stringify(listed)).not.toContain(first.token.slice(3));
+	accounts.revokeApiToken(owner.user.id, first.view.id);
+	expect(accounts.resolveApiToken(first.token)).toBeNull();
+	expect(accounts.resolveApiToken(second.token)).not.toBeNull();
+	expect(
+		await code(
+			Promise.resolve().then(() =>
+				accounts.revokeApiToken(owner.user.id, first.view.id),
+			),
+		),
+	).toBe("tokenNotFound");
+});
+
+test("a token never gets more than its person may do", async () => {
+	const { accounts, owner } = await withOwner();
+	const member = await accounts.acceptInvite(
+		accounts.createInvite(owner.user, {
+			role: "member",
+			canUsePaid: false,
+			canTrain: false,
+			monthlyLimitUsd: null,
+		}).token,
+		{ username: "mem", password: PASSWORD },
+	);
+	/** The error's code, or its kind for one without. */
+	const make = async (
+		input: Partial<Parameters<typeof accounts.createApiToken>[1]>,
+	) => {
+		try {
+			accounts.createApiToken(member.user.id, {
+				name: "t",
+				scopes: ["read"],
+				...input,
+			});
+			return null;
+		} catch (error) {
+			return error instanceof ValidationError
+				? "validation"
+				: (error as AccessError).code;
+		}
+	};
+	expect(await make({ scopes: ["paid"] })).toBe("paidNotAllowed");
+	expect(await make({ scopes: ["train"] })).toBe("forbidden");
+	expect(await make({ scopes: [] })).toBe("validation");
+	expect(await make({ scopes: ["admin"] })).toBe("validation");
+	expect(await make({ name: "  " })).toBe("validation");
+	expect(await make({ spendLimitUsd: -1 })).toBe("validation");
+	expect(await make({ expiresInDays: 7 })).toBe("validation");
+	// Others' tokens: an admin or owner who manages the person.
+	const { view } = accounts.createApiToken(member.user.id, {
+		name: "t",
+		scopes: ["read"],
+	});
+	expect(
+		accounts.listApiTokensOf(owner.user, member.user.id).map((t) => t.id),
+	).toEqual([view.id]);
+	expect(
+		await code(
+			Promise.resolve().then(() =>
+				accounts.listApiTokensOf(member.user, owner.user.id),
+			),
+		),
+	).toBe("forbidden");
+	accounts.revokeApiTokenOf(owner.user, member.user.id, view.id);
+	expect(accounts.listApiTokens(member.user.id)).toEqual([]);
 });
 
 /**
@@ -594,7 +693,9 @@ test("a person's API tokens end when what they may do changes", async () => {
 		}).token,
 		{ username: "mem", password: PASSWORD },
 	);
-	const token = () => accounts.createApiToken(member.user.id, { name: "t" });
+	const token = () =>
+		accounts.createApiToken(member.user.id, { name: "t", scopes: ["read"] })
+			.token;
 	const promoted = token();
 	accounts.updateUser(owner.user, member.user.id, { role: "admin" });
 	expect(accounts.resolveApiToken(promoted)).toBeNull();

@@ -1,8 +1,8 @@
+import { Database } from "bun:sqlite";
 import { afterEach, expect, test } from "bun:test";
 import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Job } from "../types";
 import { MIGRATIONS_DIR, SqliteRepository } from "./repository";
 
 const dirs: string[] = [];
@@ -32,36 +32,22 @@ test("what jobs cost before the ledger is carried into it", async () => {
 		createdAt: 1,
 		updatedAt: 1,
 	});
-	const job = (id: string, costUsd: number | null) => ({
-		id,
-		turnId: "trn_1",
-		position: 0,
-		userId: "usr_1",
-		providerId: "paid",
-		modelId: "paid/alpha",
-		params: { prompt: "x" } as Job["params"],
-		status: "succeeded" as const,
-		handle: null,
-		error: null,
-		errorCode: null,
-		errorParams: null,
-		costUsd,
-		createdAt: 1000,
-		startedAt: null,
-		finishedAt: 2000,
-	});
-	await old.createTurn(
-		{
-			id: "trn_1",
-			sessionId: "ses_1",
-			userId: "usr_1",
-			prompt: "x",
-			referenceAssetIds: [],
-			createdAt: 1,
-		},
-		[job("job_1", 0.25), job("job_2", null)],
-	);
 	old.close();
+	// Written as that schema had them: the current one has more columns.
+	const raw = new Database(path);
+	raw.run(
+		"insert into turns (id, session_id, user_id, prompt, reference_asset_ids, created_at) values ('trn_1', 'ses_1', 'usr_1', 'x', '[]', 1)",
+	);
+	for (const [id, cost] of [
+		["job_1", 0.25],
+		["job_2", null],
+	] as const) {
+		raw.run(
+			"insert into jobs (id, turn_id, position, user_id, provider_id, model_id, params, status, cost_usd, created_at, finished_at) values (?, 'trn_1', 0, 'usr_1', 'paid', 'paid/alpha', '{\"prompt\":\"x\"}', 'succeeded', ?, 1000, 2000)",
+			[id, cost],
+		);
+	}
+	raw.close();
 
 	const repo = new SqliteRepository(path);
 	expect(repo.accounts().spentSince("usr_1", 0)).toBeCloseTo(0.25);

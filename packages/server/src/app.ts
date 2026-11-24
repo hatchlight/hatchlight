@@ -75,8 +75,11 @@ export interface AppOptions {
 	deviceKey?: Uint8Array;
 	/** The people of a server, who sign in; needed in server mode. */
 	accounts?: AccountService;
-	/** Why a person may not spend on paid models now, or null; servers only. */
-	paidRefusal?: (userId: string, source: KeySource) => PaidRefusal | null;
+	/**
+	 * Why a person, and the API token they ask with, may not spend on paid
+	 * models now, or null; servers only.
+	 */
+	paidRefusal?: (who: UserContext, source: KeySource) => PaidRefusal | null;
 	/** Maps a request to its user. Local installs have a single user. */
 	resolveUser?: (c: Context) => UserContext;
 	/** Connects AI agents to this installation; absent where it cannot. */
@@ -264,7 +267,10 @@ export function createApp(options: AppOptions): Hono {
 	const user =
 		options.resolveUser ??
 		(server
-			? (c: Context): UserContext => ({ userId: c.get("viewer").user.id })
+			? (c: Context): UserContext => {
+					const { user, apiToken } = c.get("viewer");
+					return { userId: user.id, tokenId: apiToken?.ref ?? null };
+				}
 			: () => LOCAL_USER);
 	const app = new Hono();
 
@@ -423,7 +429,7 @@ export function createApp(options: AppOptions): Hono {
 
 	/** Why the person asking may not spend on paid models now, if they may not. */
 	const paidRefusal = (c: Context, source: KeySource) =>
-		server ? (options.paidRefusal?.(user(c).userId, source) ?? null) : null;
+		server ? (options.paidRefusal?.(user(c), source) ?? null) : null;
 
 	app.get("/api/models", (c) => c.json(service.listModels()));
 

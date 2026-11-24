@@ -258,6 +258,10 @@
 	"errors.sessionNotFound": "That session no longer exists.",
 	"errors.signInRequired": "Sign in to go on.",
 	"errors.storageFull": "Your pictures take all the room you have on this server ({maxBytes}). Pictures under way still finish; ask an admin for more room.",
+	"errors.tokenLimitReached": "This API token reached its spending limit. Make a new one, or ask with a higher limit.",
+	"errors.tokenNotFound": "That API token is not there any more.",
+	"errors.tokenNotPaid": "This API token cannot use paid models. Make one with the paid permission.",
+	"errors.tokenScope": "This API token cannot do this: it needs the {scope} permission.",
 	"errors.tooManyAttempts": "Too many tries. Wait {seconds} seconds and try again.",
 	"errors.tooManyLoras": "At most {max} LoRAs can be used at once.",
 	"errors.tooManyReferences": {

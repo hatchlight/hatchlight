@@ -31,6 +31,7 @@ export type JobPatch = Partial<
 		| "startedAt"
 		| "finishedAt"
 		| "params"
+		| "tokenId"
 	>
 >;
 
