@@ -160,25 +160,45 @@ export function JobCard(props: {
 						}
 					/>
 					{/* Below the picture, so nothing covers it while it forms. */}
-					<div className="flex min-h-8 items-center gap-2.5 font-mono text-xs text-[#a1a1aa]">
-						<i
-							aria-hidden="true"
-							className={cn(
-								"breathe size-2 shrink-0 rounded-full",
-								job.status === "queued"
-									? "bg-dim"
-									: "bg-orange shadow-[0_0_12px_var(--orange)]",
+					{/* Name and Cancel, then what is happening, then the bar: a
+					    narrow card still shows each in full. */}
+					<div className="flex flex-col gap-1.5 font-mono text-xs text-[#a1a1aa]">
+						<div className="flex min-h-8 items-center gap-2.5">
+							<i
+								aria-hidden="true"
+								className={cn(
+									"breathe size-2 shrink-0 rounded-full",
+									job.status === "queued"
+										? "bg-dim"
+										: "bg-orange shadow-[0_0_12px_var(--orange)]",
+								)}
+							/>
+							<span className="min-w-0 flex-1 truncate">{name}</span>
+							<Button
+								variant="outline"
+								size="sm"
+								onClick={() => cancel.mutate()}
+								disabled={cancel.isPending}
+								className="font-sans max-md:h-10"
+							>
+								{t("common.cancel")}
+							</Button>
+						</div>
+						<div className="flex items-center gap-2.5 text-dim">
+							<span className="min-w-0 flex-1 truncate" aria-live="polite">
+								{job.status === "running" || progress?.stage === "queued"
+									? describeProgress(i18n, progress)
+									: t("job.waiting")}
+							</span>
+							{job.status === "running" && job.startedAt && (
+								<span className="shrink-0 tabular-nums">
+									<Elapsed since={job.startedAt} />
+								</span>
 							)}
-						/>
-						<span className="min-w-0 truncate" aria-live="polite">
-							{name} ·{" "}
-							{job.status === "running" || progress?.stage === "queued"
-								? describeProgress(i18n, progress)
-								: t("job.waiting")}
-						</span>
+						</div>
 						<div
 							aria-hidden="true"
-							className="h-1 min-w-8 flex-1 overflow-hidden rounded-full bg-line"
+							className="h-1 overflow-hidden rounded-full bg-line"
 						>
 							{job.status === "running" && (
 								<div
@@ -194,20 +214,6 @@ export function JobCard(props: {
 								/>
 							)}
 						</div>
-						{job.status === "running" && job.startedAt && (
-							<span className="shrink-0 tabular-nums max-sm:hidden">
-								<Elapsed since={job.startedAt} />
-							</span>
-						)}
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={() => cancel.mutate()}
-							disabled={cancel.isPending}
-							className="font-sans max-md:h-10"
-						>
-							{t("common.cancel")}
-						</Button>
 					</div>
 				</>
 			)}
@@ -229,8 +235,7 @@ export function JobCard(props: {
 					)}
 					<div className="flex items-center justify-between gap-3">
 						<span className="min-w-0 truncate font-mono text-xs text-dim">
-							{name} ·{" "}
-							{job.status === "failed" ? t("job.failed") : t("job.canceled")}
+							{name}
 						</span>
 						<Button
 							variant="outline"
@@ -289,12 +294,15 @@ export function JobCard(props: {
 									</button>
 								)}
 								<figcaption className="flex min-h-8 items-center gap-1 font-mono text-xs text-dim">
-									<span className="min-w-0 flex-1 truncate">
-										{several ? `${name} · ${i18n.number(position + 1)}` : name}
+									{/* The name on its own line, so narrow cards keep it whole. */}
+									<span className="flex min-w-0 flex-1 flex-col gap-0.5">
+										<span className="truncate text-[#a1a1aa]">
+											{several
+												? `${name} · ${i18n.number(position + 1)}`
+												: name}
+										</span>
+										{took && <span className="tabular-nums">{took}</span>}
 									</span>
-									{took && (
-										<span className="shrink-0 tabular-nums">{took}</span>
-									)}
 									<span className="flex shrink-0">
 										{video ? (
 											<PictureAction
