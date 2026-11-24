@@ -50,6 +50,10 @@ export function renderPage(
 		root,
 		alternates,
 		languageLinks,
+		// Crawlers drop a relative image, so the preview uses the site address.
+		ogImage: LINKS.site
+			? `${LINKS.site}shots/ramen.webp`
+			: `${root}shots/ramen.webp`,
 	};
 
 	return template.replace(TOKEN, (_, key: string, args?: string) => {

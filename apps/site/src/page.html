@@ -13,7 +13,7 @@
 		<meta property="og:description" content="{{meta.ogDescription}}" />
 		<meta property="og:locale" content="{{ogLocale}}" />
 		{{alternates}}
-		<meta property="og:image" content="{{root}}shots/ramen.webp" />
+		<meta property="og:image" content="{{ogImage}}" />
 		<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='a' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ff3d8b'/%3E%3Cstop offset='.55' stop-color='%23ff8a3d'/%3E%3Cstop offset='1' stop-color='%23ffc861'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='%2309090b'/%3E%3Cg transform='translate(4 3.5)'%3E%3Cpath d='M28 10 C 40 10, 44 24, 44 32 C 44 42, 37 47, 28 47 C 19 47, 12 42, 12 32 C 12 24, 16 10, 28 10 Z' fill='url(%23a)'/%3E%3Cpath d='M14 30 L 21 25 L 27 31 L 34 24 L 42 30' fill='none' stroke='%2309090b' stroke-width='3' stroke-linejoin='round'/%3E%3C/g%3E%3C/svg%3E" />
 		<script type="module" src="{{root}}src/main.ts"></script>
 	</head>
@@ -157,7 +157,6 @@
 					<a class="btn btn-primary" href="#get" data-download data-os>{{cta.download}}</a>
 					<a class="btn btn-ghost" href="#get" data-link="repository">{{end.source}}</a>
 				</div>
-				<p class="meta" data-coming hidden>{{end.coming}}</p>
 				<p class="meta" data-released hidden>{{end.unsigned}}</p>
 			</section>
 		</main>
