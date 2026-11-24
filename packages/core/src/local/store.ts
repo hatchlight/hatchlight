@@ -182,6 +182,8 @@ interface Install {
 
 /** Sizes in the decimal units disks and download pages use. */
 export function formatBytes(bytes: number): string {
+	// Under a kilobyte, "0 kB" would say there is nothing.
+	if (bytes < 1e3) return `${bytes} B`;
 	if (bytes < 1e6) return `${Math.round(bytes / 1e3)} kB`;
 	if (bytes < 1e9) return `${Math.round(bytes / 1e6)} MB`;
 	return `${(bytes / 1e9).toFixed(bytes < 1e10 ? 2 : 1)} GB`;

@@ -1,0 +1,97 @@
+# Hatchlight on the internet under your own domain, with HTTPS from Caddy
+# (Let's Encrypt). Only Caddy is published; Hatchlight is reached through it.
+# See docs/self-hosting.md: read the threat model before opening a server to
+# the internet.
+#
+#   1. Point the domain's DNS (an A or AAAA record) at this machine, and let
+#      ports 80 and 443 through your router to it.
+#   2. DOMAIN=hatchlight.example.com docker compose -f deploy/compose.caddy.yaml up -d
+#   3. docker compose -f deploy/compose.caddy.yaml logs hatchlight
+#      shows the setup code; open https://<your domain>
+name: hatchlight
+
+services:
+  caddy:
+    # A version, not a digest, on purpose: it gets its security fixes.
+    image: caddy:2.11
+    container_name: hatchlight-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN to the name people open, such as hatchlight.example.com}
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      proxy:
+        ipv4_address: 172.30.0.2
+
+  hatchlight:
+    image: ${HATCHLIGHT_IMAGE:-ghcr.io/hatchlight/hatchlight:latest}
+    container_name: hatchlight
+    restart: unless-stopped
+    # Only what the entrypoint needs, as root, to hand the volumes to PUID:PGID
+    # and become that user; the app itself ends up with no capabilities.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN # give the volumes to PUID:PGID
+      - DAC_OVERRIDE # ... whatever their current owner allows
+      - FOWNER # make /data and /trainer private
+      - SETUID # become PUID
+      - SETGID # become PGID
+      - SETPCAP # drop every capability before starting the app
+    # No ports: only Caddy, on the network below, reaches it.
+    environment:
+      HATCHLIGHT_PUBLIC_URL: https://${DOMAIN}
+      # Caddy's fixed address: only its X-Forwarded-* headers are believed.
+      HATCHLIGHT_TRUSTED_PROXIES: 172.30.0.2
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      TZ: ${TZ:-Etc/UTC}
+    volumes:
+      - data:/data
+      - models:/models
+      - trainer:/trainer
+    networks:
+      proxy:
+        ipv4_address: 172.30.0.3
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+configs:
+  caddyfile:
+    content: |
+      {$$DOMAIN} {
+        encode zstd gzip
+        # Progress streams to the browser as it comes.
+        reverse_proxy hatchlight:4096 {
+          flush_interval -1
+        }
+      }
+
+networks:
+  proxy:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  caddy-data:
+  caddy-config:
+  data:
+  models:
+  trainer:

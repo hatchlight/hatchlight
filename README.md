@@ -96,12 +96,10 @@ reader. More languages are welcome: see [Translate](CONTRIBUTING.md#translate).
 | -------------------- | ------- | ---------------------------------------------------- |
 | Windows              | Yes     | NVIDIA (CUDA), AMD (ROCm), other cards (Vulkan), CPU |
 | macOS, Apple Silicon | Yes     | Metal                                                |
-| Linux                | Yes     | Not yet: cloud models only for now                   |
+| Linux                | Yes     | NVIDIA (CUDA), CPU                                   |
 | macOS, Intel         | Yes     | Not yet: cloud models only for now                   |
 
-Linux builds of the engines are in progress
-([#36](https://github.com/hatchlight/hatchlight/issues/36)). Under WSL on
-Windows, the Windows engines run, so models on your computer work there.
+Under WSL on Windows, the Windows engines run.
 
 Some parts need more:
 
@@ -136,6 +134,10 @@ bun run start
 
 This opens `http://localhost:4096`. The first screen walks you to a first
 picture: download a model that runs on your computer, or paste an API key.
+
+**As a server** for the people of your home or a small team, on a home
+server or NAS with an NVIDIA card: run the Docker image, with accounts and a
+private gallery for each person. See [Self-hosting](docs/self-hosting.md).
 
 `bun run start --help` lists the options. Keys can also come from the
 environment: `FAL_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,

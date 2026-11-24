@@ -9,6 +9,21 @@ const programs =
 
 const GB = 1024 ** 3;
 
+test("a container on WSL's kernel is plain Linux: it cannot reach Windows", async () => {
+	const hardware = await detectHardware({
+		run: programs({
+			"nvidia-smi": "NVIDIA GeForce RTX 4070 SUPER, 12282, 616.56\n",
+		}),
+		platform: "linux",
+		arch: "x64",
+		memoryBytes: 16 * GB,
+		procVersion: "Linux version 6.18.58.1-microsoft-standard-WSL2",
+		container: true,
+	});
+	expect(hardware.wsl).toBe(false);
+	expect(hardware.gpus).toHaveLength(1);
+});
+
 test("an NVIDIA card under WSL", async () => {
 	const hardware = await detectHardware({
 		run: programs({
@@ -18,6 +33,7 @@ test("an NVIDIA card under WSL", async () => {
 		arch: "x64",
 		memoryBytes: 16 * GB,
 		procVersion: "Linux version 6.18.58.1-microsoft-standard-WSL2",
+		container: false,
 	});
 	expect(hardware).toEqual({
 		os: "linux",

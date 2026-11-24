@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>hatchlight</Name>
+  <Repository>ghcr.io/hatchlight/hatchlight:latest</Repository>
+  <Registry>https://github.com/hatchlight/hatchlight/pkgs/container/hatchlight</Registry>
+  <Network>bridge</Network>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/hatchlight/hatchlight/issues</Support>
+  <Project>https://hatchlight.app</Project>
+  <Overview>Make pictures with local and cloud AI models, for the people of your home, on your server's NVIDIA card. Accounts, a shared gallery each person keeps private, and LoRA training. Needs the Nvidia Driver plugin (driver 570 or newer). The first time, open the WebUI and enter the setup code from the container's log. The port is published on every address of the server: to reach it only through a reverse proxy, remove the port and put the container on the proxy's network, or give it its own address with a custom network (br0).</Overview>
+  <Category>MediaApp:Photos Tools:</Category>
+  <WebUI>http://[IP]:[PORT:4096]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/hatchlight/hatchlight/main/deploy/unraid/hatchlight.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/hatchlight/hatchlight/main/apps/web/public/favicon.svg</Icon>
+  <ExtraParams>--runtime=nvidia --stop-timeout 30 --security-opt no-new-privileges:true --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --cap-add SETUID --cap-add SETGID --cap-add SETPCAP</ExtraParams>
+  <PostArgs/>
+  <Requires>The Nvidia Driver plugin, with an NVIDIA card and driver 570 or newer.</Requires>
+  <Config Name="WebUI port" Target="4096" Default="4096" Mode="tcp" Description="Port of the web app." Type="Port" Display="always" Required="true" Mask="false">4096</Config>
+  <Config Name="Public URL" Target="HATCHLIGHT_PUBLIC_URL" Default="" Description="The address people type in their browser, such as http://192.168.1.20:4096, or https://hatchlight.example.com behind a proxy." Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/hatchlight/data" Mode="rw" Description="Gallery, accounts, settings and saved keys. Back this up." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/hatchlight/data</Config>
+  <Config Name="Models" Target="/models" Default="/mnt/user/appdata/hatchlight/models" Mode="rw" Description="Local models and LoRAs: tens of GB. They download again if lost." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/hatchlight/models</Config>
+  <Config Name="Trainer" Target="/trainer" Default="/mnt/user/appdata/hatchlight/trainer" Mode="rw" Description="The LoRA trainer's Python and PyTorch, installed on first use." Type="Path" Display="advanced" Required="false" Mask="false">/mnt/user/appdata/hatchlight/trainer</Config>
+  <Config Name="GPU" Target="NVIDIA_VISIBLE_DEVICES" Default="all" Description="Which NVIDIA cards Hatchlight uses: all, or a card's UUID from the Nvidia Driver plugin." Type="Variable" Display="always" Required="false" Mask="false">all</Config>
+  <Config Name="Other host names" Target="HATCHLIGHT_ALLOWED_HOSTS" Default="" Description="Other names the server is reached by, comma-separated, such as tower.local." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="Trusted proxies" Target="HATCHLIGHT_TRUSTED_PROXIES" Default="" Description="Addresses of a reverse proxy in front of Hatchlight, whose X-Forwarded headers are believed. Leave empty without a proxy." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="PUID" Target="PUID" Default="99" Description="User the files belong to (99 is nobody on Unraid)." Type="Variable" Display="advanced" Required="true" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Description="Group the files belong to (100 is users on Unraid)." Type="Variable" Display="advanced" Required="true" Mask="false">100</Config>
+</Container>

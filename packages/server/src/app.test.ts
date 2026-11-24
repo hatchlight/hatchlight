@@ -1,5 +1,14 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, readdir, rename, rm, stat, utimes } from "node:fs/promises";
+import {
+	chmod,
+	mkdir,
+	mkdtemp,
+	readdir,
+	rename,
+	rm,
+	stat,
+	utimes,
+} from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -370,6 +379,42 @@ test("a second process cannot take over a data directory in use", async () => {
 	});
 	expect(created.status).toBe(201);
 });
+
+test.skipIf(process.platform === "win32")(
+	"the data directory and the database are readable by their owner only",
+	async () => {
+		// One made by an older version, open to everyone, as a bind mount is.
+		const root = await mkdtemp(join(tmpdir(), "hatchlight-private-"));
+		cleanups.push(() => rm(root, { recursive: true }));
+		const dir = join(root, "data");
+		await mkdir(dir, { mode: 0o755 });
+		await chmod(dir, 0o755);
+		const db = databaseFile(dir);
+		await Bun.write(db, "");
+		await Bun.write(`${db}-wal`, "");
+		await chmod(db, 0o644);
+		await chmod(`${db}-wal`, 0o644);
+		const runtime = await createRuntime({
+			dataDir: dir,
+			providers: [new FakeProvider()],
+		});
+		runtime.close();
+		const mode = async (path: string) => (await stat(path)).mode & 0o777;
+		expect(await mode(dir)).toBe(0o700);
+		expect(await mode(db)).toBe(0o600);
+		expect(await mode(`${db}-wal`)).toBe(0o600);
+
+		// A new one is made private from the start.
+		const fresh = join(root, "fresh");
+		const again = await createRuntime({
+			dataDir: fresh,
+			providers: [new FakeProvider()],
+		});
+		again.close();
+		expect(await mode(fresh)).toBe(0o700);
+		expect(await mode(databaseFile(fresh))).toBe(0o600);
+	},
+);
 
 /** Makes a file look written before this machine started. */
 async function beforeBoot(path: string) {

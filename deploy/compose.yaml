@@ -1,0 +1,59 @@
+# Hatchlight on your home network, on a machine with an NVIDIA card.
+# See docs/self-hosting.md.
+#
+#   docker compose -f deploy/compose.yaml up -d
+#   docker compose -f deploy/compose.yaml logs hatchlight   # the setup code
+#
+# Then open HATCHLIGHT_PUBLIC_URL and enter the code from the log.
+name: hatchlight
+
+services:
+  hatchlight:
+    # HATCHLIGHT_IMAGE pins a version, such as ghcr.io/hatchlight/hatchlight:0.3.0.
+    image: ${HATCHLIGHT_IMAGE:-ghcr.io/hatchlight/hatchlight:latest}
+    container_name: hatchlight
+    restart: unless-stopped
+    # Only what the entrypoint needs, as root, to hand the volumes to PUID:PGID
+    # and become that user; the app itself ends up with no capabilities.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN # give the volumes to PUID:PGID
+      - DAC_OVERRIDE # ... whatever their current owner allows
+      - FOWNER # make /data and /trainer private
+      - SETUID # become PUID
+      - SETGID # become PGID
+      - SETPCAP # drop every capability before starting the app
+    ports:
+      # Docker's published ports go around ufw and firewalld: bind them to
+      # this machine's LAN address (HATCHLIGHT_BIND=192.168.1.20), or to
+      # 127.0.0.1 behind a proxy, rather than to every interface.
+      - "${HATCHLIGHT_BIND:-0.0.0.0}:${HATCHLIGHT_PORT:-4096}:4096"
+    environment:
+      # The address people type in their browser: this machine's address on
+      # your network, with the port above.
+      HATCHLIGHT_PUBLIC_URL: ${HATCHLIGHT_PUBLIC_URL:-http://192.168.1.20:4096}
+      # Other names the server is reached by, such as nas.local.
+      # HATCHLIGHT_ALLOWED_HOSTS: nas.local
+      # The owner of the files in the volumes (run `id` on the host).
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      TZ: ${TZ:-Etc/UTC}
+    volumes:
+      - data:/data # gallery, accounts, settings and saved keys: back it up
+      - models:/models # local models and LoRAs: large, download again
+      - trainer:/trainer # the LoRA trainer's Python, installed on first use
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  data:
+  models:
+  trainer:

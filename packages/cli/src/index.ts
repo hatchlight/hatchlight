@@ -44,6 +44,12 @@ if (first === "users") {
 	process.exit(await users(rest));
 }
 
+// A backup of a server's data directory, or putting one back.
+if (first === "backup" || first === "restore") {
+	const { backup, restore } = await import("./backup");
+	process.exit(await (first === "backup" ? backup : restore)(rest));
+}
+
 // A command typed in a terminal: it uses the server, and never serves the app.
 if (first != null && Object.hasOwn(COMMANDS, first)) {
 	const { runCommand } = await import("./client");
@@ -66,6 +72,8 @@ Commands (see hatchlight <command> --help):
 ${commandList()}
   mcp       Connect an AI agent
   users     Manage a server's accounts, from its data directory
+  backup    Save a server's data in one file
+  restore   Put a backup back, with the server stopped
 
 Options for serve:
   --port <n>       Port to listen on (default 4096; 0 picks a free one)

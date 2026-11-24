@@ -18,6 +18,7 @@ export * from "./local/loras";
 export * from "./local/provider";
 export * from "./local/shelf";
 export * from "./local/store";
+export * from "./local/tar";
 export * from "./local/trainer";
 export * from "./local/translator";
 export * from "./mime";

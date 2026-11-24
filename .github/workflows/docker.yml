@@ -1,0 +1,129 @@
+name: Docker
+
+# Builds the server image (Dockerfile). Pull requests that touch it build and
+# scan it without pushing. A v* tag pushes ghcr.io/hatchlight/hatchlight:<version>
+# and :latest, with an SBOM and provenance attached by BuildKit, a Trivy scan
+# that fails on critical vulnerabilities before anything is pushed, and a
+# keyless cosign signature of the pushed digest.
+on:
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - docker/**
+      - scripts/docker-engines.ts
+      - packages/**
+      - apps/web/**
+      - package.json
+      - bun.lock
+      - .github/workflows/docker.yml
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/hatchlight/hatchlight
+
+jobs:
+  check:
+    name: Build and scan
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          push: false
+          tags: hatchlight:check
+      - name: Scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: hatchlight:check
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Start
+        # The image starts, says its setup code and answers its health check.
+        run: |
+          docker run -d --name hatchlight \
+            -e HATCHLIGHT_PUBLIC_URL=http://localhost:4096 \
+            -p 127.0.0.1:4096:4096 hatchlight:check
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4096/api/health; then break; fi
+            sleep 2
+          done
+          docker logs hatchlight
+          docker logs hatchlight 2>&1 | grep -q "Set up this server"
+          curl -fsS http://127.0.0.1:4096/api/health
+          docker stop hatchlight
+
+  release:
+    name: Push, sign and attest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write # pushes the image to ghcr.io
+      id-token: write # cosign keyless signing and provenance
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            # Prereleases (v1.2.0-rc.1) get their version only.
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+      # Scanned before anything is pushed; the push reuses these layers.
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          push: false
+          tags: hatchlight:release
+      - name: Scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: hatchlight:release
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push
+        id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          sbom: true
+          provenance: mode=max
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - name: Sign
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"

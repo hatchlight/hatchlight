@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readdir, rm, stat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative as relativeTo } from "node:path";
 import {
+	formatBytes,
 	type Hardware,
 	isDemoSize,
 	type LocalEngineSpec,
@@ -1153,4 +1154,12 @@ test("removing a model leaves a file another Hatchlight is downloading", async (
 	await Bun.write(join(first.root, "blobs", `${blob}.lock`), "other");
 	await first.store.remove("a");
 	expect(await first.blobs()).toContain(blob as string);
+});
+
+test("sizes are written in the units disks use, bytes below a kilobyte", () => {
+	expect(formatBytes(0)).toBe("0 B");
+	expect(formatBytes(32)).toBe("32 B");
+	expect(formatBytes(1_500)).toBe("2 kB");
+	expect(formatBytes(176_128)).toBe("176 kB");
+	expect(formatBytes(6_938_081_905)).toBe("6.94 GB");
 });
