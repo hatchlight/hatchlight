@@ -117,6 +117,27 @@ test("only a valid token opens /mcp: never a cookie, nor another website", async
 			})
 		).status,
 	).toBe(405);
+	// One message at a time: a batch would carry many calls past the cap.
+	const batch = await post(
+		url,
+		{ authorization: `Bearer ${valid}` },
+		JSON.stringify(
+			[1, 2].map((id) => ({
+				jsonrpc: "2.0",
+				id,
+				method: "tools/list",
+				params: {},
+			})),
+		),
+	);
+	expect(batch.status).toBe(400);
+	expect(await batch.json()).toMatchObject({
+		jsonrpc: "2.0",
+		error: { code: -32600 },
+	});
+	expect(
+		(await post(url, { authorization: `Bearer ${valid}` }, "{not json")).status,
+	).toBe(400);
 	// Small JSON only.
 	expect(
 		(

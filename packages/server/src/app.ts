@@ -97,6 +97,8 @@ export interface AppOptions {
 	mcp?: (
 		request: Request,
 		caller: { token: string; origin: string; allowPaid: boolean },
+		/** The JSON-RPC message, read and checked here already. */
+		message: unknown,
 	) => Promise<Response>;
 	/** Makes and changes pictures by talking; absent where it cannot. */
 	assistant?: Assistant;
@@ -143,6 +145,13 @@ const TRAINING_TYPES: Record<string, string> = {
 const MAX_JSON_BYTES = 1024 * 1024;
 /** MCP calls one API token may have under way at once. */
 const MAX_MCP_CALLS = 4;
+
+/** A JSON-RPC error answering no message in particular. */
+const rpcError = (code: number, message: string) => ({
+	jsonrpc: "2.0",
+	error: { code, message },
+	id: null,
+});
 
 function hostname(host: string): string {
 	return host.replace(/:\d+$/, "");
@@ -450,14 +459,32 @@ export function createApp(options: AppOptions): Hono {
 						{ seconds: 5 },
 					);
 				}
+				// One message per request: a batch would carry many calls past
+				// the cap on calls under way.
+				let message: unknown;
+				try {
+					message = JSON.parse(await c.req.text());
+				} catch {
+					return c.json(rpcError(-32700, "The body is not JSON"), 400);
+				}
+				if (Array.isArray(message)) {
+					return c.json(
+						rpcError(-32600, "Batches are not accepted: send one message"),
+						400,
+					);
+				}
 				running.set(ref, busy + 1);
 				try {
-					return await answer(c.req.raw, {
-						token,
-						origin: server.publicOrigin,
-						allowPaid:
-							seen.apiToken.scopes.includes("paid") && mayUsePaid(seen.user),
-					});
+					return await answer(
+						c.req.raw,
+						{
+							token,
+							origin: server.publicOrigin,
+							allowPaid:
+								seen.apiToken.scopes.includes("paid") && mayUsePaid(seen.user),
+						},
+						message,
+					);
 				} finally {
 					const left = (running.get(ref) ?? 1) - 1;
 					if (left > 0) running.set(ref, left);

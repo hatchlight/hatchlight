@@ -31,8 +31,12 @@ export interface McpHttpOptions {
  */
 export function mcpOverHttp(
 	options: McpHttpOptions,
-): (request: Request, caller: McpCaller) => Promise<Response> {
-	return async (request, caller) => {
+): (
+	request: Request,
+	caller: McpCaller,
+	message: unknown,
+) => Promise<Response> {
+	return async (request, caller, message) => {
 		const client = new HatchlightClient(caller.origin, (url, init) => {
 			const headers = new Headers(init?.headers);
 			headers.set("authorization", `Bearer ${caller.token}`);
@@ -54,7 +58,8 @@ export function mcpOverHttp(
 		});
 		await server.connect(transport);
 		try {
-			return await transport.handleRequest(request);
+			// The body was read already, to refuse batches.
+			return await transport.handleRequest(request, { parsedBody: message });
 		} finally {
 			await server.close();
 		}
