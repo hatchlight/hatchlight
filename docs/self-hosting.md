@@ -140,35 +140,36 @@ An agent connects in one of two ways:
   Code:
 
   ```sh
-  claude mcp add --transport http hatchlight https://hatchlight.example.com/mcp \
-    --header "Authorization: Bearer hl_…"
+  claude mcp add --transport http --scope user hatchlight \
+    https://hatchlight.example.com/mcp --header "Authorization: Bearer hl_…"
   ```
 
-  `/mcp` takes the token only, never a browser's sign-in, and refuses
-  requests from other websites. It is served in server mode only.
+  `--scope user` makes it available in every project. `/mcp` takes the token
+  only, never a browser's sign-in, and refuses requests from other websites.
+  It is served in server mode only.
 
 - **Through `hatchlight mcp`** on the agent's computer, for agents that start
-  a command, such as Claude Desktop. It needs Hatchlight's command line there:
+  a command, such as Claude Desktop: its settings file takes commands only,
+  and its connectors have no documented way to send a token. It needs
+  Hatchlight's command line there:
 
   ```json
   {
     "mcpServers": {
       "hatchlight": {
         "command": "hatchlight",
-        "args": ["mcp"],
-        "env": {
-          "HATCHLIGHT_URL": "https://hatchlight.example.com",
-          "HATCHLIGHT_TOKEN": "hl_…"
-        }
+        "args": ["mcp", "--url", "https://hatchlight.example.com"],
+        "env": { "HATCHLIGHT_TOKEN": "hl_…" }
       }
     }
   }
   ```
 
-  `hatchlight mcp --url <address> --token <token>` does the same from a
-  terminal. It refuses a plain `http://` address unless it is this computer or
-  `--insecure` is given. `--allow-paid` and `--spend-limit` add their own
-  limits on that computer.
+  `HATCHLIGHT_TOKEN=hl_… hatchlight mcp --url <address>` does the same from a
+  terminal; in the environment, unlike with `--token`, the token stays out of
+  other users' process lists. It refuses a plain `http://` address unless it is this
+  computer or `--insecure` is given. `--allow-paid` and `--spend-limit` add
+  their own limits on that computer.
 
 Treat a token like a password: anyone who has it acts as its person, within
 what it allows. Tokens start with `hl_` followed by 43 characters (letters,

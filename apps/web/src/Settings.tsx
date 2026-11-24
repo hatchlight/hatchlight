@@ -807,23 +807,26 @@ export function Settings() {
 
 /** What an agent's configuration takes, for this server and a new token. */
 function snippets(origin: string, token: string, paid: boolean) {
-	const local = ["mcp", ...(paid ? ["--allow-paid"] : [])];
+	// The token goes in the environment, where a process list does not show it.
+	const local = ["mcp", ...(paid ? ["--allow-paid"] : []), "--url", origin];
 	return {
-		claudeCode: `claude mcp add --transport http hatchlight ${origin}/mcp --header "Authorization: Bearer ${token}"`,
+		// For every project, not only the one it is run in.
+		claudeCode: `claude mcp add --transport http --scope user hatchlight ${origin}/mcp --header "Authorization: Bearer ${token}"`,
+		// Claude Desktop's file takes commands only: the command line connects.
 		claudeDesktop: JSON.stringify(
 			{
 				mcpServers: {
 					hatchlight: {
 						command: "hatchlight",
 						args: local,
-						env: { HATCHLIGHT_URL: origin, HATCHLIGHT_TOKEN: token },
+						env: { HATCHLIGHT_TOKEN: token },
 					},
 				},
 			},
 			null,
 			2,
 		),
-		stdio: `hatchlight ${local.join(" ")} --url ${origin} --token ${token}`,
+		stdio: `HATCHLIGHT_TOKEN=${token} hatchlight ${local.join(" ")}`,
 	};
 }
 
