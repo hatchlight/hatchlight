@@ -444,12 +444,19 @@ test("a bare process id since this machine started is taken over once that proce
 	cleanups.push(() => rm(root, { recursive: true }));
 	await Bun.write(join(root, "hatchlight.lock"), "2147483646");
 	await Bun.write(join(root, `${LEGACY_NAME}.lock`), "2147483646");
-	const runtime = await createRuntime({
-		dataDir: root,
-		providers: [new FakeProvider()],
-	});
+	const release = lockDataDir(root, { seesEveryProcess: true });
 	expect(await lockPid(join(root, "hatchlight.lock"))).toBe(process.pid);
-	runtime.close();
+	release();
+});
+
+test("a bare process id is not guessed at where other processes cannot be seen", async () => {
+	// In a container or WSL, the host's processes do not show.
+	const root = await mkdtemp(join(tmpdir(), "hatchlight-lock-"));
+	cleanups.push(() => rm(root, { recursive: true }));
+	await Bun.write(join(root, "hatchlight.lock"), "2147483646");
+	expect(() => lockDataDir(root, { seesEveryProcess: false })).toThrow(
+		`delete ${join(root, "hatchlight.lock")}`,
+	);
 });
 
 test("a bare process id of a running process, or of this one, is not guessed at", async () => {
@@ -462,9 +469,9 @@ test("a bare process id of a running process, or of this one, is not guessed at"
 	});
 	for (const pid of [String(process.pid), String(alive.pid)]) {
 		await Bun.write(join(root, "hatchlight.lock"), pid);
-		await expect(
-			createRuntime({ dataDir: root, providers: [new FakeProvider()] }),
-		).rejects.toThrow(`delete ${join(root, "hatchlight.lock")}`);
+		expect(() => lockDataDir(root, { seesEveryProcess: true })).toThrow(
+			`delete ${join(root, "hatchlight.lock")}`,
+		);
 	}
 });
 

@@ -193,8 +193,14 @@ export class DataDirInUseError extends Error {}
  */
 export function lockDataDir(
 	dataDir: string,
-	options: { staleMs?: number; heartbeatMs?: number } = {},
+	options: {
+		staleMs?: number;
+		heartbeatMs?: number;
+		/** Whether every process that could use this folder shows here. */
+		seesEveryProcess?: boolean;
+	} = {},
 ): () => void {
+	const { seesEveryProcess = seesAllProcesses(), ...timing } = options;
 	const name = "hatchlight.lock";
 	const path = resolve(dataDir, name);
 	if (heldLocks.has(path)) {
@@ -206,7 +212,7 @@ export function lockDataDir(
 	const previous = readLock(path);
 	let replaced: LockOwner | null = null;
 	if (previous && !previous.heartbeat) {
-		const verdict = oldLockVerdict(path, previous, null);
+		const verdict = oldLockVerdict(path, previous, null, seesEveryProcess);
 		if (!verdict.stale) throw verdict.error;
 		rmSync(path, { force: true });
 		replaced = previous;
@@ -217,7 +223,7 @@ export function lockDataDir(
 			heartbeat: true,
 			token: crypto.randomUUID(),
 		}),
-		...options,
+		...timing,
 	});
 	if (!release) {
 		const owner = readLock(path);
@@ -231,7 +237,7 @@ export function lockDataDir(
 	// the other. That file keeps the bare process id older versions read.
 	const legacy = resolve(dataDir, legacyName(name));
 	try {
-		takeLock(legacy, String(process.pid), replaced);
+		takeLock(legacy, String(process.pid), replaced, seesEveryProcess);
 	} catch (error) {
 		heldLocks.delete(path);
 		release();
@@ -332,6 +338,7 @@ function oldLockVerdict(
 	path: string,
 	owner: LockOwner,
 	replaced: LockOwner | null,
+	seesEveryProcess: boolean,
 ): { stale: true } | { stale: false; error: DataDirInUseError } {
 	// The old-style twin of a lock already found stale.
 	if (replaced && owner.host === undefined && owner.pid === replaced.pid) {
@@ -358,11 +365,13 @@ function oldLockVerdict(
 		return { stale: false, error: inUse(owner) };
 	}
 	// A bare process id was written by a version from before the Docker
-	// image, which ran only on this machine: a process gone from here is
-	// gone. This process's own id is the one case left to doubt: in a
-	// container every server is process 1.
+	// image, a desktop app or the command line on the computer itself. Where
+	// this process sees that computer's processes, one gone from here is
+	// gone. A container or WSL does not see the host's, nor the host theirs
+	// through a shared folder; and this process's own id may be another
+	// container's process 1.
 	if (writtenBeforeBoot(path)) return { stale: true };
-	if (owner.pid !== process.pid && !isRunning(owner.pid)) {
+	if (seesEveryProcess && owner.pid !== process.pid && !isRunning(owner.pid)) {
 		return { stale: true };
 	}
 	return {
@@ -371,6 +380,25 @@ function oldLockVerdict(
 			`An older Hatchlight (process ${owner.pid}) holds this data directory. If no other Hatchlight uses it, delete ${path}`,
 		),
 	};
+}
+
+/**
+ * Whether this process sees the processes of the computer it runs on: not
+ * inside a container, nor in WSL, whose folders Windows programs share. On
+ * Windows and macOS it does, but for one case accepted as too rare: an
+ * older server in WSL started by hand on a Windows folder, which Windows
+ * cannot see.
+ */
+function seesAllProcesses(): boolean {
+	if (process.platform !== "linux") return true;
+	if (existsSync("/.dockerenv") || existsSync("/run/.containerenv")) {
+		return false;
+	}
+	try {
+		return !/microsoft/i.test(readFileSync("/proc/version", "utf8"));
+	} catch {
+		return false;
+	}
 }
 
 function writtenBeforeBoot(path: string): boolean {
@@ -388,7 +416,8 @@ function writtenBeforeBoot(path: string): boolean {
 function takeLock(
 	path: string,
 	content: string,
-	replaced: LockOwner | null = null,
+	replaced: LockOwner | null,
+	seesEveryProcess: boolean,
 ): LockOwner | null {
 	if (heldLocks.has(path)) {
 		throw new DataDirInUseError(
@@ -404,7 +433,7 @@ function takeLock(
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
 			const owner = readOwner(readFileSync(path, "utf8"));
-			const verdict = oldLockVerdict(path, owner, replaced);
+			const verdict = oldLockVerdict(path, owner, replaced, seesEveryProcess);
 			if (!verdict.stale) throw verdict.error;
 			stale = owner;
 			rmSync(path, { force: true }); // left behind by a process that died
