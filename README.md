@@ -17,7 +17,7 @@
   <a href="https://www.bestpractices.dev/projects/16935"><img src="https://www.bestpractices.dev/projects/16935/badge" alt="OpenSSF Best Practices"></a>
 </p>
 
-![Hatchlight: one prompt sent to SDXL Turbo and Z-Image Turbo on this computer, both pictures forming side by side, each with its time (waits sped up)](.github/assets/compare.gif)
+![Hatchlight: one prompt sent to SDXL Turbo and Stable Diffusion XL on this computer, both pictures forming side by side, each with its time (the wait is sped up 7×, as the video says)](.github/assets/compare.gif)
 
 Make pictures and videos with many AI models, side by side. Run them on your
 own graphics card for free, or use the services you already pay for with your
