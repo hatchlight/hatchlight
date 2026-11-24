@@ -27,9 +27,11 @@ import {
 	LocalTranslator,
 	legacyName,
 	mayUsePaid,
+	newId,
 	type PaidRefusal,
 	type ProviderAdapter,
 	ProviderRegistry,
+	paidError,
 	promptStyle,
 	ReelService,
 	SERVER_KEYS,
@@ -38,6 +40,7 @@ import {
 	SqliteRepository,
 	Trainer,
 	type TrainerOptions,
+	type Translator,
 	type UserContext,
 	ValidationError,
 	writerChoice,
@@ -147,6 +150,13 @@ class FakeChatModel implements ChatModel {
 		return { text: "Done: here it is. (A fake assistant.)", toolCalls: [] };
 	}
 }
+
+/**
+ * What one call to a cloud language model counts as against a monthly
+ * limit: more than a translation or a prompt costs, and about what a long
+ * assistant step costs on the larger models.
+ */
+export const LANGUAGE_CALL_USD = 0.01;
 
 /** Another Hatchlight process is already using the data directory. */
 export class DataDirInUseError extends Error {}
@@ -473,10 +483,31 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 			(adapter?.keyEnv ? process.env[adapter.keyEnv] : undefined)
 		);
 	};
+	/**
+	 * On a server, a call to a language service with the server's key is
+	 * checked against the person's limit first, and counted after. The
+	 * services do not all report usage, so each call counts as a
+	 * conservative estimate of what one costs.
+	 */
+	const metered = async <T>(userId: string, call: () => Promise<T>) => {
+		if (!refusePaid) return call();
+		const refusal = refusePaid(userId);
+		if (refusal) throw paidError(refusal);
+		const result = await call();
+		await repo.addSpending({
+			id: newId("spd"),
+			userId,
+			kind: "language",
+			jobId: null,
+			costUsd: LANGUAGE_CALL_USD,
+			createdAt: Date.now(),
+		});
+		return result;
+	};
 	const cloudFor = async (
 		ctx: UserContext,
 		service: CloudTranslatorId,
-	): Promise<CloudTranslator | null> => {
+	): Promise<(Translator & LanguageModel) | null> => {
 		const key = await keyFor(ctx, service);
 		if (!key) return null;
 		const id = `${service}:${key}`;
@@ -485,7 +516,15 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 			cloud = new CloudTranslator(service, key, options.fetch);
 			clouds.set(id, cloud);
 		}
-		return cloud;
+		const model = cloud;
+		return {
+			toEnglish: (prompt, signal) =>
+				metered(ctx.userId, () => model.toEnglish(prompt, signal)),
+			reply: (instructions, text, signal, replyOptions) =>
+				metered(ctx.userId, () =>
+					model.reply(instructions, text, signal, replyOptions),
+				),
+		};
 	};
 	const translatorFor = async (userId: string) => {
 		const ctx = { userId };
@@ -532,7 +571,14 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 			brain = new CloudChatModel(choice, key, options.fetch);
 			brains.set(id, brain);
 		}
-		return brain;
+		const model = brain;
+		return {
+			vision: model.vision,
+			chat: (instructions, messages, tools, signal) =>
+				metered(ctx.userId, () =>
+					model.chat(instructions, messages, tools, signal),
+				),
+		};
 	};
 	const engine = new JobEngine({
 		repo,

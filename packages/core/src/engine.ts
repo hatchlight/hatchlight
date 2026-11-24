@@ -1,6 +1,11 @@
 import type { AssetStore } from "./assets";
 import type { JobPatch, Repository } from "./db/repository";
-import { CodedError, describeError, ValidationError } from "./errors";
+import {
+	AccessError,
+	CodedError,
+	describeError,
+	ValidationError,
+} from "./errors";
 import { newId } from "./ids";
 import type { KeyStore } from "./keys";
 import { sniffMime } from "./mime";
@@ -78,12 +83,13 @@ export interface JobEngineDeps {
 /** Why someone may not spend on paid models. */
 export type PaidRefusal = "paidNotAllowed" | "monthlyLimitReached";
 
-export function paidError(refusal: PaidRefusal): CodedError {
-	return new CodedError(
+export function paidError(refusal: PaidRefusal): AccessError {
+	return new AccessError(
 		refusal === "paidNotAllowed"
 			? "This account cannot use paid models"
 			: "This month's limit for paid models is reached",
 		refusal,
+		403,
 	);
 }
 

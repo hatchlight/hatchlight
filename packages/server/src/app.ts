@@ -468,8 +468,7 @@ export function createApp(options: AppOptions): Hono {
 					paid.has(byId.get(id)?.providerId ?? ""),
 				)
 			) {
-				const { message, code } = paidError(refusal);
-				throw new AccessError(message, code as ErrorCode, 403);
+				throw paidError(refusal);
 			}
 		}
 		// The remaining fields are validated by the service's schema.

@@ -48,14 +48,22 @@ interface CallInit {
 
 /** A server for nas.example, behind a proxy at 10.0.0.0/8. */
 async function serverApp(
-	options: { trainer?: Runtime["trainer"]; env?: Record<string, string> } = {},
+	options: {
+		trainer?: Runtime["trainer"];
+		env?: Record<string, string>;
+		/** Stands in for the internet, the cloud services included. */
+		fetch?: (url: string, init?: RequestInit) => Promise<Response>;
+	} = {},
 ) {
 	const root = await mkdtemp(join(tmpdir(), "hatchlight-server-mode-"));
 	const paid = new FakeProvider("paid");
 	paid.requiresKey = true;
+	// Holds the key the cloud language services use.
+	const openai = new FakeProvider("openai", []);
+	openai.requiresKey = true;
 	const runtime = await createRuntime({
 		dataDir: root,
-		providers: [new FakeProvider(), paid],
+		providers: [new FakeProvider(), paid, openai],
 		localModels: [],
 		engines: [],
 		server: true,
@@ -67,7 +75,8 @@ async function serverApp(
 			gpus: [],
 		}),
 		checkEngine: async () => null,
-		fetch: async () => new Response("not here", { status: 404 }),
+		fetch:
+			options.fetch ?? (async () => new Response("not here", { status: 404 })),
 		trainerOptions: {
 			fetch: async () => new Response("not here", { status: 404 }),
 		},
@@ -998,4 +1007,48 @@ test("deleting sessions does not give back what was spent", async () => {
 		0.02,
 	);
 	expect(await errorCode(await paidTurn())).toBe("monthlyLimitReached");
+});
+
+test("language services on the server's keys count toward the monthly limit", async () => {
+	let calls = 0;
+	const { call, setupOwner, invite, runtime, userId } = await serverApp({
+		fetch: async (url) => {
+			if (!url.startsWith("https://api.openai.com/")) {
+				return new Response("not here", { status: 404 });
+			}
+			calls++;
+			return Response.json({
+				choices: [{ message: { content: "a richer prompt" } }],
+			});
+		},
+	});
+	const owner = await setupOwner();
+	await call("/api/providers/openai/key", {
+		method: "PUT",
+		who: owner,
+		body: { key: "server-key" },
+	});
+	const member = await invite(owner, {
+		canUsePaid: true,
+		monthlyLimitUsd: 0.025,
+	});
+	await call("/api/settings", {
+		method: "PUT",
+		who: member,
+		body: { improveWith: "openai" },
+	});
+	const improve = () =>
+		call("/api/prompts/improve", {
+			method: "POST",
+			who: member,
+			body: { prompt: "a fox", modelIds: ["fake/alpha"], editing: false },
+		});
+	for (let i = 0; i < 3; i++) expect((await improve()).status).toBe(200);
+	expect(runtime.accounts.spentThisMonth(userId(member.username))).toBeCloseTo(
+		0.03,
+	);
+	// Over the limit: refused, and the service is not called.
+	const refused = await improve();
+	expect(refused.status).toBeGreaterThanOrEqual(400);
+	expect(calls).toBe(3);
 });
