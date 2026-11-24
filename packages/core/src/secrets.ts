@@ -1,5 +1,11 @@
 import { hkdfSync } from "node:crypto";
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	readFileSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { appEnv } from "./legacy";
 
@@ -14,6 +20,7 @@ export class SecretError extends Error {}
 export function keysSecret(
 	dataDir: string,
 	env: Record<string, string | undefined> = process.env,
+	platform: NodeJS.Platform = process.platform,
 ): Uint8Array {
 	const named = appEnv(env, "SECRET_FILE");
 	const path = named ?? join(dataDir, "secret.key");
@@ -31,6 +38,13 @@ export function keysSecret(
 		raw = crypto.getRandomValues(new Uint8Array(32));
 		writeFileSync(path, raw, { mode: 0o600, flag: "wx" });
 		chmodSync(path, 0o600);
+	}
+	// Readable by others, it opens every key: refused, with how to fix it.
+	// Windows has no such mode bits.
+	if (platform !== "win32" && (statSync(path).mode & 0o077) !== 0) {
+		throw new SecretError(
+			`${path} can be read by other users of this machine. Make it private with: chmod 600 ${path}`,
+		);
 	}
 	if (raw.byteLength < 16) {
 		throw new SecretError(
