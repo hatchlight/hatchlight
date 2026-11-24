@@ -10,6 +10,7 @@ export type ProgressStage =
 	| "translating"
 	| "waitingGpu"
 	| "starting"
+	| "lowMemory"
 	| "loading"
 	| "generating";
 export type Operation = "generate" | "edit";
@@ -505,6 +506,8 @@ export type EngineEvent =
 			position?: number;
 			step?: number;
 			steps?: number;
+			/** Graphics memory other programs hold, when it is too little. */
+			busyBytes?: number;
 			/**
 			 * Counts the pictures shown while generating; the latest is fetched
 			 * from the job's preview, so events stay small.
@@ -519,6 +522,8 @@ export interface Gpu {
 	name: string;
 	/** Memory the GPU can use. On Apple silicon it shares the system's. */
 	memoryBytes: number;
+	/** Memory not held by any program right now, when the driver says. */
+	freeBytes?: number;
 	/** The NVIDIA driver version, which decides the CUDA versions it runs. */
 	driver?: string;
 }

@@ -515,7 +515,7 @@ ${COMMON_HELP}`,
 				],
 				...hardware.gpus.map((gpu) => [
 					"GPU",
-					`${gpu.name}, ${bytes(gpu.memoryBytes)}${gpu.driver ? `, driver ${gpu.driver}` : ""}`,
+					`${gpu.name}, ${gpu.freeBytes != null ? `${bytes(gpu.freeBytes)} free of ${bytes(gpu.memoryBytes)}` : bytes(gpu.memoryBytes)}${gpu.driver ? `, driver ${gpu.driver}` : ""}`,
 				]),
 				[
 					"Models",

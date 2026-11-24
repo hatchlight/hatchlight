@@ -517,6 +517,7 @@ export class JobEngine {
 								position: event.position,
 								step: event.step,
 								steps: event.steps,
+								busyBytes: event.busyBytes,
 								...(preview != null && { preview }),
 							});
 						} else if (event.type === "failed") {

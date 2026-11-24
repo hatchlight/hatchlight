@@ -214,6 +214,13 @@ export function JobCard(props: {
 								/>
 							)}
 						</div>
+						{job.status === "running" && progress?.busyBytes != null && (
+							<p className="text-dim">
+								{t("progress.lowMemory", {
+									size: i18n.bytes(progress.busyBytes),
+								})}
+							</p>
+						)}
 					</div>
 				</>
 			)}
@@ -455,7 +462,7 @@ function describeProgress(
 						? i18n.t("progress.waitingGpu")
 						: progress.stage === "starting"
 							? i18n.t("progress.starting")
-							: progress.stage === "loading"
+							: progress.stage === "loading" || progress.stage === "lowMemory"
 								? i18n.t("progress.loading")
 								: progress.stage === "generating"
 									? i18n.t("progress.generating")

@@ -219,6 +219,11 @@ export class WarmEngines {
 		request: WarmRequest,
 		signal: AbortSignal,
 		bytes = 0,
+		/**
+		 * Runs once this job holds the GPU's memory and is about to load its
+		 * model, given the bytes the model unloaded for it was holding.
+		 */
+		acquired?: (released: number) => AsyncIterable<ProviderEvent>,
 	): AsyncIterable<ProviderEvent> {
 		clearTimeout(this.idle);
 		this.busy++;
@@ -228,6 +233,7 @@ export class WarmEngines {
 			// behind a stream of pictures otherwise.
 			if (this.running?.key !== key || this.gpu?.wanted(this.held)) {
 				// The loaded model's memory goes back before this one's is asked.
+				const released = this.held;
 				this.stop();
 				if (this.gpu) {
 					this.hold = yield* this.gpu.acquire(bytes, signal, {
@@ -237,6 +243,7 @@ export class WarmEngines {
 					});
 					this.held = bytes;
 				}
+				if (acquired) yield* acquired(released);
 				yield {
 					type: "progress",
 					message: "Loading the model",

@@ -35,7 +35,7 @@ import { CheckpointShelf } from "./checkpoints";
 import { type BuildChoice, chooseBuild, chooseVariant, fitOf } from "./engines";
 import { isLocked, tryFileLock, withFileLock } from "./file-lock";
 import { GpuLock } from "./gpu";
-import { detectHardware } from "./hardware";
+import { detectHardware, type GpuMemory, readGpuMemory } from "./hardware";
 import { LoraShelf } from "./loras";
 import { cleanUp, type Mirror, mirrorInto, treeSize, undo } from "./move";
 import { extractTarGz } from "./tar";
@@ -101,6 +101,8 @@ export interface LocalModelStoreOptions {
 	fetch?: Fetch;
 	/** Defaults to looking at this machine. */
 	hardware?: () => Promise<Hardware>;
+	/** Reads the GPU's free memory; defaults to asking the driver. */
+	gpuMemory?: () => Promise<GpuMemory | null>;
 	/**
 	 * Tries an engine's program right after it is installed. Resolves with why
 	 * it does not run, or null when it does. Defaults to running it with
@@ -344,6 +346,8 @@ const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
  */
 /** The part of the GPU's memory local models may plan on using together. */
 const GPU_SHARE = 0.9;
+/** How long a reading of the GPU's free memory is reused. */
+const MEMORY_CACHE_MS = 3_000;
 
 export class LocalModelStore {
 	private root: string;
@@ -351,6 +355,9 @@ export class LocalModelStore {
 	private engines: LocalEngineSpec[];
 	private fetch: Fetch;
 	private detect: () => Promise<Hardware>;
+	private gpuMemory: () => Promise<GpuMemory | null>;
+	private memoryRead: { at: number; memory: Promise<GpuMemory | null> } | null =
+		null;
 	private hardware: Promise<Hardware> | null = null;
 	private checkEngine: (executable: string) => Promise<string | null>;
 	/** Builds that were installed here and did not run. */
@@ -394,6 +401,10 @@ export class LocalModelStore {
 		this.engines = options.engines;
 		this.fetch = options.fetch ?? globalThis.fetch;
 		this.detect = options.hardware ?? (() => detectHardware());
+		// Given hardware stands for a machine that is not this one.
+		this.gpuMemory =
+			options.gpuMemory ??
+			(options.hardware ? async () => null : () => readGpuMemory());
 		this.checkEngine = options.checkEngine ?? runsWithHelp;
 		this.loras = new LoraShelf({
 			root: () => this.root,
@@ -443,6 +454,43 @@ export class LocalModelStore {
 			this.checkProvided(),
 		]).then(([hardware]) => hardware);
 		return this.hardware;
+	}
+
+	/**
+	 * The free memory of the first NVIDIA card, read at most once every few
+	 * seconds and never twice at once: each read starts nvidia-smi.
+	 */
+	private freeMemory(): Promise<GpuMemory | null> {
+		const now = Date.now();
+		if (!this.memoryRead || now - this.memoryRead.at > MEMORY_CACHE_MS) {
+			this.memoryRead = {
+				at: now,
+				memory: this.gpuMemory().catch(() => null),
+			};
+		}
+		return this.memoryRead.memory;
+	}
+
+	/**
+	 * What `list` says, with the first NVIDIA card's free memory. Kept apart
+	 * from `list`, which install progress and every assistant turn call.
+	 */
+	async listWithMemory(): Promise<LocalModelsView> {
+		const view = await this.list();
+		const first = view.hardware.gpus[0];
+		if (first?.vendor !== "nvidia") return view;
+		const memory = await this.freeMemory();
+		if (!memory) return view;
+		return {
+			...view,
+			hardware: {
+				...view.hardware,
+				gpus: [
+					{ ...first, freeBytes: memory.freeBytes },
+					...view.hardware.gpus.slice(1),
+				],
+			},
+		};
 	}
 
 	/**

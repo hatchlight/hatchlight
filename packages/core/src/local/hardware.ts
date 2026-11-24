@@ -43,6 +43,47 @@ async function nvidia(run: RunCommand): Promise<Gpu[]> {
 		}));
 }
 
+/** How much of a GPU's memory is free right now, and how much it has. */
+export interface GpuMemory {
+	freeBytes: number;
+	totalBytes: number;
+}
+
+/**
+ * Reads `nvidia-smi --query-gpu=memory.free,memory.total` output, in MiB, one
+ * line per card. The first card is the one models run on; null when the
+ * output is not what was asked for.
+ */
+export function parseGpuMemory(out: string | null): GpuMemory | null {
+	const line = out?.split("\n").find((l) => l.trim());
+	if (!line) return null;
+	const [free, total, ...rest] = line.split(",").map((field) => field.trim());
+	if (rest.length > 0 || !free || !total) return null;
+	if (!/^\d+$/.test(free) || !/^\d+$/.test(total)) return null;
+	if (Number(total) <= 0 || Number(free) > Number(total)) return null;
+	return { freeBytes: Number(free) * MIB, totalBytes: Number(total) * MIB };
+}
+
+/**
+ * The first NVIDIA card's free and total memory, or null on any other card
+ * or when it cannot be read. Never throws.
+ */
+export async function readGpuMemory(
+	run: RunCommand = runCommand,
+): Promise<GpuMemory | null> {
+	try {
+		return parseGpuMemory(
+			await run([
+				"nvidia-smi",
+				"--query-gpu=memory.free,memory.total",
+				"--format=csv,noheader,nounits",
+			]),
+		);
+	} catch {
+		return null;
+	}
+}
+
 /** Apple silicon's GPU uses system memory; Metal can claim about three quarters. */
 async function apple(run: RunCommand, memoryBytes: number): Promise<Gpu[]> {
 	const brand = (

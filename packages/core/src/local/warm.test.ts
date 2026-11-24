@@ -215,6 +215,42 @@ describe("warm engines", () => {
 		gpu.close();
 	});
 
+	test("tells what an unloaded model held once the next one has the GPU, and not when the loaded one is reused", async () => {
+		const root = await mkdtemp(join(tmpdir(), "hatchlight-gpu-"));
+		roots.push(root);
+		const GB = 2 ** 30;
+		const gpu = new GpuLock({ root, capacity: async () => 12 * GB });
+		const warm = new WarmEngines({
+			spawn: fakeServers().spawn,
+			fetch: fakeApi().fetch,
+			freePort: async () => 4242,
+			idleMs: 60_000,
+			gpu,
+		});
+		const signal = new AbortController().signal;
+		const seen: [string, number, number][] = [];
+		const acquired = (name: string) =>
+			async function* (released: number): AsyncIterable<ProviderEvent> {
+				seen.push([name, released, gpu.reserved]);
+				yield { type: "progress", message: name };
+			};
+		await collect(
+			warm.run("a", ["sd-server"], request, signal, 4 * GB, acquired("a")),
+		);
+		await collect(
+			warm.run("a", ["sd-server"], request, signal, 4 * GB, acquired("again")),
+		);
+		await collect(
+			warm.run("b", ["sd-server"], request, signal, 5 * GB, acquired("b")),
+		);
+		// Called after the memory is reserved; never for the model reused.
+		expect(seen).toEqual([
+			["a", 0, 4 * GB],
+			["b", 4 * GB, 5 * GB],
+		]);
+		gpu.close();
+	});
+
 	test("a model failing to load gives its memory back", async () => {
 		const root = await mkdtemp(join(tmpdir(), "hatchlight-gpu-"));
 		roots.push(root);
