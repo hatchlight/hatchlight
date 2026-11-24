@@ -353,6 +353,8 @@ export class LocalModelStore {
 	private checkEngine: (executable: string) => Promise<string | null>;
 	/** Builds that were installed here and did not run. */
 	private broken = new Set<string>();
+	/** Builds that came with the system and did not run, never saved. */
+	private providedBroken = new Set<string>();
 	/** The models ready when the store last looked, to notice outside changes. */
 	private lastReady: string | null = null;
 	private listeners = new Set<LocalModelListener>();
@@ -385,7 +387,7 @@ export class LocalModelStore {
 		assertCatalog(options.catalog, options.engines);
 		this.root = options.root;
 		this.locationFile = options.locationFile ?? null;
-		this.enginesDir = options.enginesDir ?? null;
+		this.enginesDir = options.enginesDir ? resolve(options.enginesDir) : null;
 		this.catalog = options.catalog;
 		this.engines = options.engines;
 		this.fetch = options.fetch ?? globalThis.fetch;
@@ -433,10 +435,33 @@ export class LocalModelStore {
 	/** Looked at once: the hardware does not change while the app runs. */
 	private machine(): Promise<Hardware> {
 		// What was learned about engines that do not run here comes with it.
-		this.hardware ??= Promise.all([this.detect(), this.loadBroken()]).then(
-			([hardware]) => hardware,
-		);
+		this.hardware ??= Promise.all([
+			this.detect(),
+			this.loadBroken(),
+			this.checkProvided(),
+		]).then(([hardware]) => hardware);
 		return this.hardware;
+	}
+
+	/**
+	 * Tries the builds that came with the system, once per process: one that
+	 * does not run (no driver for the card, say) is set aside for the next
+	 * best. Only in memory, as the folder and the machine may change.
+	 */
+	private async checkProvided(): Promise<void> {
+		for (const build of this.engines.flatMap((engine) => engine.builds)) {
+			const dir = await this.providedEngineDir(build);
+			if (!dir) continue;
+			const problem = await this.checkEngine(
+				join(dir, ...build.executable.split(/[\\/]/)),
+			);
+			if (problem) {
+				console.warn(
+					`${build.id} from ${this.enginesDir} does not run: ${problem}`,
+				);
+				this.providedBroken.add(build.id);
+			}
+		}
 	}
 
 	/** Builds that were tried here and did not run, kept across restarts. */
@@ -487,7 +512,7 @@ export class LocalModelStore {
 
 	/** Where a build that came with the system is, when it did. */
 	private async providedEngineDir(build: EngineBuild): Promise<string | null> {
-		if (!this.enginesDir) return null;
+		if (!this.enginesDir || this.providedBroken.has(build.id)) return null;
 		const dir = join(this.enginesDir, build.id);
 		const info = await stat(
 			join(dir, ...build.executable.split(/[\\/]/)),
@@ -506,7 +531,10 @@ export class LocalModelStore {
 			if (!cache.has(engine)) {
 				const builds = (
 					this.engines.find((spec) => spec.id === engine)?.builds ?? []
-				).filter((build) => !this.broken.has(build.id));
+				).filter(
+					(build) =>
+						!this.broken.has(build.id) && !this.providedBroken.has(build.id),
+				);
 				cache.set(engine, chooseBuild(engine, builds, hardware));
 			}
 			return cache.get(engine) ?? null;

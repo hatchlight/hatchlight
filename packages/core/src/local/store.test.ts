@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readdir, rm, stat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative as relativeTo } from "node:path";
 import {
 	type Hardware,
 	isDemoSize,
@@ -806,7 +806,10 @@ test("engines that came with the system are used and never downloaded", async ()
 	await store.install("a");
 	await store.idle();
 	expect(requests.map((r) => r.url)).not.toContain(url("engine.zip"));
-	expect(checked).toEqual([]);
+	// Tried once, when the store first looked at the machine.
+	expect(checked).toEqual([
+		join(enginesDir, "run-linux-x64-cuda", "bin", "run"),
+	]);
 	expect(await engines()).toEqual([]);
 	const runtime = await store.runtime("a");
 	expect(runtime.build.id).toBe("run-linux-x64-cuda");
@@ -821,6 +824,41 @@ test("engines that came with the system are used and never downloaded", async ()
 		await Bun.file(join(enginesDir, "run-linux-x64-cuda", "bin", "run")).text(),
 	).toBe("#!/bin/sh\necho run");
 	expect(await readdir(join(root, "engines")).catch(() => [])).toEqual([]);
+});
+
+test("an engine from the system's folder that does not run is set aside", async () => {
+	const enginesDir = await providedEngines([
+		"run-linux-x64-cuda",
+		"run-linux-x64-cpu",
+	]);
+	const checkEngine = async (executable: string) =>
+		executable.includes("cuda") ? "libcuda.so.1 was not found" : null;
+	const { store, root, requests } = await setup({ enginesDir, checkEngine });
+	await store.install("a", "small");
+	await store.idle();
+	const runtime = await store.runtime("a");
+	expect(runtime.build.id).toBe("run-linux-x64-cpu");
+	expect(runtime.executable).toBe(
+		join(enginesDir, "run-linux-x64-cpu", "bin", "run"),
+	);
+	expect(requests.map((r) => r.url)).not.toContain(url("engine.zip"));
+	// Only in memory: the next start tries it again.
+	expect(await Bun.file(join(root, "broken-engines.json")).exists()).toBe(
+		false,
+	);
+	const again = await setup({ root, enginesDir });
+	expect((await again.store.runtime("a")).build.id).toBe("run-linux-x64-cuda");
+});
+
+test("a relative system engines folder is taken from where the app started", async () => {
+	const enginesDir = await providedEngines(["run-linux-x64-cuda"]);
+	const relative = join(".", relativeTo(process.cwd(), enginesDir));
+	const { store } = await setup({ enginesDir: relative });
+	await store.install("a");
+	await store.idle();
+	expect((await store.runtime("a")).executable).toBe(
+		join(enginesDir, "run-linux-x64-cuda", "bin", "run"),
+	);
 });
 
 test("an engine missing from the system's folder is downloaded as usual", async () => {
