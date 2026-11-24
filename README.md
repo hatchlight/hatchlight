@@ -18,20 +18,21 @@ own keys. Open source, no account, no telemetry.
 
 | SDXL Turbo                                   | Stable Diffusion XL                    | FLUX.1 schnell                                 | Z-Image Turbo                                   |
 | -------------------------------------------- | -------------------------------------- | ---------------------------------------------- | ----------------------------------------------- |
-| ![](apps/web/public/samples/sdxl-turbo.webp) | ![](apps/web/public/samples/sdxl.webp) | ![](apps/web/public/samples/flux-schnell.webp) | ![](apps/web/public/samples/z-image-turbo.webp) |
+| ![Fox by SDXL Turbo](apps/web/public/samples/sdxl-turbo.webp) | ![Fox by Stable Diffusion XL](apps/web/public/samples/sdxl.webp) | ![Fox by FLUX.1 schnell](apps/web/public/samples/flux-schnell.webp) | ![Fox by Z-Image Turbo](apps/web/public/samples/z-image-turbo.webp) |
 
 _One prompt, four models, one RTX 4070 SUPER: "a red fox curled up in fresh
 snow, soft morning light"._
 
 ## What it does
 
-**Models on your computer.** 36 models in the catalog, each in the versions
-(16, 8 or 4 bit) that fit different amounts of memory:
+**Models on your computer.** 33 picture and video models in the catalog, many
+of them in 16, 8 and 4 bit versions for different amounts of memory:
 
 - pictures: SDXL Turbo, Stable Diffusion XL and 1.5, FLUX.1 schnell, FLUX.2
   klein, Z-Image, Qwen-Image, Chroma1, LongCat-Image, HiDream-O1, PixArt-Σ and
   more;
-- editing by instruction: Qwen-Image-Edit, LongCat-Image-Edit, FLUX.2 klein;
+- editing by instruction: Qwen-Image-Edit, LongCat-Image-Edit, FLUX.2 klein
+  and more;
 - video: Wan 2.1 and Wan 2.2, from words or from a first frame;
 - Real-ESRGAN to upscale ×4.
 
@@ -52,9 +53,9 @@ only that part, make room around it, crop, turn or flip it, or upscale it.
 train an SDXL LoRA from your pictures: Hatchlight writes the captions, shows
 sample pictures while it learns, and lets you keep an earlier step.
 
-**An assistant.** Talk to it in the Chat view ("make the fox bigger", "now in
-16:9, with FLUX") and it picks models, writes the prompts and makes the
-pictures; it can look at what came out and suggest a fix. The Advanced view
+**An assistant.** Talk to it in the Chat view: "make the fox bigger", "now in
+16:9, with FLUX". It picks models, writes the prompts and makes the pictures.
+It can look at what came out and suggest a fix. The Advanced view
 shows the same session with every setting. It asks before anything paid and
 keeps to a spend limit. Write in your own language: each model gets the prompt
 in the words it understands, and **Improve prompt** turns a short idea into a
@@ -76,14 +77,15 @@ welcome: see [Translate](CONTRIBUTING.md#translate).
 | macOS, Intel         | Yes     | Not yet: cloud models only for now                   |
 
 Linux builds of the engines are in progress. Under WSL on Windows, the Windows
-engines are used and models on your computer work.
+engines run, so models on your computer work there.
 
 Some parts need more:
 
-- training a LoRA needs an NVIDIA card with about 8 GB of memory, on Windows or
-  Linux, and downloads 4 to 6 GB of tools the first time;
-- the local assistant, prompt translation and Improve prompt run on the CPU on
-  Windows; elsewhere they can use a cloud key instead.
+- training a LoRA needs Windows (or WSL) and an NVIDIA card with 12 GB of
+  memory, and downloads about 6 GB of tools the first time;
+- prompt translation and Improve prompt run on your computer on Windows and
+  WSL, and the local assistant only in the Windows app; elsewhere they can use
+  a cloud key instead.
 
 ## Install
 
@@ -144,10 +146,11 @@ Sessions, pictures and keys stay on your computer:
 | macOS   | `~/Library/Application Support/hatchlight`                 |
 | Linux   | `$XDG_DATA_HOME/hatchlight` or `~/.local/share/hatchlight` |
 
-`HATCHLIGHT_DATA_DIR` or `--data-dir` puts it elsewhere, and
+On Windows, models and the LoRA trainer live in `%LOCALAPPDATA%\hatchlight`.
+`HATCHLIGHT_DATA_DIR` or `--data-dir` puts the data elsewhere, and
 `HATCHLIGHT_MODELS_DIR` moves only the models; the app can also move them to
-another disk for you. Under WSL, models are kept on the Windows side, where the
-graphics card driver reads them fastest. Installs made before the rename to
+another disk for you. Under WSL, models stay on the Windows side. The graphics
+card driver reads them fastest there. Installs made before the rename to
 Hatchlight keep using their `open-reel` folders and `OPEN_REEL_*` variables.
 
 Keys are sent only to the provider they belong to and are never returned by
@@ -155,7 +158,8 @@ the API. The server listens on `127.0.0.1` only and refuses requests that do
 not come from its own page, so other websites cannot use your keys. Nothing is
 collected about you: Hatchlight has no telemetry. Besides the providers you
 use, it only connects to the sites that host the models, the engines and their
-sample pictures, and to GitHub to check for updates.
+sample pictures, to PyTorch's and Python's package sites when you install the
+LoRA trainer, and to GitHub to check for updates.
 
 ## Responsible use
 
