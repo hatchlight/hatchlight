@@ -385,17 +385,29 @@ function oldLockVerdict(
 /**
  * Whether this process sees the processes of the computer it runs on: not
  * inside a container, nor in WSL, whose folders Windows programs share. On
- * Windows and macOS it does, but for one case accepted as too rare: an
- * older server in WSL started by hand on a Windows folder, which Windows
- * cannot see.
+ * Windows and macOS it does. Two cases are accepted as too rare: an older
+ * server in WSL started by hand on a Windows folder, which Windows cannot
+ * see, and an older app on another computer sharing a network folder.
  */
 function seesAllProcesses(): boolean {
 	if (process.platform !== "linux") return true;
-	if (existsSync("/.dockerenv") || existsSync("/run/.containerenv")) {
+	// Docker, Podman, Flatpak, and runtimes that say so in the environment.
+	if (
+		["/.dockerenv", "/run/.containerenv", "/.flatpak-info"].some((path) =>
+			existsSync(path),
+		) ||
+		process.env.container ||
+		process.env.KUBERNETES_SERVICE_HOST
+	) {
 		return false;
 	}
 	try {
-		return !/microsoft/i.test(readFileSync("/proc/version", "utf8"));
+		if (/microsoft/i.test(readFileSync("/proc/version", "utf8"))) return false;
+		// A machine's first process is its init; a container's is its program
+		// (Kubernetes, containerd, LXC say nothing else). Anything unknown
+		// counts as a container, which keeps the old answer.
+		const first = readFileSync("/proc/1/comm", "utf8").trim();
+		return first === "systemd" || first === "init";
 	} catch {
 		return false;
 	}
