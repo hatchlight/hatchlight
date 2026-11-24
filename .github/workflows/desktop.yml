@@ -72,3 +72,40 @@ jobs:
           name: hatchlight-${{ matrix.os }}-${{ matrix.rust-target || 'native' }}
           path: apps/desktop/src-tauri/target/**/release/bundle/
           if-no-files-found: error
+
+  # The release files' SHA-256, for the provenance below.
+  hashes:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      # The release is still a draft, which only a token that can write sees.
+      contents: write
+    outputs:
+      subjects: ${{ steps.hash.outputs.subjects }}
+    steps:
+      - id: hash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir files
+          cd files
+          echo "subjects=$(sha256sum -- * | base64 -w0)" >> "$GITHUB_OUTPUT"
+
+  # Signed SLSA provenance, added to the release as hatchlight.intoto.jsonl:
+  # anyone can check a file came from this workflow at this commit.
+  provenance:
+    needs: hashes
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    # Reusable workflows from slsa-github-generator must be referenced by tag.
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: ${{ needs.hashes.outputs.subjects }}
+      provenance-name: hatchlight.intoto.jsonl
+      upload-assets: true
+      upload-tag-name: ${{ github.ref_name }}
+      draft-release: true
