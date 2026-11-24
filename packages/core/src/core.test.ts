@@ -1239,3 +1239,48 @@ describe("assistant conversations", () => {
 		repo.close();
 	});
 });
+
+describe("a line shared by several people", () => {
+	test("takes turns between people, not first come first served", async () => {
+		const provider = new FakeProvider();
+		// One at a time, as a graphics card runs them.
+		provider.maxConcurrency = 1;
+		const app = boot(await tempDir(), provider);
+		const held = gate();
+		provider.gate = held.promise;
+		const places = new Map<string, number>();
+		app.engine.subscribe((_, event) => {
+			if (event.type === "job.progress" && event.stage === "queued") {
+				places.set(event.jobId, event.position ?? 0);
+			}
+		});
+		const ana = { userId: "ana" };
+		const bia = { userId: "bia" };
+		const turn = async (who: { userId: string }, prompt: string) =>
+			(
+				await app.service.createTurn(who, {
+					prompt,
+					modelIds: ["fake/alpha"],
+				})
+			).turn.jobs[0]?.id as string;
+		// Ana asks for five pictures; the first starts at once.
+		for (let i = 1; i <= 5; i++) await turn(ana, `ana ${i}`);
+		await settle();
+		// Then Bia asks for one.
+		const biaJob = await turn(bia, "bia 1");
+		await settle();
+		// Bia is told she is next, not sixth.
+		expect(places.get(biaJob)).toBe(1);
+
+		held.open();
+		await app.engine.idle();
+		expect(provider.submitted.map((job) => job.prompt)).toEqual([
+			"ana 1",
+			"bia 1",
+			"ana 2",
+			"ana 3",
+			"ana 4",
+			"ana 5",
+		]);
+	});
+});
