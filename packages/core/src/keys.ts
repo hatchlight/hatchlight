@@ -31,6 +31,14 @@ function isPrototypeName(name: string): boolean {
 	return name === "__proto__" || name === "constructor" || name === "prototype";
 }
 
+/** Keys a secret could not open, kept aside rather than lost. */
+export interface UnreadableKeys {
+	/** Where the file was moved, as it was. */
+	file: string;
+	/** Whose keys were in it: people's ids, and the server's. */
+	owners: string[];
+}
+
 /** How an encrypted value starts; anything else is from before encryption. */
 const SEALED = "enc:v1:";
 
@@ -87,17 +95,29 @@ export class FileKeyStore implements KeyStore {
 	}
 
 	/**
-	 * Checks every key opens with this secret, then encrypts those saved
-	 * before encryption, in one atomic rewrite. Says if it rewrote.
+	 * Gets the keys ready at start. Keys saved before encryption are
+	 * encrypted, in one atomic rewrite. Keys this secret cannot open are not
+	 * lost: the file is moved aside, untouched, and the store starts empty;
+	 * what was set aside, and whose keys were in it, is returned.
 	 */
-	async migrate(): Promise<boolean> {
-		await this.read();
+	async prepare(): Promise<UnreadableKeys | null> {
+		try {
+			await this.read();
+		} catch (error) {
+			if (!(error instanceof SecretError)) throw error;
+			const owners = Object.keys(await this.readRaw());
+			const aside = `${this.path.replace(/\.json$/, "")}.unreadable-${new Date()
+				.toISOString()
+				.replace(/[:.]/g, "-")}.json`;
+			await rename(this.path, aside);
+			return { file: aside, owners };
+		}
 		const raw = await this.readRaw();
 		const plain = Object.values(raw).some((keys) =>
 			Object.values(keys ?? {}).some((value) => !value.startsWith(SEALED)),
 		);
 		if (plain) await this.change(() => {});
-		return plain;
+		return null;
 	}
 
 	private change(mutate: (data: KeyFile) => void): Promise<void> {

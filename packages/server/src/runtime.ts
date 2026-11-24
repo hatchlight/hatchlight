@@ -52,6 +52,7 @@ import {
 	type TrainerOptions,
 	type Translator,
 	tryFileLock,
+	type UnreadableKeys,
 	type UserContext,
 	ValidationError,
 	writerChoice,
@@ -73,6 +74,14 @@ export interface Runtime {
 	accounts: AccountService;
 	/** Signs device cookies; servers only. */
 	deviceKey?: Uint8Array;
+	/**
+	 * Whether keys the person relied on were set aside at start, because the
+	 * secret could not open them: theirs, or for an owner the server's. Until
+	 * they say they saw it.
+	 */
+	keysLost(user: { userId: string; owner: boolean }): boolean;
+	/** The person saw that their keys were lost. */
+	dismissKeysLost(userId: string): void;
 	/** Why a person may not spend on paid models now; servers only. */
 	paidRefusal?: (userId: string, source: KeySource) => PaidRefusal | null;
 	engine: JobEngine;
@@ -532,13 +541,16 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		(userId, bytes) => accountsRepo.addAssetBytes(userId, bytes),
 	);
 	// Keys are encrypted at rest; those saved before are encrypted now.
+	// Keys the secret cannot open are set aside, never lost, and the app
+	// starts without them.
+	let unreadableKeys: UnreadableKeys | null = null;
 	const fileKeys = await (async () => {
 		try {
 			const store = new FileKeyStore(
 				join(options.dataDir, "auth.json"),
 				keysSecret(options.dataDir),
 			);
-			await store.migrate();
+			unreadableKeys = await store.prepare();
 			return store;
 		} catch (error) {
 			repo.close();
@@ -546,6 +558,13 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 			throw error;
 		}
 	})();
+	if (unreadableKeys) {
+		console.warn(
+			`The saved API keys could not be read with this secret, so Hatchlight starts without them. They are kept in ${(unreadableKeys as UnreadableKeys).file}: to use them again, stop Hatchlight, put back the secret they were saved with (HATCHLIGHT_SECRET_FILE, or secret.key in the data directory) and move that file back to auth.json. Otherwise, enter the keys again.`,
+		);
+	}
+	/** People told their keys were lost, who need not be told again. */
+	const toldOfKeys = new Set<string>();
 	const settings = new FileSettingsStore(
 		join(options.dataDir, "settings.json"),
 	);
@@ -779,6 +798,17 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 			? deviceKey(join(options.dataDir, "device.key"))
 			: undefined,
 		paidRefusal: refusePaid,
+		keysLost: ({ userId, owner }) => {
+			const lost = unreadableKeys as UnreadableKeys | null;
+			if (!lost || toldOfKeys.has(userId)) return false;
+			return (
+				lost.owners.includes(userId) ||
+				(owner && lost.owners.includes(SERVER_KEYS.userId))
+			);
+		},
+		dismissKeysLost: (userId) => {
+			toldOfKeys.add(userId);
+		},
 		engine,
 		models,
 		trainer,

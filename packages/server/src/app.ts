@@ -63,6 +63,9 @@ export interface AppOptions {
 	 * computer.
 	 */
 	server?: ServerTransport;
+	/** Whether keys the person relied on were set aside at start; see Runtime. */
+	keysLost?: (user: { userId: string; owner: boolean }) => boolean;
+	dismissKeysLost?: (userId: string) => void;
 	/** LoRAs each member may add, on a server. Defaults to 20 files, 10 GB. */
 	loraQuota?: LoraQuota;
 	/**
@@ -478,6 +481,21 @@ export function createApp(options: AppOptions): Hono {
 			return c.body(null, 204);
 		});
 	}
+	// Keys the secret could not open were set aside at start: those who
+	// relied on them are told to enter them again.
+	app.get("/api/keys/lost", (c) =>
+		c.json({
+			lost:
+				options.keysLost?.({
+					userId: user(c).userId,
+					owner: !server || c.get("viewer").user.role === "owner",
+				}) ?? false,
+		}),
+	);
+	app.delete("/api/keys/lost", (c) => {
+		options.dismissKeysLost?.(user(c).userId);
+		return c.body(null, 204);
+	});
 	// On a server, these are the server's keys; on a personal install, the
 	// person's.
 	const keysOf = (c: Context) => (server ? SERVER_KEYS : user(c));

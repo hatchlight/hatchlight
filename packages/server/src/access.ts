@@ -38,6 +38,8 @@ export const ROUTE_ACCESS: Readonly<Record<string, Access>> = {
 	"GET /api/account": "account",
 	"DELETE /api/account/reset-notice": "account",
 	"PUT /api/account/keys/:id": "account",
+	"GET /api/keys/lost": "account",
+	"DELETE /api/keys/lost": "account",
 	"DELETE /api/account/keys/:id": "account",
 	"PUT /api/account/password": "account",
 	"GET /api/account/sessions": "account",

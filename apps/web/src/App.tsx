@@ -50,6 +50,7 @@ import { AccountMenu } from "./Accounts";
 import { api } from "./api";
 import { Chat } from "./Chat";
 import { useI18n } from "./i18n";
+import { KeysLostToast } from "./KeysLostToast";
 import { useLiveJobs } from "./live";
 import { href, navigate, type Route, useRoute } from "./route";
 import { UpdateToast } from "./UpdateToast";
@@ -106,6 +107,7 @@ export function App() {
 	return (
 		<SidebarProvider defaultOpen={sidebarStartsOpen()} className="h-full">
 			<UpdateToast />
+			<KeysLostToast />
 			<AppSidebar route={route} />
 			<SidebarInset className="min-h-0 overflow-hidden bg-bg">
 				{route.view === "chat" ? (

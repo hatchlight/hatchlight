@@ -332,6 +332,8 @@
 	"job.translated": "Enviado em inglês, que este modelo entende melhor:",
 	"job.upscale": "Ampliar ×{factor}",
 	"job.waiting": "Esperando uma vaga",
+	"keys.lost": "Não foi possível ler suas chaves salvas, então digite-as de novo.",
+	"keys.lostOpen": "Abrir Configurações",
 	"lightbox.cost": "Custo",
 	"lightbox.download": "Baixar",
 	"lightbox.length": "Duração",

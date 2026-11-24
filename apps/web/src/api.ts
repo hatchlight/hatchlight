@@ -262,6 +262,9 @@ export const api = {
 			headers: { "content-type": file.type },
 			body: file,
 		}),
+	/** Whether keys this person relied on could not be read at start. */
+	keysLost: () => request<{ lost: boolean }>("/api/keys/lost"),
+	dismissKeysLost: () => request<void>("/api/keys/lost", { method: "DELETE" }),
 	deleteAsset: (id: string) =>
 		request<void>(`/api/assets/${id}`, { method: "DELETE" }),
 	localModels: () => request<LocalModelsView>("/api/local-models"),

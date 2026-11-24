@@ -114,11 +114,11 @@ describe("keys at rest", () => {
 		const path = await at();
 		await Bun.write(path, JSON.stringify({ local: { fal: "sk-plain" } }));
 		const keys = new FileKeyStore(path, SECRET);
-		expect(await keys.migrate()).toBe(true);
+		expect(await keys.prepare()).toBeNull();
 		expect(await Bun.file(path).text()).not.toContain("sk-plain");
 		expect(await keys.get(me, "fal")).toBe("sk-plain");
 		// Done once.
-		expect(await keys.migrate()).toBe(false);
+		expect(await Bun.file(path).text()).toContain("enc:v1:");
 	});
 
 	test("cannot be read with another secret, which leaves them as they are", async () => {
@@ -133,8 +133,15 @@ describe("keys at rest", () => {
 		await expect(other.set(me, "openai", "sk-2")).rejects.toThrow(
 			"cannot be read with this secret",
 		);
-		await expect(other.migrate()).rejects.toThrow(SecretError);
-		expect(await Bun.file(path).text()).toBe(before);
+		// At start, the file is moved aside as it was, and the store is empty.
+		const unreadable = await other.prepare();
+		expect(unreadable?.owners).toEqual(["local"]);
+		expect(await Bun.file(unreadable?.file as string).text()).toBe(before);
+		expect(unreadable?.file).toContain("auth.unreadable-");
+		expect(await Bun.file(path).exists()).toBe(false);
+		expect(await other.list(me)).toEqual([]);
+		await other.set(me, "openai", "sk-new");
+		expect(await other.get(me, "openai")).toBe("sk-new");
 	});
 
 	test("cannot be moved to another person or provider by editing the file", async () => {

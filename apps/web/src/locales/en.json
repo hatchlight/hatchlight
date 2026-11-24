@@ -332,6 +332,8 @@
 	"job.translated": "Sent in English, which this model reads best:",
 	"job.upscale": "Upscale ×{factor}",
 	"job.waiting": "Waiting for a free slot",
+	"keys.lost": "Your saved keys could not be read, so enter them again.",
+	"keys.lostOpen": "Open Settings",
 	"lightbox.cost": "Cost",
 	"lightbox.download": "Download",
 	"lightbox.length": "Length",
