@@ -371,6 +371,8 @@ export function createApp(options: AppOptions): Hono {
 	});
 
 	app.onError((error, c) => {
+		// The browser went away: nobody to answer, nothing to log.
+		if (c.req.raw.signal.aborted) return new Response(null, { status: 499 });
 		// The code and its values let the interface say it in the reader's language.
 		const body = (e: CodedError) => ({
 			error: e.message,

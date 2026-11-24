@@ -1495,6 +1495,7 @@ test("a sign-in whose browser left while it waited is never checked", async () =
 	gone.abort();
 	release();
 	expect((await first).status).toBe(401);
-	await second;
+	// Answered quietly: a request that went away is not a server error.
+	expect(await second).not.toBe(500);
 	expect(checked).toEqual(["first password try"]);
 });
