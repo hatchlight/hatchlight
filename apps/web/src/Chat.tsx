@@ -574,7 +574,9 @@ export function Chat({
 	return (
 		<>
 			{firstRun ? (
-				<div className="min-h-0 flex-1 overflow-y-auto">
+				// The welcome's glow spills past the sides by design: cut at the
+				// window's edge, not scrolled to.
+				<div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
 					<div className="mx-auto max-w-5xl px-4 py-6 md:px-8">
 						<Welcome
 							busy={create.isPending}
