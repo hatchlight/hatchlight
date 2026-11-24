@@ -26,6 +26,36 @@ export const SESSION_MS = 30 * DAY_MS;
 /** Sessions are written to at most this often as they are used. */
 const TOUCH_MS = 60 * 1000;
 const INVITE_MS = 7 * DAY_MS;
+/**
+ * Argon2 takes memory and time on purpose; a flood of sign-ins must not
+ * take all of both. At most this many run at once, the others wait.
+ */
+export const MAX_HASHING = 4;
+let hashingNow = 0;
+const hashingQueue: (() => void)[] = [];
+
+async function hashing<T>(work: () => Promise<T>): Promise<T> {
+	if (hashingNow >= MAX_HASHING) {
+		await new Promise<void>((resolve) => hashingQueue.push(resolve));
+	} else {
+		hashingNow++;
+	}
+	try {
+		return await work();
+	} finally {
+		const next = hashingQueue.shift();
+		// The slot goes straight to the next in line.
+		if (next) next();
+		else hashingNow--;
+	}
+}
+
+/** How many password checks or hashes are running now. */
+export const hashingRunning = () => hashingNow;
+
+const verifyPassword = (password: string, hash: string) =>
+	hashing(() => Bun.password.verify(password, hash));
+
 const USERNAME = /^[\p{L}\p{N}._-]{1,32}$/u;
 
 /** A secret to hand out once: 32 random bytes, in base64url. */
@@ -196,10 +226,10 @@ export class AccountService {
 		const user = this.repo.findUser(input.username.trim());
 		const password = input.password.slice(0, MAX_PASSWORD_LENGTH);
 		if (!user) {
-			await Bun.password.verify(password, await this.dummyHash());
+			await verifyPassword(password, await this.dummyHash());
 			throw badCredentials();
 		}
-		const right = await Bun.password.verify(password, user.passwordHash);
+		const right = await verifyPassword(password, user.passwordHash);
 		if (!right || user.disabledAt != null) throw badCredentials();
 		if (user.totpSecret) {
 			if (!input.totp) {
@@ -299,7 +329,7 @@ export class AccountService {
 	): Promise<void> {
 		const user = this.mustGet(userId);
 		if (
-			!(await Bun.password.verify(
+			!(await verifyPassword(
 				input.current.slice(0, MAX_PASSWORD_LENGTH),
 				user.passwordHash,
 			))
@@ -339,7 +369,7 @@ export class AccountService {
 	async disableTotp(userId: string, password: string): Promise<void> {
 		const user = this.mustGet(userId);
 		if (
-			!(await Bun.password.verify(
+			!(await verifyPassword(
 				password.slice(0, MAX_PASSWORD_LENGTH),
 				user.passwordHash,
 			))
@@ -597,7 +627,7 @@ export async function hashPassword(password: string): Promise<string> {
 	if (password.length > MAX_PASSWORD_LENGTH) {
 		throw new ValidationError("That password is too long");
 	}
-	return Bun.password.hash(password, { algorithm: "argon2id" });
+	return hashing(() => Bun.password.hash(password, { algorithm: "argon2id" }));
 }
 
 function inviteView(row: InviteRow): InviteView {

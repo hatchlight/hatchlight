@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
 import {
 	AccountService,
+	hashingRunning,
 	hashToken,
+	MAX_HASHING,
 	MIN_PASSWORD_LENGTH,
 	SESSION_MS,
 } from "./accounts";
@@ -376,4 +378,23 @@ test("API tokens act for their person until they expire", async () => {
 	expect(accounts.resolveApiToken(`${token}x`)).toBeNull();
 	tick(2 * 24 * 60 * 60 * 1000);
 	expect(accounts.resolveApiToken(token)).toBeNull();
+});
+
+test("only a few password checks run at once, the others wait", async () => {
+	const { accounts } = await withOwner();
+	let most = 0;
+	const watch = setInterval(() => {
+		most = Math.max(most, hashingRunning());
+	}, 1);
+	await Promise.all(
+		Array.from({ length: 12 }, () =>
+			accounts
+				.login({ username: "owner", password: "not it at all" })
+				.catch(() => {}),
+		),
+	);
+	clearInterval(watch);
+	expect(most).toBeGreaterThan(0);
+	expect(most).toBeLessThanOrEqual(MAX_HASHING);
+	expect(hashingRunning()).toBe(0);
 });

@@ -11,6 +11,7 @@ import {
 import type { Context, Hono } from "hono";
 import { clearSessionCookie, setSessionCookie } from "./auth";
 import { Limiter } from "./limiter";
+import { parseIp } from "./transport";
 
 /**
  * Sign-in, one's own account, invites and people: the routes a server has
@@ -21,8 +22,14 @@ export function mountAccounts(
 	accounts: AccountService,
 	json: (c: Context) => Promise<Record<string, unknown>>,
 	limits = {
+		// Guesses from one address, whatever name they try.
 		byAddress: new Limiter({ freeTries: 20 }),
-		byName: new Limiter({ freeTries: 5 }),
+		// One name from one address: the real lock.
+		byNameAndAddress: new Limiter({ freeTries: 5 }),
+		// One name from everywhere: soft, so nobody can lock its owner out.
+		byName: new Limiter({ freeTries: 50, maxDelayMs: 30_000 }),
+		// Setup codes and invites, apart from signing in.
+		joining: new Limiter({ freeTries: 10 }),
 	},
 ): void {
 	const where = (c: Context) => ({
@@ -38,19 +45,30 @@ export function mountAccounts(
 
 	/**
 	 * Runs a guess (a password, a code) unless the address or name guessed too
-	 * often lately; counts it when it fails.
+	 * often lately. The try is counted before the work, so tries sent at once
+	 * cannot slip through, and given back when it was right.
 	 */
 	const guarded = async <T>(
 		c: Context,
 		name: string | null,
+		kind: "signIn" | "joining",
 		attempt: () => Promise<T>,
 	): Promise<T> => {
-		const keys = [`ip:${c.get("client") ?? "unknown"}`];
-		const nameKey = name ? `user:${name.trim().toLowerCase()}` : null;
-		const wait = Math.max(
-			limits.byAddress.wait(keys[0] as string),
-			nameKey ? limits.byName.wait(nameKey) : 0,
-		);
+		const address = `ip:${addressGroup(c.get("client"))}`;
+		const lowered = name?.trim().toLowerCase() ?? null;
+		const counted: [Limiter, string][] =
+			kind === "joining"
+				? [[limits.joining, address]]
+				: [
+						[limits.byAddress, address],
+						...(lowered
+							? ([
+									[limits.byNameAndAddress, `${lowered}|${address}`],
+									[limits.byName, `user:${lowered}`],
+								] as [Limiter, string][])
+							: []),
+					];
+		const wait = Math.max(...counted.map(([limit, key]) => limit.wait(key)));
 		if (wait > 0) {
 			const seconds = Math.ceil(wait / 1000);
 			c.header("retry-after", String(seconds));
@@ -61,15 +79,20 @@ export function mountAccounts(
 				{ seconds },
 			);
 		}
+		for (const [limit, key] of counted) limit.fail(key);
+		const refund = () => {
+			for (const [limit, key] of counted) limit.refund(key);
+		};
 		try {
 			const result = await attempt();
-			if (nameKey) limits.byName.succeed(nameKey);
+			refund();
+			if (lowered) limits.byNameAndAddress.succeed(`${lowered}|${address}`);
 			return result;
 		} catch (error) {
-			// Asking for the second step is not a failed guess.
-			if (error instanceof AccessError && error.code !== "totpRequired") {
-				limits.byAddress.fail(keys[0] as string);
-				if (nameKey) limits.byName.fail(nameKey);
+			// Asking for the second step is not a failed guess, nor is a
+			// request that guessed nothing.
+			if (!(error instanceof AccessError) || error.code === "totpRequired") {
+				refund();
 			}
 			throw error;
 		}
@@ -78,7 +101,7 @@ export function mountAccounts(
 	app.get("/api/setup", (c) => c.json({ needed: accounts.needsSetup() }));
 	app.post("/api/setup", async (c) => {
 		const body = await json(c);
-		const signed = await guarded(c, null, () =>
+		const signed = await guarded(c, null, "joining", () =>
 			accounts.setup(
 				{
 					code: text(body.code, "code"),
@@ -95,7 +118,11 @@ export function mountAccounts(
 	app.post("/api/login", async (c) => {
 		const body = await json(c);
 		const username = text(body.username, "username");
-		const signed = await guarded(c, username, () =>
+		// No account has a longer name: nothing to guess, nothing to keep.
+		if (username.trim().length > 32) {
+			throw new ValidationError("No such username", "usernameInvalid");
+		}
+		const signed = await guarded(c, username, "signIn", () =>
 			accounts.login(
 				{
 					username,
@@ -120,7 +147,7 @@ export function mountAccounts(
 	app.put("/api/account/password", async (c) => {
 		const body = await json(c);
 		const { user, sessionId } = c.get("viewer");
-		await guarded(c, user.username, () =>
+		await guarded(c, user.username, "signIn", () =>
 			accounts.changePassword(
 				user.id,
 				{
@@ -152,7 +179,7 @@ export function mountAccounts(
 	app.put("/api/account/totp", async (c) => {
 		const body = await json(c);
 		const { user } = c.get("viewer");
-		await guarded(c, user.username, async () =>
+		await guarded(c, user.username, "signIn", async () =>
 			accounts.enableTotp(
 				user.id,
 				text(body.secret, "secret"),
@@ -164,7 +191,7 @@ export function mountAccounts(
 	app.delete("/api/account/totp", async (c) => {
 		const body = await json(c);
 		const { user } = c.get("viewer");
-		await guarded(c, user.username, () =>
+		await guarded(c, user.username, "signIn", () =>
 			accounts.disableTotp(user.id, text(body.password, "password")),
 		);
 		return c.body(null, 204);
@@ -183,7 +210,7 @@ export function mountAccounts(
 	});
 	app.post("/api/invites/:token/accept", async (c) => {
 		const body = await json(c);
-		const signed = await guarded(c, null, () =>
+		const signed = await guarded(c, null, "joining", () =>
 			accounts.acceptInvite(
 				c.req.param("token"),
 				{
@@ -265,4 +292,24 @@ function inviteTerms(body: Record<string, unknown>): InviteTerms {
 		canTrain: body.canTrain === true,
 		monthlyLimitUsd: limit(body.monthlyLimitUsd ?? null),
 	};
+}
+
+/**
+ * The address a limit counts: one IPv6 network (/64) counts as one, since
+ * a single home or server gets a whole /64 to pick addresses from.
+ */
+export function addressGroup(address: string | null | undefined): string {
+	if (!address) return "unknown";
+	const bytes = parseIp(address);
+	if (!bytes) return address;
+	const mapped =
+		bytes.slice(0, 10).every((b) => b === 0) &&
+		bytes[10] === 0xff &&
+		bytes[11] === 0xff;
+	if (mapped) return [...bytes.slice(12)].join(".");
+	const groups: string[] = [];
+	for (let i = 0; i < 8; i += 2) {
+		groups.push((((bytes[i] ?? 0) << 8) | (bytes[i + 1] ?? 0)).toString(16));
+	}
+	return `${groups.join(":")}::/64`;
 }

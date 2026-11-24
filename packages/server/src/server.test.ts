@@ -240,15 +240,71 @@ test("signing in says nothing about which part was wrong, and slows guessing", a
 	expect(wrongPassword.status).toBe(401);
 	expect(await wrongUser.json()).toEqual(await wrongPassword.json());
 
-	// Five tries a name; then each waits, from any address.
-	for (let i = 0; i < 5; i++)
-		await login("owner", "not the password", `192.168.1.${60 + i}`);
-	const slowed = await login("owner", PASSWORD, "192.168.1.99");
+	// Five tries for a name from one address; then each waits.
+	for (let i = 0; i < 4; i++) await login("owner", "not the password");
+	const slowed = await login("owner", PASSWORD);
 	expect(slowed.status).toBe(429);
 	expect(await errorCode(slowed)).toBe("tooManyAttempts");
 	expect(Number(slowed.headers.get("retry-after"))).toBeGreaterThan(0);
-	// Others are not slowed by it.
-	expect((await login("nobody-else", "x", "192.168.1.98")).status).toBe(401);
+	// Another address is not locked out of the account, nor another name.
+	expect((await login("owner", PASSWORD, "192.168.1.99")).status).toBe(200);
+	expect((await login("nobody-else", "x")).status).toBe(401);
+});
+
+test("guesses sent all at once are counted before they are checked", async () => {
+	const { call, setupOwner } = await serverApp();
+	await setupOwner();
+	const responses = await Promise.all(
+		Array.from({ length: 20 }, () =>
+			call("/api/login", {
+				method: "POST",
+				body: { username: "owner", password: "not the password" },
+			}),
+		),
+	);
+	const statuses = responses.map((r) => r.status);
+	expect(statuses.filter((s) => s === 401)).toHaveLength(5);
+	expect(statuses.filter((s) => s === 429)).toHaveLength(15);
+});
+
+test("someone guessing a name does not lock its owner out", async () => {
+	const { call, setupOwner } = await serverApp();
+	await setupOwner();
+	for (let i = 0; i < 12; i++) {
+		await call("/api/login", {
+			method: "POST",
+			body: { username: "owner", password: "not the password" },
+			peer: "203.0.113.7",
+		});
+	}
+	const owner = await call("/api/login", {
+		method: "POST",
+		body: { username: "owner", password: PASSWORD },
+		peer: "198.51.100.4",
+	});
+	expect(owner.status).toBe(200);
+});
+
+test("setup and invite guesses do not use up signing in", async () => {
+	const { call, setupOwner } = await serverApp();
+	await setupOwner();
+	for (let i = 0; i < 25; i++) {
+		await call("/api/invites/made-up/accept", {
+			method: "POST",
+			body: { username: "intruder", password: PASSWORD },
+		});
+	}
+	const login = await call("/api/login", {
+		method: "POST",
+		body: { username: "owner", password: PASSWORD },
+	});
+	expect(login.status).toBe(200);
+	// Too long to be anyone's name: refused before it is counted or kept.
+	const long = await call("/api/login", {
+		method: "POST",
+		body: { username: "x".repeat(33), password: PASSWORD },
+	});
+	expect(long.status).toBe(400);
 });
 
 test("the cookie is __Host- and Secure over https, and plain over http", async () => {
