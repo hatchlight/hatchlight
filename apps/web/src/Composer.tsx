@@ -347,7 +347,9 @@ export function Composer(props: Props) {
 	const total = selected.length * each;
 	// The settings in a few words, for the button that opens them on phones.
 	const summary = [
-		t("composer.summaryModels", { count: selected.length }),
+		selected.length === 0
+			? t("composer.summaryNone")
+			: t("composer.summaryModels", { count: selected.length }),
 		ratio,
 		maxCount > 1 && t("composer.summaryEach", { count: each }),
 	]
@@ -530,6 +532,11 @@ export function Composer(props: Props) {
 						}
 						format={{ style: "percent" }}
 						locale={language}
+						getAriaValueText={(_, value) =>
+							t("composer.strengthValue", {
+								amount: number(value, { style: "percent" }),
+							})
+						}
 						className="py-2"
 					/>
 				</div>

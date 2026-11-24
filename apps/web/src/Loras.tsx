@@ -253,6 +253,11 @@ export function LoraPicker({
 						aria-labelledby={`${id}-${loraId}`}
 						format={{ style: "percent" }}
 						locale={language}
+						getAriaValueText={(_, value) =>
+							t("loras.weightValue", {
+								amount: number(value, { style: "percent" }),
+							})
+						}
 						className="w-24"
 					/>
 					<span className="w-10 font-mono text-xs text-dim">

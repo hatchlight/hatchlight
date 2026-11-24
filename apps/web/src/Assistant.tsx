@@ -415,12 +415,13 @@ export function Assistant({ sessionId, addReference }: Props) {
 								/>
 								<PromptInputActions className="justify-between gap-3">
 									{brainLabel ? (
-										<span className="inline-flex h-[30px] min-w-0 items-center gap-2 rounded-full bg-panel-2 px-3 font-mono text-xs text-[#a1a1aa]">
+										<span className="inline-flex min-h-[30px] min-w-0 items-center gap-2 rounded-2xl bg-panel-2 px-3 py-1 font-mono text-xs leading-snug text-[#a1a1aa]">
 											<i
 												aria-hidden="true"
 												className="size-1.5 shrink-0 rounded-full bg-good"
 											/>
-											<span className="truncate">{brainLabel}</span>
+											{/* Wraps rather than cut: longer languages need two lines on phones. */}
+											<span>{brainLabel}</span>
 										</span>
 									) : (
 										<span />
