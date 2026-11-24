@@ -39,10 +39,15 @@ usual.
 With Docker Compose, using [`deploy/compose.yaml`](../deploy/compose.yaml):
 
 ```sh
-curl -O https://raw.githubusercontent.com/hatchlight/hatchlight/main/deploy/compose.yaml
-HATCHLIGHT_PUBLIC_URL=http://192.168.1.20:4096 docker compose up -d
-docker compose logs hatchlight
+git clone https://github.com/hatchlight/hatchlight.git && cd hatchlight
+docker build -t ghcr.io/hatchlight/hatchlight .
+HATCHLIGHT_PUBLIC_URL=http://192.168.1.20:4096 docker compose -f deploy/compose.yaml up -d
 ```
+
+The second line builds the image, which takes a few minutes. The image is
+published to `ghcr.io/hatchlight/hatchlight` from the next release on; then
+that line can be skipped, and Compose downloads the image instead.
+`docker compose -f deploy/compose.yaml logs hatchlight` shows the setup code.
 
 Or with `docker run`:
 
@@ -58,7 +63,7 @@ docker run -d --name hatchlight --gpus all -p 192.168.1.20:4096:4096 \
 In the Compose files, `HATCHLIGHT_PORT` changes the port on the host (4096
 by default), `HATCHLIGHT_BIND` the address it is published on, and
 `HATCHLIGHT_IMAGE` pins a version, such as
-`ghcr.io/hatchlight/hatchlight:0.3.0`.
+`ghcr.io/hatchlight/hatchlight:<version>`.
 
 **Docker's published ports go around the host's firewall:** Docker adds its
 own rules ahead of ufw and firewalld, so a port published on every address

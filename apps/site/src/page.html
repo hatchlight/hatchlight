@@ -27,6 +27,7 @@
 				<a href="#compare">{{nav.compare}}</a>
 				<a href="#local">{{nav.local}}</a>
 				<a href="#gallery">{{nav.gallery}}</a>
+				<a href="#server">{{nav.server}}</a>
 				<a href="#get" data-link="repository">GitHub</a>
 			</nav>
 			<a class="btn btn-ghost" href="#get" data-download>{{nav.download}}</a>
@@ -125,6 +126,29 @@
 				<ul class="providers">
 					<li>fal</li><li>OpenAI</li><li>Google Gemini</li><li>Replicate</li><li>OpenRouter</li>
 				</ul>
+			</section>
+
+			<section class="section gutter server" id="server">
+				<div class="server-copy">
+					<p class="kicker">{{server.kicker}}</p>
+					<h2>{{server.title}}</h2>
+					<p class="note">{{server.note}}</p>
+					<ul class="server-points">
+						<li><h3>{{server.accounts.title}}</h3><p>{{server.accounts.body}}</p></li>
+						<li><h3>{{server.access.title}}</h3><p>{{server.access.body}}</p></li>
+						<li><h3>{{server.safety.title}}</h3><p>{{server.safety.body}}</p></li>
+					</ul>
+				</div>
+				<div class="server-start">
+					<figure class="terminal">
+						<figcaption>{{server.quick}}</figcaption>
+						<pre><code><span>git clone https://github.com/hatchlight/hatchlight.git &amp;&amp; cd hatchlight</span><span>docker build -t ghcr.io/hatchlight/hatchlight .</span><span>HATCHLIGHT_PUBLIC_URL=http://192.168.1.20:4096 docker compose -f deploy/compose.yaml up -d</span></code></pre>
+						<p>{{server.quickNote}}</p>
+					</figure>
+					<p class="needs"><b>{{server.needs.title}}</b> {{server.needs.body}}</p>
+					<p class="needs">{{server.agents}}</p>
+					<a class="btn btn-ghost" href="#server" data-link="selfHosting">{{server.guide}}</a>
+				</div>
 			</section>
 
 			<section class="end gutter" id="get">
