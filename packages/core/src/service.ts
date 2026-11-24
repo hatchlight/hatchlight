@@ -27,6 +27,11 @@ export interface ReelServiceDeps {
 	registry: ProviderRegistry;
 	keys: KeyStore;
 	engine: JobEngine;
+	/**
+	 * Why a person may not add pictures now (their room is full), or null.
+	 * Checked by everything that makes new ones: turns, retries, uploads.
+	 */
+	storageRefusal?: (userId: string) => Error | null;
 }
 
 const UPLOAD_MIMES = ["image/png", "image/jpeg", "image/webp"];
@@ -199,10 +204,17 @@ export class ReelService {
 		await this.deps.repo.deleteSession(ctx, id);
 	}
 
+	/** Throws when the person's pictures already take all their room. */
+	private assertRoom(ctx: UserContext): void {
+		const refusal = this.deps.storageRefusal?.(ctx.userId);
+		if (refusal) throw refusal;
+	}
+
 	async createTurn(
 		ctx: UserContext,
 		input: CreateTurnInput,
 	): Promise<{ session: Session; turn: TurnView }> {
+		this.assertRoom(ctx);
 		const { sessionId, modelIds, ...rawParams } = input;
 		const parsed = generationParamsSchema.safeParse(rawParams);
 		if (!parsed.success) {
@@ -305,6 +317,7 @@ export class ReelService {
 
 	/** Runs a job that failed or was canceled again. */
 	async retryJob(ctx: UserContext, jobId: string): Promise<void> {
+		this.assertRoom(ctx);
 		const job = await this.deps.repo.findJob(jobId);
 		if (!job || job.userId !== ctx.userId)
 			throw new NotFoundError("Job not found", "jobNotFound");
@@ -322,6 +335,7 @@ export class ReelService {
 	}
 
 	async uploadAsset(ctx: UserContext, data: Uint8Array): Promise<Asset> {
+		this.assertRoom(ctx);
 		// The claimed type is ignored; the bytes decide.
 		const mime = sniffMime(data);
 		if (!mime || !UPLOAD_MIMES.includes(mime)) {

@@ -553,9 +553,6 @@ export function createApp(options: AppOptions): Hono {
 				if (refusal) throw paidError(refusal);
 			}
 		}
-		// Pictures under way finish; new ones wait for room.
-		const full = accounts?.storageRefusal(user(c).userId);
-		if (full) throw full;
 		// The remaining fields are validated by the service's schema.
 		const result = await service.createTurn(user(c), body as never);
 		return c.json(result, 201);

@@ -114,28 +114,13 @@ export interface ImproveRequest {
 export type AssistantBrain = "local" | CloudTranslatorId | null;
 
 /** Hatchlight as a person sees it, for the assistant in this process. */
-export function localReel(
-	service: ReelService,
-	ctx: UserContext,
-	/** Why new pictures cannot start now, on a server: their room is full. */
-	refuse: () => Error | null = () => null,
-): Reel {
-	const check = () => {
-		const refusal = refuse();
-		if (refusal) throw refusal;
-	};
+export function localReel(service: ReelService, ctx: UserContext): Reel {
 	return {
 		models: async () => service.listModels(),
 		providers: () => service.listProviders(ctx),
 		session: (id) => service.getSession(ctx, id),
-		createTurn: (input) => {
-			check();
-			return service.createTurn(ctx, input);
-		},
-		upload: (data) => {
-			check();
-			return service.uploadAsset(ctx, data);
-		},
+		createTurn: (input) => service.createTurn(ctx, input),
+		upload: (data) => service.uploadAsset(ctx, data),
 		gallery: ({ query, limit }) =>
 			service.listGallery(ctx, { query, limit: limit ?? 20 }),
 		async asset(id) {
@@ -755,7 +740,17 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		paidRefusal: refusePaid,
 		translator: translatorFor,
 	});
-	const service = new ReelService({ repo, assets, registry, keys, engine });
+	const service = new ReelService({
+		repo,
+		assets,
+		registry,
+		keys,
+		engine,
+		// On a server, a member whose room is full adds no new pictures.
+		storageRefusal: options.server
+			? (userId) => accounts.storageRefusal(userId)
+			: undefined,
+	});
 	// Looks at pictures for an assistant whose brain cannot, once installed.
 	const eyesModel = catalog.find((m) =>
 		m.tasks.includes("picture-description"),
@@ -769,10 +764,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 			update: (ctx, id, body) => repo.updateEntry(ctx, id, body),
 			list: (ctx, sessionId) => repo.listEntries(ctx, sessionId),
 		},
-		reel: (ctx) =>
-			localReel(service, ctx, () =>
-				options.server ? accounts.storageRefusal(ctx.userId) : null,
-			),
+		reel: (ctx) => localReel(service, ctx),
 		eyes: async () => (eyes && (await eyes.ready()) ? eyes : null),
 		brain: async (ctx) =>
 			options.assistantModel ??

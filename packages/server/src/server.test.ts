@@ -60,6 +60,7 @@ async function serverApp(
 	} = {},
 ) {
 	const root = await mkdtemp(join(tmpdir(), "hatchlight-server-mode-"));
+	const fake = new FakeProvider();
 	const paid = new FakeProvider("paid");
 	paid.requiresKey = true;
 	// Holds the key the cloud language services use.
@@ -76,7 +77,7 @@ async function serverApp(
 	);
 	const runtime = await createRuntime({
 		dataDir: root,
-		providers: [new FakeProvider(), paid, openai],
+		providers: [fake, paid, openai],
 		assetQuotaBytes,
 		localModels: [],
 		engines: [],
@@ -190,7 +191,17 @@ async function serverApp(
 	};
 	const userId = (username: string) =>
 		runtime.accounts.findUser(username)?.id as string;
-	return { call, runtime, setupOwner, invite, cookieOf, userId, root, paid };
+	return {
+		call,
+		runtime,
+		setupOwner,
+		invite,
+		cookieOf,
+		userId,
+		root,
+		paid,
+		fake,
+	};
 }
 
 const errorCode = async (response: Response) =>
@@ -1628,4 +1639,41 @@ test("a member past their room starts no new pictures, but those under way finis
 	// Owners and admins have no such limit.
 	expect((await turn(owner)).status).toBe(201);
 	expect((await me(owner)).quotaBytes).toBeNull();
+});
+
+test("a job tried again is a new picture, held to the room left", async () => {
+	const { call, setupOwner, invite, runtime, fake } = await serverApp({
+		env: { HATCHLIGHT_ASSET_GB_PER_PERSON: String(100 / 1024 ** 3) },
+	});
+	const owner = await setupOwner();
+	const member = await invite(owner);
+	const turn = async () => {
+		const response = await call("/api/turns", {
+			method: "POST",
+			who: member,
+			body: { prompt: "x", modelIds: ["fake/alpha"] },
+		});
+		return ((await response.json()) as { turn: { jobs: { id: string }[] } })
+			.turn.jobs[0]?.id as string;
+	};
+	// A job stopped before it made anything, kept for later.
+	let release: () => void = () => {};
+	fake.gate = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const kept = await turn();
+	await Bun.sleep(20);
+	await call(`/api/jobs/${kept}/cancel`, { method: "POST", who: member });
+	release();
+	fake.gate = null;
+	await runtime.engine.idle();
+	// The room fills.
+	await turn();
+	await runtime.engine.idle();
+	const retried = await call(`/api/jobs/${kept}/retry`, {
+		method: "POST",
+		who: member,
+	});
+	expect(retried.status).toBe(403);
+	expect(await errorCode(retried)).toBe("storageFull");
 });
