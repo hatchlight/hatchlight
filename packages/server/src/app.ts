@@ -28,7 +28,7 @@ import {
 	ValidationError,
 } from "@hatchlight/core";
 import type { Assistant } from "@hatchlight/tools";
-import { type Context, Hono } from "hono";
+import { type Context, Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
 import { mountAccounts } from "./accounts-routes";
@@ -226,6 +226,28 @@ function serveFile(c: Context, blob: Blob, mime: string): Response {
 	return new Response(blob, {
 		headers: { ...headers, "content-length": String(blob.size) },
 	});
+}
+
+/**
+ * Refuses a file upload that says it is too large. One that does not say
+ * (sent in chunks) is not held in memory to find out: the shelf counts it
+ * as it is written and stops at the limit.
+ */
+function declaredSize(options: {
+	maxSize: number;
+	onError: (c: Context) => Response;
+}): MiddlewareHandler {
+	return async (c, next) => {
+		const length = c.req.header("content-length");
+		if (
+			length !== undefined &&
+			!c.req.header("transfer-encoding") &&
+			Number(length) > options.maxSize
+		) {
+			return options.onError(c);
+		}
+		await next();
+	};
 }
 
 export function createApp(options: AppOptions): Hono {
@@ -667,10 +689,12 @@ export function createApp(options: AppOptions): Hono {
 		return c.body(null, 204);
 	});
 	// LoRAs, like models, are shared by everyone using this installation.
+	/** People with a LoRA upload under way, held to one each. */
+	const loraUploads = new Set<string>();
 	app.get("/api/loras", async (c) => c.json(await models.loras.list()));
 	app.post(
 		"/api/loras",
-		bodyLimit({
+		declaredSize({
 			maxSize: MAX_LORA_BYTES,
 			onError: (c) =>
 				c.json(
@@ -698,13 +722,6 @@ export function createApp(options: AppOptions): Hono {
 			const quota = options.loraQuota ?? DEFAULT_LORA_QUOTA;
 			const limited =
 				uploader && accounts && !["owner", "admin"].includes(uploader.role);
-			const usage = async () =>
-				accounts && uploader
-					? accounts.loraUsage(
-							uploader.id,
-							new Set((await models.loras.list()).map((l) => l.id)),
-						)
-					: { files: 0, bytes: 0 };
 			const over = () =>
 				new AccessError(
 					"You added as many LoRAs as this server allows",
@@ -712,27 +729,39 @@ export function createApp(options: AppOptions): Hono {
 					403,
 					{ files: quota.files, maxBytes: quota.bytes },
 				);
-			if (limited) {
-				const used = await usage();
+			if (!limited || !uploader || !accounts) {
+				const lora = await models.loras.add(body, name);
+				if (uploader)
+					accounts?.recordLoraUpload(uploader.id, lora.id, lora.size);
+				return c.json(lora, 201);
+			}
+			// One at a time each: two at once would both fit what is left.
+			if (loraUploads.has(uploader.id)) {
+				throw new AccessError(
+					"Another of your LoRAs is still uploading",
+					"loraUploadBusy",
+					409,
+				);
+			}
+			loraUploads.add(uploader.id);
+			try {
+				const used = accounts.loraUsage(
+					uploader.id,
+					new Set((await models.loras.list()).map((l) => l.id)),
+				);
+				const left = quota.bytes - used.bytes;
 				const incoming = Number(c.req.header("content-length") ?? 0) || 0;
-				if (used.files >= quota.files || used.bytes + incoming > quota.bytes) {
-					throw over();
-				}
-			}
-			const lora = await models.loras.add(body, name);
-			if (accounts && uploader) {
+				if (used.files >= quota.files || incoming > left) throw over();
+				// The upload stops as soon as it passes what is left.
+				const lora = await models.loras.add(body, name, {
+					maxBytes: left,
+					error: over,
+				});
 				accounts.recordLoraUpload(uploader.id, lora.id, lora.size);
-				// Sent without its size: checked once it is here.
-				if (limited) {
-					const used = await usage();
-					if (used.files > quota.files || used.bytes > quota.bytes) {
-						await models.loras.remove(lora.id);
-						accounts.forgetLoraUpload(lora.id);
-						throw over();
-					}
-				}
+				return c.json(lora, 201);
+			} finally {
+				loraUploads.delete(uploader.id);
 			}
-			return c.json(lora, 201);
 		},
 	);
 	app.delete("/api/loras/:id", async (c) => {
@@ -747,7 +776,7 @@ export function createApp(options: AppOptions): Hono {
 	);
 	app.post(
 		"/api/checkpoints",
-		bodyLimit({
+		declaredSize({
 			maxSize: MAX_CHECKPOINT_BYTES,
 			onError: (c) =>
 				c.json(

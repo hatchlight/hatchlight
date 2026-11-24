@@ -200,6 +200,7 @@
 	"errors.loraMissing": "Esse LoRA não está mais aqui. Adicione-o de novo em Modelos.",
 	"errors.loraQuotaReached": "Você já adicionou tantos LoRAs quanto este servidor permite por pessoa: {files} arquivos, {maxBytes} no total. Apague um ou fale com um admin.",
 	"errors.loraTooLarge": "Este arquivo é grande demais para ser um LoRA.",
+	"errors.loraUploadBusy": "Outro LoRA seu ainda está sendo enviado. Espere ele terminar.",
 	"errors.loraUnknownBase": "Este arquivo não parece um LoRA para um modelo que o Hatchlight conhece (SD 1.5, SDXL, FLUX, Wan ou Z-Image).",
 	"errors.loraUnreadable": "Este arquivo não é um LoRA. Escolha um arquivo .safetensors.",
 	"errors.loraWrongBase": "O {lora} não foi feito para o {model}.",

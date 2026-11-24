@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, rename, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -113,7 +113,9 @@ async function serverApp(
 		// Browsers name the origin of every change.
 		if (!["GET", "HEAD"].includes(method))
 			headers.origin = new URL(base).origin;
-		if (init.body !== undefined && !(init.body instanceof Uint8Array)) {
+		const raw =
+			init.body instanceof Uint8Array || init.body instanceof ReadableStream;
+		if (init.body !== undefined && !raw) {
 			headers["content-type"] = "application/json";
 		}
 		if (init.who?.cookie)
@@ -127,8 +129,8 @@ async function serverApp(
 				body:
 					init.body === undefined
 						? undefined
-						: init.body instanceof Uint8Array
-							? init.body
+						: raw
+							? (init.body as Uint8Array)
 							: JSON.stringify(init.body),
 			},
 			{ peer: init.peer ?? "192.168.1.50" },
@@ -176,7 +178,7 @@ async function serverApp(
 	};
 	const userId = (username: string) =>
 		runtime.accounts.findUser(username)?.id as string;
-	return { call, runtime, setupOwner, invite, cookieOf, userId };
+	return { call, runtime, setupOwner, invite, cookieOf, userId, root };
 }
 
 const errorCode = async (response: Response) =>
@@ -1296,4 +1298,74 @@ test("after a reset, the person is told once who reset it", async () => {
 	expect(
 		people.find((p) => p.username === member.username)?.lastReset?.by,
 	).toBe(admin.username);
+});
+
+test("a member's LoRA upload stops as soon as it passes what is left", async () => {
+	const { call, setupOwner, invite, root } = await serverApp({
+		// About 10 KB each.
+		env: { HATCHLIGHT_LORA_GB_PER_PERSON: String(10_000 / 1024 ** 3) },
+	});
+	const owner = await setupOwner();
+	const member = await invite(owner, { canTrain: true });
+	let pulled = 0;
+	// A file that would go on and on: 1 KB at a time, for 10 MB.
+	const endless = new ReadableStream<Uint8Array>({
+		pull(controller) {
+			pulled++;
+			if (pulled > 10_000) controller.close();
+			else controller.enqueue(new Uint8Array(1024));
+		},
+	});
+	const response = await call(
+		`/api/loras?${new URLSearchParams({ name: "big.safetensors" })}`,
+		{
+			method: "POST",
+			who: member,
+			headers: { "content-type": "application/octet-stream" },
+			body: endless,
+		},
+	);
+	expect(response.status).toBe(403);
+	expect(await errorCode(response)).toBe("loraQuotaReached");
+	// Stopped near the limit, not at the end of the file.
+	expect(pulled).toBeLessThan(100);
+	const folder = join(root, "models", "loras");
+	const left = await readdir(folder).catch(() => []);
+	expect(left.filter((name) => name.endsWith(".part"))).toEqual([]);
+});
+
+test("a member uploads one LoRA at a time", async () => {
+	const { call, setupOwner, invite } = await serverApp();
+	const owner = await setupOwner();
+	const member = await invite(owner, { canTrain: true });
+	let finish: () => void = () => {};
+	const held = new Promise<void>((resolve) => {
+		finish = resolve;
+	});
+	const file = safetensors(["lora_unet_input_blocks_4_1_proj_in.alpha"], {
+		"modelspec.title": "Slow",
+	});
+	// Sent in two halves, the second once the test says so.
+	const slow = new ReadableStream<Uint8Array>({
+		async start(controller) {
+			controller.enqueue(file.slice(0, 8));
+			await held;
+			controller.enqueue(file.slice(8));
+			controller.close();
+		},
+	});
+	const upload = (body: Uint8Array | ReadableStream, name: string) =>
+		call(`/api/loras?${new URLSearchParams({ name })}`, {
+			method: "POST",
+			who: member,
+			headers: { "content-type": "application/octet-stream" },
+			body,
+		});
+	const first = upload(slow, "slow.safetensors");
+	await Bun.sleep(50);
+	const second = await upload(file, "other.safetensors");
+	expect(second.status).toBe(409);
+	expect(await errorCode(second)).toBe("loraUploadBusy");
+	finish();
+	expect((await first).status).toBe(201);
 });
