@@ -544,7 +544,18 @@ export function createApp(options: AppOptions): Hono {
 	const paidRefusal = (c: Context, source: KeySource) =>
 		server ? (options.paidRefusal?.(user(c), source) ?? null) : null;
 
-	app.get("/api/models", (c) => c.json(service.listModels()));
+	app.get("/api/models", async (c) => {
+		const models = service.listModels();
+		// A token that may not pay is not shown what it could not use.
+		const token = server ? c.get("viewer").apiToken : null;
+		if (!token || token.scopes.includes("paid")) return c.json(models);
+		const paid = new Set(
+			(await service.listProviders(user(c)))
+				.filter((p) => p.requiresKey)
+				.map((p) => p.id),
+		);
+		return c.json(models.filter((m) => !paid.has(m.providerId)));
+	});
 
 	app.get("/api/providers", async (c) => {
 		const providers = await service.listProviders(user(c));

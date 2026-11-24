@@ -996,6 +996,14 @@ test("a token pays only with the paid scope, and up to its own limit", async () 
 		});
 
 	const unpaid = await tokenFor({ scopes: ["read", "generate"] });
+	// Paid models are not even listed to it; the person sees them.
+	const listed = async (who: Who) =>
+		(
+			(await (await call("/api/models", { who })).json()) as { id: string }[]
+		).map((m) => m.id);
+	expect(await listed({ token: unpaid })).not.toContain("paid/alpha");
+	expect(await listed({ token: unpaid })).toContain("fake/alpha");
+	expect(await listed(member)).toContain("paid/alpha");
 	const refused = await turn(unpaid);
 	expect(refused.status).toBe(403);
 	expect(await errorCode(refused)).toBe("tokenNotPaid");
@@ -1003,9 +1011,10 @@ test("a token pays only with the paid scope, and up to its own limit", async () 
 
 	// Two pictures at a cent each: the second goes over its limit.
 	const limited = await tokenFor({
-		scopes: ["generate", "paid"],
+		scopes: ["read", "generate", "paid"],
 		spendLimitUsd: 0.015,
 	});
+	expect(await listed({ token: limited })).toContain("paid/alpha");
 	for (let i = 0; i < 2; i++) {
 		expect((await turn(limited)).status).toBe(201);
 		await runtime.engine.idle();
