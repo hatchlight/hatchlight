@@ -420,6 +420,8 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 			await fileKeys.moveUser(LOCAL_USER.userId, SERVER_KEYS.userId);
 		},
 	});
+	// A setup cut short by a crash is finished now.
+	if (options.server) await accounts.resumeAdoption();
 	// On a server, spending is for those allowed, up to their monthly limit.
 	const paidRefusal = (userId: string): PaidRefusal | null => {
 		const user = accounts.getUser(userId);

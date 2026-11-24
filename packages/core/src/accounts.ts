@@ -175,6 +175,17 @@ export class AccountService {
 	}
 
 	/**
+	 * Finishes giving the first owner what the install had, when a crash cut
+	 * setup short after the database moved but before the files did. Safe to
+	 * run at every start: it moves only what is still there.
+	 */
+	async resumeAdoption(): Promise<void> {
+		// The first account is the one setup made; its role may have changed.
+		const first = this.repo.listUsers()[0];
+		if (first) await this.options.adoptLocal?.(first.id);
+	}
+
+	/**
 	 * Signs a person in. A wrong username and a wrong password look the same,
 	 * and take as long.
 	 */

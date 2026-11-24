@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -913,4 +913,44 @@ test("only admins and owners see where the server keeps its files", async () => 
 	expect((await disk(owner)).path).not.toBe("");
 	expect((await disk(admin)).path).not.toBe("");
 	expect(await disk(member)).toMatchObject({ path: "", changeable: false });
+});
+
+test("a setup cut short before the files moved is finished at the next start", async () => {
+	const root = await mkdtemp(join(tmpdir(), "hatchlight-adopt-"));
+	cleanups.push(() => rm(root, { recursive: true }));
+	const start = () =>
+		createRuntime({
+			dataDir: root,
+			providers: [new FakeProvider()],
+			localModels: [],
+			engines: [],
+			server: true,
+		});
+	// Before accounts: a picture made on the install.
+	const before = await start();
+	const asset = await before.service.uploadAsset(LOCAL_USER, PNG);
+	before.close();
+
+	// Setup moved the rows, then the process died before moving the files.
+	const crashed = await start();
+	const owner = await crashed.accounts.setup({
+		code: crashed.accounts.setupCode() as string,
+		username: "owner",
+		password: PASSWORD,
+	});
+	crashed.close();
+	const ownerDir = join(root, "assets", owner.user.id);
+	const localDir = join(root, "assets", "local");
+	await rename(ownerDir, localDir);
+	const ctx = { userId: owner.user.id };
+
+	const restarted = await start();
+	cleanups.push(async () => restarted.close());
+	const file = await restarted.service.getAssetFile(ctx, asset.id);
+	expect(file.blob.size).toBe(PNG.byteLength);
+	expect(
+		await Bun.file(join(localDir, asset.hash.slice(0, 2), asset.hash)).exists(),
+	).toBe(false);
+	// Nothing left to move is fine too.
+	await restarted.accounts.resumeAdoption();
 });
