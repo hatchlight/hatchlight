@@ -5,7 +5,7 @@ import {
 	statSync,
 	writeFileSync,
 } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { chmod, mkdir, open } from "node:fs/promises";
 import { hostname as osHostname, uptime as osUptime } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -476,6 +476,39 @@ export function databaseFile(dataDir: string): string {
 	return !existsSync(current) && existsSync(legacy) ? legacy : current;
 }
 
+/**
+ * Makes the data directory, or makes one that exists, readable by its owner
+ * only: it holds password hashes, two-step secrets, keys and everyone's
+ * pictures, and a folder shared with the host (a bind mount, a NAS share)
+ * would otherwise let any user or container there read them.
+ */
+export async function privateDataDir(
+	dataDir: string,
+	platform: NodeJS.Platform = process.platform,
+): Promise<void> {
+	await mkdir(dataDir, { recursive: true, mode: 0o700 });
+	// Windows keeps who may read a folder elsewhere than in these bits.
+	if (platform !== "win32") await chmod(dataDir, 0o700);
+}
+
+/**
+ * Creates the database file readable by its owner only, or makes it so.
+ * SQLite gives its -wal and -shm files the database's permissions; those
+ * left by an older version are made private too.
+ */
+export async function privateDatabase(
+	file: string,
+	platform: NodeJS.Platform = process.platform,
+): Promise<void> {
+	await (await open(file, "a", 0o600)).close();
+	if (platform === "win32") return;
+	for (const path of [file, `${file}-wal`, `${file}-shm`]) {
+		await chmod(path, 0o600).catch((error: NodeJS.ErrnoException) => {
+			if (error.code !== "ENOENT") throw error;
+		});
+	}
+}
+
 /** Wires the core on a data directory. Call `start()` once ready to run jobs. */
 export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	const providers = options.providers ?? builtinProviders();
@@ -528,8 +561,9 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	local.onChange = () => registry.refresh(local.id);
 
 	// Generated images and keys are private to the owner.
-	await mkdir(options.dataDir, { recursive: true, mode: 0o700 });
+	await privateDataDir(options.dataDir);
 	const unlock = lockDataDir(options.dataDir);
+	await privateDatabase(databaseFile(options.dataDir));
 	const repo = new SqliteRepository(
 		databaseFile(options.dataDir),
 		options.migrationsDir,
