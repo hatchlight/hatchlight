@@ -46,6 +46,13 @@ export interface AccountView {
 	mustChangePassword: boolean;
 	disabled: boolean;
 	createdAt: number;
+	/** The last time a reset link set the password, and who gave the link. */
+	lastReset: { by: string; at: number } | null;
+	/**
+	 * Set on one's own account until dismissed: the password was reset with
+	 * a link someone else gave.
+	 */
+	resetNotice: { by: string; at: number } | null;
 }
 
 /** A browser someone is signed in on. */

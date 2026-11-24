@@ -138,6 +138,8 @@ export function accountView(user: UserRow): AccountView {
 		mustChangePassword: user.mustChangePassword,
 		disabled: user.disabledAt != null,
 		createdAt: user.createdAt,
+		lastReset: null,
+		resetNotice: null,
 	};
 }
 
@@ -541,7 +543,29 @@ export class AccountService {
 	}
 
 	users(): AccountView[] {
-		return this.repo.listUsers().map(accountView);
+		return this.repo.listUsers().map((user) => this.view(user));
+	}
+
+	/**
+	 * A person's account with its last reset; for their own, also whether
+	 * they have yet to see that someone else's link reset their password.
+	 */
+	view(user: UserRow, own = false): AccountView {
+		const reset = this.repo.lastUsedReset(user.id);
+		const last = reset && { by: reset.by, at: reset.at };
+		return {
+			...accountView(user),
+			lastReset: last,
+			resetNotice: own && reset && reset.noticedAt == null ? last : null,
+		};
+	}
+
+	/** The person saw the notice of their reset. */
+	dismissResetNotice(userId: string): void {
+		const reset = this.repo.lastUsedReset(userId);
+		if (reset && reset.noticedAt == null) {
+			this.repo.markResetNoticed(reset.id, this.now());
+		}
 	}
 
 	/** Changes another person's account, as an owner or admin may. */
@@ -580,7 +604,7 @@ export class AccountService {
 				403,
 			);
 		}
-		this.repo.updateUser(id, patch);
+		if (Object.keys(patch).length > 0) this.repo.updateUser(id, patch);
 		// Signed out at once: what they may do just changed.
 		if (patch.disabledAt != null) this.repo.deleteSessionsOf(id);
 		// Tokens were made for what the person could do then.
@@ -590,7 +614,7 @@ export class AccountService {
 		) {
 			this.repo.deleteTokensOf(id);
 		}
-		return accountView(this.mustGet(id));
+		return this.view(this.mustGet(id));
 	}
 
 	/**
@@ -626,6 +650,8 @@ export class AccountService {
 		const token = newToken();
 		const now = this.now();
 		const expiresAt = now + RESET_MS;
+		// Only the newest link works: one given earlier may have gone astray.
+		this.repo.expireUnusedResets(id, now);
 		this.repo.createPasswordReset({
 			id: hashToken(token),
 			userId: id,
@@ -633,6 +659,7 @@ export class AccountService {
 			createdAt: now,
 			expiresAt,
 			usedAt: null,
+			noticedAt: null,
 		});
 		return { token, expiresAt };
 	}

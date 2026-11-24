@@ -1,7 +1,6 @@
 import {
 	AccessError,
 	type AccountService,
-	accountView,
 	type InviteTerms,
 	NotFoundError,
 	USER_ROLES,
@@ -140,7 +139,7 @@ export function mountAccounts(
 		);
 		setSessionCookie(c, signed);
 		setDeviceCookie(c, devices.issue(signed.user.username));
-		return c.json(accountView(signed.user), 201);
+		return c.json(accounts.view(signed.user, true), 201);
 	});
 
 	app.post("/api/login", async (c) => {
@@ -162,7 +161,7 @@ export function mountAccounts(
 		);
 		setSessionCookie(c, signed);
 		setDeviceCookie(c, devices.issue(signed.user.username));
-		return c.json(accountView(signed.user));
+		return c.json(accounts.view(signed.user, true));
 	});
 
 	app.post("/api/logout", (c) => {
@@ -172,7 +171,13 @@ export function mountAccounts(
 		return c.body(null, 204);
 	});
 
-	app.get("/api/account", (c) => c.json(accountView(c.get("viewer").user)));
+	app.get("/api/account", (c) =>
+		c.json(accounts.view(c.get("viewer").user, true)),
+	);
+	app.delete("/api/account/reset-notice", (c) => {
+		accounts.dismissResetNotice(c.get("viewer").user.id);
+		return c.body(null, 204);
+	});
 	app.put("/api/account/password", async (c) => {
 		const body = await json(c);
 		const { user, sessionId } = c.get("viewer");
@@ -289,7 +294,7 @@ export function mountAccounts(
 		);
 		setSessionCookie(c, signed);
 		setDeviceCookie(c, devices.issue(signed.user.username));
-		return c.json(accountView(signed.user), 201);
+		return c.json(accounts.view(signed.user, true), 201);
 	});
 	app.get("/api/invites", (c) => c.json(accounts.invites()));
 	app.post("/api/invites", async (c) => {

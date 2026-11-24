@@ -1260,3 +1260,40 @@ test("a browser that signed in before gets past strangers guessing its name", as
 	const forged = deviceCookie.replace(/.$/, (c) => (c === "A" ? "B" : "A"));
 	expect((await login({ cookie: forged })).status).toBe(429);
 });
+
+test("after a reset, the person is told once who reset it", async () => {
+	const { call, setupOwner, invite, userId, cookieOf } = await serverApp();
+	const owner = await setupOwner();
+	const admin = await invite(owner, { role: "admin" });
+	const member = await invite(owner);
+	const created = await call(`/api/users/${userId(member.username)}/password`, {
+		method: "POST",
+		who: admin,
+	});
+	const { token } = (await created.json()) as { token: string };
+	await call(`/api/password-resets/${token}`, {
+		method: "POST",
+		body: { password: "chosen by the member" },
+	});
+	const signed = await call("/api/login", {
+		method: "POST",
+		body: { username: member.username, password: "chosen by the member" },
+	});
+	const who = { cookie: cookieOf(signed) };
+	type Me = { resetNotice: { by: string; at: number } | null };
+	const me = async () =>
+		(await (await call("/api/account", { who })).json()) as Me;
+	expect((await me()).resetNotice?.by).toBe(admin.username);
+	expect(
+		(await call("/api/account/reset-notice", { method: "DELETE", who })).status,
+	).toBe(204);
+	expect((await me()).resetNotice).toBeNull();
+	// Owners and admins see the last reset in the list of people.
+	const people = (await (await call("/api/users", { who: owner })).json()) as {
+		username: string;
+		lastReset: { by: string } | null;
+	}[];
+	expect(
+		people.find((p) => p.username === member.username)?.lastReset?.by,
+	).toBe(admin.username);
+});

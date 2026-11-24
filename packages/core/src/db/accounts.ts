@@ -240,6 +240,44 @@ export class SqliteAccounts {
 		);
 	}
 
+	/** Ends the links not yet used to reset a person's password. */
+	expireUnusedResets(userId: string, at: number): void {
+		this.sqlite
+			.prepare(
+				"update password_resets set expires_at = ? where user_id = ? and used_at is null and expires_at > ?",
+			)
+			.run(at - 1, userId, at);
+	}
+
+	/** The last time a link set the person's password, and who gave it. */
+	lastUsedReset(
+		userId: string,
+	): { id: string; by: string; at: number; noticedAt: number | null } | null {
+		return (
+			(this.sqlite
+				.prepare(
+					`select r.id as id, coalesce(u.display_name, '') as by, r.used_at as at, r.noticed_at as noticedAt
+					 from password_resets r left join users u on u.id = r.created_by
+					 where r.user_id = ? and r.used_at is not null
+					 order by r.used_at desc limit 1`,
+				)
+				.get(userId) as {
+				id: string;
+				by: string;
+				at: number;
+				noticedAt: number | null;
+			} | null) ?? null
+		);
+	}
+
+	markResetNoticed(id: string, at: number): void {
+		this.db
+			.update(schema.passwordResets)
+			.set({ noticedAt: at })
+			.where(eq(schema.passwordResets.id, id))
+			.run();
+	}
+
 	/** Marks a reset link used, once: false when it already was. */
 	usePasswordReset(id: string, at: number): boolean {
 		return (

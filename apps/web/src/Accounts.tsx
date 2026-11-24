@@ -128,11 +128,14 @@ function ServerGate({
 	} else if (account.data && !account.data.mustChangePassword) {
 		return (
 			<AccountContext.Provider value={account.data}>
-				{secure ? (
+				{secure && !account.data.resetNotice ? (
 					children
 				) : (
 					<div className="flex h-full flex-col">
-						<Unencrypted banner />
+						{!secure && <Unencrypted banner />}
+						{account.data.resetNotice && (
+							<ResetNotice notice={account.data.resetNotice} />
+						)}
 						<div className="min-h-0 flex-1">{children}</div>
 					</div>
 				)}
@@ -160,6 +163,34 @@ function ServerGate({
 				{!secure && <Unencrypted />}
 				{screen}
 			</main>
+		</div>
+	);
+}
+
+/** Someone else's link reset the password: said once, until dismissed. */
+function ResetNotice({ notice }: { notice: { by: string; at: number } }) {
+	const { t, date } = useI18n();
+	const client = useQueryClient();
+	const dismiss = useMutation({
+		mutationFn: api.dismissResetNotice,
+		onSuccess: () => client.invalidateQueries({ queryKey: ["account"] }),
+	});
+	return (
+		<div
+			role="status"
+			className="flex shrink-0 items-center justify-center gap-3 border-b border-line bg-panel px-4 py-2 text-sm"
+		>
+			<span>
+				{t("account.resetNotice", { name: notice.by, date: date(notice.at) })}
+			</span>
+			<button
+				type="button"
+				onClick={() => dismiss.mutate()}
+				disabled={dismiss.isPending}
+				className={secondary}
+			>
+				{t("account.resetNoticeOk")}
+			</button>
 		</div>
 	);
 }
@@ -1103,7 +1134,7 @@ function People({ me }: { me: AccountView }) {
 }
 
 function Person({ user, me }: { user: AccountView; me: AccountView }) {
-	const { t } = useI18n();
+	const { t, date } = useI18n();
 	const client = useQueryClient();
 	const [copied, setCopied] = useState(false);
 	// Owners manage anyone; admins only members other than themselves.
@@ -1138,6 +1169,14 @@ function Person({ user, me }: { user: AccountView; me: AccountView }) {
 					</span>
 				)}
 			</div>
+			{user.lastReset && (
+				<p className="text-xs text-dim">
+					{t("users.lastReset", {
+						name: user.lastReset.by,
+						date: date(user.lastReset.at),
+					})}
+				</p>
+			)}
 			{mayChange ? (
 				<>
 					<Terms

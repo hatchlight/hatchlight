@@ -221,6 +221,8 @@ export const passwordResets = sqliteTable("password_resets", {
 	createdAt: integer("created_at").notNull(),
 	expiresAt: integer("expires_at").notNull(),
 	usedAt: integer("used_at"),
+	/** When the person saw that their password was reset this way. */
+	noticedAt: integer("noticed_at"),
 });
 
 /** Who added which LoRA on a server, to hold each person to a quota. */

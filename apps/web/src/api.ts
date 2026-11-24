@@ -194,6 +194,8 @@ export const api = {
 		request<AccountView>("/api/login", send("POST", input)),
 	logout: () => request<void>("/api/logout", { method: "POST" }),
 	account: () => request<AccountView>("/api/account"),
+	dismissResetNotice: () =>
+		request<void>("/api/account/reset-notice", { method: "DELETE" }),
 	changePassword: (input: { current: string; next: string }) =>
 		request<void>("/api/account/password", send("PUT", input)),
 	accountSessions: () => request<AuthSessionView[]>("/api/account/sessions"),

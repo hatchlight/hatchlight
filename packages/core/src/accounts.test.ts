@@ -686,3 +686,42 @@ test("a password that cannot be right is refused without checking", async () => 
 	clearInterval(watch);
 	expect(most).toBe(0);
 });
+
+test("a new reset link ends older ones, and the person is told who reset", async () => {
+	const { accounts, owner, tick } = await withOwner();
+	// Nothing to change is not an error.
+	accounts.updateUser(owner.user, owner.user.id, {});
+	const member = await accounts.acceptInvite(
+		accounts.createInvite(owner.user, {
+			role: "member",
+			canUsePaid: false,
+			canTrain: false,
+			monthlyLimitUsd: null,
+		}).token,
+		{ username: "mem", password: PASSWORD },
+	);
+	const first = accounts.createPasswordReset(owner.user, member.user.id);
+	tick(1000);
+	const second = accounts.createPasswordReset(owner.user, member.user.id);
+	expect(accounts.passwordResetFor(first.token)).toBeNull();
+	expect(
+		await code(accounts.usePasswordReset(first.token, "first link password")),
+	).toBe("resetInvalid");
+	expect(accounts.view(member.user, true).resetNotice).toBeNull();
+
+	tick(1000);
+	await accounts.usePasswordReset(second.token, "second link password");
+	const user = accounts.getUser(member.user.id);
+	if (!user) throw new Error("gone");
+	const seen = accounts.view(user, true);
+	expect(seen.resetNotice?.by).toBe("owner");
+	expect(seen.lastReset).toEqual(seen.resetNotice);
+	// Admins see the last reset; only the person sees the notice.
+	const listed = accounts.users().find((u) => u.id === member.user.id);
+	expect(listed?.lastReset?.by).toBe("owner");
+	expect(listed?.resetNotice).toBeNull();
+	// Shown until seen, then not again.
+	accounts.dismissResetNotice(member.user.id);
+	expect(accounts.view(user, true).resetNotice).toBeNull();
+	expect(accounts.view(user, true).lastReset?.by).toBe("owner");
+});
