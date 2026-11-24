@@ -357,9 +357,14 @@ function oldLockVerdict(
 		}
 		return { stale: false, error: inUse(owner) };
 	}
-	// A bare process id says nothing of where it ran: only a file from
-	// before this machine started is surely stale.
+	// A bare process id was written by a version from before the Docker
+	// image, which ran only on this machine: a process gone from here is
+	// gone. This process's own id is the one case left to doubt: in a
+	// container every server is process 1.
 	if (writtenBeforeBoot(path)) return { stale: true };
+	if (owner.pid !== process.pid && !isRunning(owner.pid)) {
+		return { stale: true };
+	}
 	return {
 		stale: false,
 		error: new DataDirInUseError(
