@@ -61,6 +61,7 @@ export const ERROR_CODES = [
 	"noResult",
 	"notEnoughDisk",
 	"notInstalled",
+	"notOnServer",
 	"providerBusy",
 	"referenceNotFound",
 	"referenceNotImage",

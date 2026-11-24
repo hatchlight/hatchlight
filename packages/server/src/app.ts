@@ -25,6 +25,7 @@ import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
 import type { Agents } from "./agents";
 import type { AssistantBrain, ImproveRequest } from "./runtime";
+import { hostName, requestOrigin, type ServerTransport } from "./transport";
 
 export interface AppOptions {
 	service: ReelService;
@@ -36,6 +37,12 @@ export interface AppOptions {
 	settings?: SettingsStore;
 	/** Extra origins allowed to call the API, e.g. the Vite dev server. */
 	allowedOrigins?: string[];
+	/**
+	 * Server mode: several people reach this server over the network, at its
+	 * public address. Absent on a personal install, which only answers this
+	 * computer.
+	 */
+	server?: ServerTransport;
 	/** Maps a request to its user. Local installs have a single user. */
 	resolveUser?: (c: Context) => UserContext;
 	/** Connects AI agents to this installation; absent where it cannot. */
@@ -91,6 +98,54 @@ const MAX_JSON_BYTES = 1024 * 1024;
 function hostname(host: string): string {
 	return host.replace(/:\d+$/, "");
 }
+
+/** Methods that change something, which another website must never send. */
+const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+/**
+ * What the built interface needs and nothing more: its own scripts, styles
+ * and fonts, pictures it draws itself (data: and blob:), the event stream,
+ * and the desktop app's bridge (ipc:), which the desktop window talks to.
+ */
+const CONTENT_SECURITY_POLICY = [
+	"default-src 'self'",
+	"script-src 'self'",
+	"style-src 'self'",
+	"img-src 'self' data: blob:",
+	"media-src 'self' blob:",
+	"font-src 'self' data:",
+	"connect-src 'self' ipc: http://ipc.localhost",
+	"object-src 'none'",
+	"base-uri 'none'",
+	"form-action 'self'",
+	"frame-ancestors 'none'",
+].join("; ");
+
+const SECURITY_HEADERS: Record<string, string> = {
+	"content-security-policy": CONTENT_SECURITY_POLICY,
+	"x-frame-options": "DENY",
+	"referrer-policy": "no-referrer",
+	"x-content-type-options": "nosniff",
+	"permissions-policy":
+		"camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+};
+
+/** The connection's address, which the server passes in as `peer`. */
+const peerOf = (c: Context): string | null =>
+	(c.env as { peer?: string } | undefined)?.peer ?? null;
+
+/** Requests that reached this server over https, through its proxy. */
+const httpsRequests = new WeakSet<Request>();
+
+/** Answer for what a server reached over the network must not do. */
+const notOnServer = (c: Context) =>
+	c.json(
+		{
+			error: "Not available when Hatchlight runs as a server",
+			code: "notOnServer",
+		},
+		403,
+	);
 
 /**
  * Reads a single-range `Range` header. Anything else (no header, several
@@ -152,25 +207,85 @@ export function createApp(options: AppOptions): Hono {
 	const user = options.resolveUser ?? (() => LOCAL_USER);
 	const app = new Hono();
 
+	// Every answer, the page included, keeps to what the interface needs.
+	app.use("*", async (c, next) => {
+		// Later middleware may replace the request, as the body limit does.
+		const request = c.req.raw;
+		await next();
+		const headers = c.res.headers;
+		for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+			// Stored files keep their stricter sandbox.
+			if (!headers.has(name)) headers.set(name, value);
+		}
+		if (httpsRequests.has(request)) {
+			headers.set("strict-transport-security", "max-age=31536000");
+		}
+	});
+
+	const server = options.server;
 	// The server holds API keys and spends money, and browsers let any website
 	// send requests to localhost. Refuse anything that is not same-origin.
-	app.use("*", async (c, next) => {
-		// Bun builds the request URL from the Host header.
-		const host = new URL(c.req.url).host;
-		if (!LOCAL_HOSTS.includes(hostname(host))) {
-			return c.json({ error: "Forbidden host" }, 403);
-		}
-		// Compared as text: `Origin` can be "null" or otherwise not a URL.
-		const origin = c.req.header("origin");
-		if (
-			origin &&
-			origin !== `http://${host}` &&
-			!options.allowedOrigins?.includes(origin)
-		) {
-			return c.json({ error: "Forbidden origin" }, 403);
-		}
-		await next();
-	});
+	app.use(
+		"*",
+		server
+			? async (c, next) => {
+					// Behind a proxy, the address people used comes in its headers.
+					const seen = requestOrigin(
+						new URL(c.req.url),
+						c.req.raw.headers,
+						peerOf(c),
+						server.trustedProxies,
+					);
+					const name = hostName(seen.host);
+					// Loopback stays allowed for health checks from the machine itself.
+					if (
+						!name ||
+						!(server.allowedHosts.includes(name) || LOCAL_HOSTS.includes(name))
+					) {
+						return c.json({ error: "Forbidden host" }, 403);
+					}
+					if (seen.scheme === "https") httpsRequests.add(c.req.raw);
+					const origin = c.req.header("origin");
+					const own = new URL(`${seen.scheme}://${seen.host}`).origin;
+					if (origin) {
+						if (origin !== own && !options.allowedOrigins?.includes(origin)) {
+							return c.json({ error: "Forbidden origin" }, 403);
+						}
+					} else if (
+						UNSAFE_METHODS.has(c.req.method) &&
+						c.req.header("sec-fetch-site") !== "same-origin"
+					) {
+						// Browsers name the origin of every such request; without
+						// it, nothing shows it comes from this site.
+						return c.json({ error: "Missing origin" }, 403);
+					}
+					await next();
+				}
+			: async (c, next) => {
+					// Bun builds the request URL from the Host header.
+					const host = new URL(c.req.url).host;
+					if (!LOCAL_HOSTS.includes(hostname(host))) {
+						return c.json({ error: "Forbidden host" }, 403);
+					}
+					// Compared as text: `Origin` can be "null" or otherwise not a URL.
+					const origin = c.req.header("origin");
+					if (
+						origin &&
+						origin !== `http://${host}` &&
+						!options.allowedOrigins?.includes(origin)
+					) {
+						return c.json({ error: "Forbidden origin" }, 403);
+					}
+					await next();
+				},
+	);
+
+	// For container and proxy health checks: says nothing but that it is up.
+	app.get("/api/health", (c) => c.json({ ok: true }));
+	// Lets the interface leave out what only works on this computer.
+	app.get("/api/server", (c) =>
+		c.json({ mode: server ? "server" : "personal" }),
+	);
 
 	// Bodies are small JSON, except for the routes that take files, which
 	// set their own limits.
@@ -223,6 +338,8 @@ export function createApp(options: AppOptions): Hono {
 	if (agents) {
 		app.get("/api/agents", async (c) => c.json(await agents.status()));
 		app.put("/api/agents/claude-desktop", async (c) => {
+			// It writes settings on the machine that runs the server.
+			if (server) return notOnServer(c);
 			const body = (await c.req.json().catch(() => null)) as {
 				allowPaid?: unknown;
 				spendLimitUsd?: unknown;
@@ -244,6 +361,7 @@ export function createApp(options: AppOptions): Hono {
 			return c.body(null, 204);
 		});
 		app.delete("/api/agents/claude-desktop", async (c) => {
+			if (server) return notOnServer(c);
 			await agents.disconnectClaudeDesktop();
 			return c.body(null, 204);
 		});
@@ -426,6 +544,8 @@ export function createApp(options: AppOptions): Hono {
 
 	// The move goes on after the answer; its progress comes as events.
 	app.post("/api/local-models/location", async (c) => {
+		// A path typed in a browser names a folder on another machine.
+		if (server) return notOnServer(c);
 		const body = await json(c);
 		if (typeof body.path !== "string" || !body.path.trim()) {
 			throw new ValidationError("path must name a folder");

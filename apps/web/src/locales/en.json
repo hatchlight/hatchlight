@@ -180,6 +180,7 @@
 	"errors.noResult": "The service finished without a result.",
 	"errors.notEnoughDisk": "Not enough disk space: {neededBytes} needed, {freeBytes} free.",
 	"errors.notInstalled": "{model} is not installed.",
+	"errors.notOnServer": "This can only be changed on the computer Hatchlight runs on.",
 	"errors.providerBusy": "{provider} is busy right now. Try again in a moment.",
 	"errors.referenceNotFound": "A reference image was not found.",
 	"errors.referenceNotImage": "Only images can be used as references.",
