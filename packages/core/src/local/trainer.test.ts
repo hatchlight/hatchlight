@@ -44,6 +44,19 @@ describe("reading the trainer's output", () => {
 		).toBeNull();
 	});
 
+	test("a line full of steps bars is read quickly", () => {
+		const started = performance.now();
+		expect(trainingProgress(`${"steps:".repeat(50_000)}|`)).toBeNull();
+		expect(trainingProgress(`steps: |${"9".repeat(100_000)}`)).toBeNull();
+		expect(trainingProgress(`steps: | 1/2 [${"9".repeat(100_000)}`)).toBeNull();
+		expect(performance.now() - started).toBeLessThan(500);
+		expect(
+			trainingProgress(
+				`steps: | x | ${"steps:".repeat(10)}| 3/9 [00:01<00:02, 1it/s]`,
+			),
+		).toEqual({ step: 3, steps: 9, secondsLeft: 2 });
+	});
+
 	test("stages come from what it says it does", () => {
 		expect(trainingStage("INFO caching latents.")).toBe("caching");
 		expect(trainingStage("INFO caching Text Encoder outputs...")).toBe(

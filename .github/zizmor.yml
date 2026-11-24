@@ -1,0 +1,8 @@
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # slsa-github-generator's reusable workflows must be called by tag:
+        # they check their own ref to sign the provenance.
+        "slsa-framework/slsa-github-generator/*": ref-pin
+        "*": hash-pin
