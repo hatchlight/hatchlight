@@ -113,6 +113,14 @@ export interface LocalModelStoreOptions {
 	 * it was set from outside.
 	 */
 	locationFile?: string;
+	/**
+	 * A folder of engine builds already extracted, as
+	 * `<build>/<executable>`, such as the ones a Docker image comes with
+	 * (HATCHLIGHT_ENGINES_DIR). A build there counts as installed and runs
+	 * from there: it is never downloaded, and nothing is written to or
+	 * removed from the folder.
+	 */
+	enginesDir?: string;
 }
 
 /** An engine build that was installed but does not run on this machine. */
@@ -362,6 +370,8 @@ export class LocalModelStore {
 	/** Whole models added by hand, kept and moved like the LoRAs. */
 	readonly checkpoints: CheckpointShelf;
 	private locationFile: string | null;
+	/** Builds that came with the system, read-only. */
+	private enginesDir: string | null;
 	private moving: LocalModelsView["disk"]["moving"] = null;
 	private moveTask: Promise<void> = Promise.resolve();
 	/** A move is being checked, before it starts. */
@@ -375,6 +385,7 @@ export class LocalModelStore {
 		assertCatalog(options.catalog, options.engines);
 		this.root = options.root;
 		this.locationFile = options.locationFile ?? null;
+		this.enginesDir = options.enginesDir ?? null;
 		this.catalog = options.catalog;
 		this.engines = options.engines;
 		this.fetch = options.fetch ?? globalThis.fetch;
@@ -474,6 +485,21 @@ export class LocalModelStore {
 		return join(this.root, "engines", buildId);
 	}
 
+	/** Where a build that came with the system is, when it did. */
+	private async providedEngineDir(build: EngineBuild): Promise<string | null> {
+		if (!this.enginesDir) return null;
+		const dir = join(this.enginesDir, build.id);
+		const info = await stat(
+			join(dir, ...build.executable.split(/[\\/]/)),
+		).catch(() => null);
+		return info?.isFile() ? dir : null;
+	}
+
+	/** Where an installed build runs from: the one that came with the system first. */
+	private async installedEngineDir(build: EngineBuild): Promise<string> {
+		return (await this.providedEngineDir(build)) ?? this.engineDir(build.id);
+	}
+
 	private chooser(hardware: Hardware) {
 		const cache = new Map<string, BuildChoice<EngineBuild> | null>();
 		return (engine: string) => {
@@ -534,12 +560,15 @@ export class LocalModelStore {
 	}
 
 	private async installedBuilds(): Promise<Set<string>> {
-		const known = new Set(
-			this.engines.flatMap((engine) => engine.builds.map((build) => build.id)),
-		);
+		const builds = this.engines.flatMap((engine) => engine.builds);
+		const known = new Set(builds.map((build) => build.id));
 		// Anything else is a leftover, such as an interrupted extraction.
 		const names = await readdir(join(this.root, "engines")).catch(() => []);
-		return new Set(names.filter((name) => known.has(name)));
+		const installed = new Set(names.filter((name) => known.has(name)));
+		for (const build of builds) {
+			if (await this.providedEngineDir(build)) installed.add(build.id);
+		}
+		return installed;
 	}
 
 	/** Every file that installed and installing models need. */
@@ -999,7 +1028,7 @@ export class LocalModelStore {
 				{ model: model.name },
 			);
 		}
-		const dir = this.engineDir(choice.build.id);
+		const dir = await this.installedEngineDir(choice.build);
 		return {
 			model,
 			variant,
@@ -1040,7 +1069,7 @@ export class LocalModelStore {
 				{ model: model.name },
 			);
 		}
-		const dir = this.engineDir(choice.build.id);
+		const dir = await this.installedEngineDir(choice.build);
 		return {
 			model,
 			variant,
@@ -1241,14 +1270,12 @@ export class LocalModelStore {
 				const extract = /\.(tar\.gz|tgz)$/.test(file.name)
 					? extractTarGz
 					: extractZip;
-				await extract(this.blob(file.sha256), tmp).catch(
-					(error: unknown) => {
-						throw new CodedError(
-							error instanceof Error ? error.message : String(error),
-							"engineUnpackFailed",
-						);
-					},
-				);
+				await extract(this.blob(file.sha256), tmp).catch((error: unknown) => {
+					throw new CodedError(
+						error instanceof Error ? error.message : String(error),
+						"engineUnpackFailed",
+					);
+				});
 			}
 			await chmod(join(tmp, ...build.executable.split(/[\\/]/)), 0o755);
 			await rename(tmp, dir);

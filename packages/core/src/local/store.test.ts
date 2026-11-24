@@ -211,6 +211,7 @@ async function setup(
 		checkEngine?: (executable: string) => Promise<string | null>;
 		root?: string;
 		engines?: LocalEngineSpec[];
+		enginesDir?: string;
 	} = {},
 ) {
 	// A second store on an existing root reopens it, as after a restart.
@@ -226,6 +227,7 @@ async function setup(
 		fetch: host.fetch,
 		hardware: async () => hardware,
 		checkEngine: options.checkEngine ?? (async () => null),
+		enginesDir: options.enginesDir,
 	});
 	const events: LocalModelEvent[] = [];
 	store.subscribe((event) => events.push(event));
@@ -774,6 +776,67 @@ test("an engine can come as a tar.gz archive", async () => {
 			join(root, "engines", "run-linux-x64-cuda", "bin", "libbackend.so"),
 		).text(),
 	).toBe("a backend library");
+});
+
+/** A folder of engines as a Docker image has them, with `builds` in it. */
+async function providedEngines(builds: string[]) {
+	const dir = await mkdtemp(join(tmpdir(), "hatchlight-engines-"));
+	dirs.push(dir);
+	for (const build of builds) {
+		await Bun.write(join(dir, build, "bin", "run"), "#!/bin/sh\necho run");
+	}
+	return dir;
+}
+
+test("engines that came with the system are used and never downloaded", async () => {
+	const enginesDir = await providedEngines(["run-linux-x64-cuda"]);
+	const checked: string[] = [];
+	const { store, root, requests, engines } = await setup({
+		enginesDir,
+		checkEngine: async (executable) => {
+			checked.push(executable);
+			return null;
+		},
+	});
+	expect((await store.list()).engines[0]).toMatchObject({
+		build: "run-linux-x64-cuda",
+		installed: true,
+	});
+
+	await store.install("a");
+	await store.idle();
+	expect(requests.map((r) => r.url)).not.toContain(url("engine.zip"));
+	expect(checked).toEqual([]);
+	expect(await engines()).toEqual([]);
+	const runtime = await store.runtime("a");
+	expect(runtime.build.id).toBe("run-linux-x64-cuda");
+	expect(runtime.executable).toBe(
+		join(enginesDir, "run-linux-x64-cuda", "bin", "run"),
+	);
+
+	// Removing the last model leaves the folder as it was.
+	await store.remove("a");
+	expect(await readdir(enginesDir)).toEqual(["run-linux-x64-cuda"]);
+	expect(
+		await Bun.file(join(enginesDir, "run-linux-x64-cuda", "bin", "run")).text(),
+	).toBe("#!/bin/sh\necho run");
+	expect(await readdir(join(root, "engines")).catch(() => [])).toEqual([]);
+});
+
+test("an engine missing from the system's folder is downloaded as usual", async () => {
+	// Only a build for other hardware, and a folder without its program.
+	const enginesDir = await providedEngines(["run-linux-x64-cpu"]);
+	await mkdir(join(enginesDir, "run-linux-x64-cuda"));
+	const { store, requests, engines } = await setup({ enginesDir });
+	await store.install("a");
+	await store.idle();
+	expect(requests.map((r) => r.url)).toContain(url("engine.zip"));
+	expect(await engines()).toEqual(["run-linux-x64-cuda"]);
+	expect((await store.runtime("a")).executable).not.toContain(enginesDir);
+	expect((await readdir(enginesDir)).sort()).toEqual([
+		"run-linux-x64-cpu",
+		"run-linux-x64-cuda",
+	]);
 });
 
 test("an engine that does not run here is set aside for the next best", async () => {
