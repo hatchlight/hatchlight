@@ -38,6 +38,8 @@ On a server ([server mode](docs/self-hosting.md)), also:
   monthly limit, storage quotas, or an admin's or owner's actions;
 - signing in without the password or the second step, or taking over an
   account, a session or an invite;
+- an API token doing more than its permissions or spending limit allow, or
+  reaching `/mcp` without one;
 - CSRF or DNS rebinding against a server, or forged `X-Forwarded-*` headers
   believed from outside the trusted proxies;
 - escaping the Docker image's defaults: the app gaining root or capabilities,
@@ -51,7 +53,8 @@ running it.
 
 It protects: who gets in (accounts, two-step sign-in, a setup code only the
 log shows); each person's pictures from the others; what members may do and
-spend; saved API keys, encrypted at rest; the data folder, readable by the
+spend; what agents may do, through API tokens limited to what they were
+given; saved API keys, encrypted at rest; the data folder, readable by the
 server's user only; and the host, with the app unprivileged in its container.
 
 It does not protect against: a compromised host, or an admin acting in bad

@@ -11,6 +11,7 @@ This guide covers the Docker image: `ghcr.io/hatchlight/hatchlight`.
 - [Quick start](#quick-start)
 - [First run](#first-run)
 - [Adding people](#adding-people)
+- [Agents](#agents)
 - [Reaching it: LAN, Tailscale, a domain](#reaching-it)
 - [Settings](#settings)
 - [Backups and updates](#backups-and-updates)
