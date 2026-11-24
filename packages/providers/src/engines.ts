@@ -12,6 +12,25 @@ const archive = (name: string, size: number, sha256: string) => ({
 	sha256,
 });
 
+const LLAMA_CPP_VERSION = "b12034";
+
+/** The release where .github/workflows/engines.yml published the Linux builds. */
+const ENGINES_RELEASE = `engines-${SD_CPP_VERSION}-${LLAMA_CPP_VERSION}`;
+
+/** A tar.gz from that release: `size` and `sha256` from its .sha256 file. */
+const linuxArchive = (name: string, size: number, sha256: string) => ({
+	name,
+	url: `https://github.com/hatchlight/hatchlight/releases/download/${ENGINES_RELEASE}/${name}`,
+	size,
+	sha256,
+});
+
+/**
+ * Programs built with CUDA 12.8 need an NVIDIA driver from its first
+ * release on: 570.26 on Linux.
+ */
+const CUDA_12_8_LINUX_DRIVER = "570.26";
+
 const build = (
 	backend: EngineBuild["backend"],
 	os: EngineBuild["os"],
@@ -35,31 +54,13 @@ const build = (
  * hashes are the ones GitHub reports for the release.
  *
  * stable-diffusion.cpp publishes no Linux build that runs on current LTS
- * distributions (they need glibc 2.43), nor a Linux CUDA build, so Hatchlight
- * builds its own: .github/workflows/engines.yml (scripts/build-engines.sh)
- * makes linux-x64 `cpu` and `cuda` archives of both engines on Ubuntu 22.04
- * (glibc 2.35) and publishes them as the GitHub release
- * `engines-<sd.cpp version>-<llama.cpp version>`. The `cuda` archives leave
- * out the CUDA runtime: the Docker image that runs them provides it.
- *
- * Their entries go here once that release exists, with the size and the
- * hash from its `.sha256` files (never before: a hash is what makes an
- * archive trusted). Each is one tar.gz, extracted into the build's folder:
- *
- *   build("cuda", "linux", "x64", [
- *     {
- *       name: "sd-cpp-<version>-linux-x64-cuda.tar.gz",
- *       url: "https://github.com/hatchlight/hatchlight/releases/download/engines-<sd.cpp version>-<llama.cpp version>/sd-cpp-<version>-linux-x64-cuda.tar.gz",
- *       size: <bytes>,
- *       sha256: "<from the .sha256 file>",
- *     },
- *   ], { minNvidiaDriver: "<oldest driver for CUDA 12.8 programs>" }),
- *
- * which makes the build `sd-cpp-linux-x64-cuda` running `sd-cli`; the `cpu`
- * one is `sd-cpp-linux-x64-cpu`, without a driver. llama.cpp has only
- * `llama-cpp-linux-x64-cpu` (it runs on the processor on purpose), running
- * `llama-server`, with `llama-completion` and `llama-mtmd-cli` next to it.
- * Under WSL the Windows builds keep being chosen (see chooseBuild).
+ * distributions (they need glibc 2.43), nor a Linux CUDA build, so the Linux
+ * builds are Hatchlight's own: .github/workflows/engines.yml
+ * (scripts/build-engines.sh) makes them on Ubuntu 22.04 (glibc 2.35) and
+ * publishes them in the release ENGINES_RELEASE, one tar.gz each. The `cuda`
+ * one leaves out the CUDA 12 runtime (libcudart, libcublas, libnccl): the
+ * nvidia/cuda runtime image that runs it provides it. Under WSL the Windows
+ * builds are chosen (see chooseBuild).
  */
 export function builtinEngines(): LocalEngineSpec[] {
 	return [
@@ -109,6 +110,26 @@ export function builtinEngines(): LocalEngineSpec[] {
 						"abef332cfca7861cc567910e79bedb70bfb2920bb4eedac97fcbb6db477f1596",
 					),
 				]),
+				build(
+					"cuda",
+					"linux",
+					"x64",
+					[
+						linuxArchive(
+							`sd-cpp-${SD_CPP_VERSION}-linux-x64-cuda.tar.gz`,
+							164_510_710,
+							"63c94c099eb0b6ef0c17a329c144bcd3080ebf903f966b01f25895213cc6b845",
+						),
+					],
+					{ minNvidiaDriver: CUDA_12_8_LINUX_DRIVER },
+				),
+				build("cpu", "linux", "x64", [
+					linuxArchive(
+						`sd-cpp-${SD_CPP_VERSION}-linux-x64-cpu.tar.gz`,
+						25_169_126,
+						"0af250d002d62af8463405d08693fe5e030564f1ee25b01595d5bdb2053c11f4",
+					),
+				]),
 				build("metal", "darwin", "arm64", [
 					archive(
 						"sd-master-532d2c1-bin-Darwin-macOS-26.7.2-arm64.zip",
@@ -122,14 +143,11 @@ export function builtinEngines(): LocalEngineSpec[] {
 	];
 }
 
-const LLAMA_CPP_VERSION = "b12034";
-
 /**
  * Runs the small language model that puts prompts into English. Only on the
  * processor, on purpose: a prompt is a few words, and the graphics card
- * stays for pictures. Windows only for now; under WSL the Windows build runs
- * through it. Linux builds come from .github/workflows/engines.yml (see
- * builtinEngines).
+ * stays for pictures. Under WSL the Windows build runs through it; the
+ * Linux one comes from .github/workflows/engines.yml (see builtinEngines).
  */
 const LLAMA_CPP: LocalEngineSpec = {
 	id: "llama-cpp",
@@ -156,6 +174,23 @@ const LLAMA_CPP: LocalEngineSpec = {
 			// Keeps the model loaded between prompts; `llama-completion.exe`,
 			// next to it, translates once where the server cannot be reached.
 			executable: "llama-server.exe",
+		},
+		{
+			id: "llama-cpp-linux-x64-cpu",
+			engine: "llama-cpp",
+			version: LLAMA_CPP_VERSION,
+			backend: "cpu",
+			os: "linux",
+			arch: "x64",
+			files: [
+				linuxArchive(
+					`llama-cpp-${LLAMA_CPP_VERSION}-linux-x64-cpu.tar.gz`,
+					14_461_625,
+					"bb514e30740c88c85944f26e773d1a984e66f7549d8cb74b5086fd67b5dafa01",
+				),
+			],
+			// `llama-completion` and `llama-mtmd-cli` are next to it.
+			executable: "llama-server",
 		},
 	],
 };
