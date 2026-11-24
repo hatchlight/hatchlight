@@ -1359,7 +1359,10 @@ export class LocalModelStore {
 			// A server that ignores the range sends the file from the start.
 			const resumed = response.status === 206;
 			if (!resumed) install.current.bytes = 0;
-			const out = await open(part, resumed ? "a" : "w");
+			// Each chunk is written where it belongs rather than appended: on a
+			// Windows folder under WSL, appending while the file's size is read
+			// (as listing the models does) loses chunks.
+			const out = await open(part, resumed ? "r+" : "w");
 			try {
 				for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
 					if (install.current.bytes + chunk.byteLength > file.size) {
@@ -1369,7 +1372,7 @@ export class LocalModelStore {
 							{ file: file.name },
 						);
 					}
-					await out.write(chunk);
+					await out.write(chunk, 0, chunk.byteLength, install.current.bytes);
 					install.current.bytes += chunk.byteLength;
 					install.transferred += chunk.byteLength;
 					this.progress(model, install);
@@ -1378,7 +1381,11 @@ export class LocalModelStore {
 				await out.close();
 			}
 			signal.throwIfAborted();
-			if (install.current.bytes !== file.size) {
+			// The file, not only the count: a write the disk lost shows here.
+			if (
+				install.current.bytes !== file.size ||
+				(await sizeOf(part)) !== file.size
+			) {
 				throw new CodedError(
 					`The download of ${file.name} was cut short`,
 					"downloadCutShort",
