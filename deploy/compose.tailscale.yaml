@@ -36,7 +36,7 @@ services:
     # No ports: nothing is published on the host.
 
   hatchlight:
-    image: ghcr.io/hatchlight/hatchlight:latest
+    image: ${HATCHLIGHT_IMAGE:-ghcr.io/hatchlight/hatchlight:latest}
     container_name: hatchlight
     restart: unless-stopped
     # Shares the Tailscale container's network: Tailscale's proxy reaches it

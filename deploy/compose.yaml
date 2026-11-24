@@ -9,11 +9,12 @@ name: hatchlight
 
 services:
   hatchlight:
-    image: ghcr.io/hatchlight/hatchlight:latest
+    # HATCHLIGHT_IMAGE pins a version, such as ghcr.io/hatchlight/hatchlight:0.3.0.
+    image: ${HATCHLIGHT_IMAGE:-ghcr.io/hatchlight/hatchlight:latest}
     container_name: hatchlight
     restart: unless-stopped
     ports:
-      - "4096:4096"
+      - "${HATCHLIGHT_PORT:-4096}:4096" # host port : container port
     environment:
       # The address people type in their browser: this machine's address on
       # your network, with the port above.

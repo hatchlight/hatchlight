@@ -27,7 +27,8 @@ This guide covers the Docker image: `ghcr.io/hatchlight/hatchlight`.
   on the host shows the driver version.
 - Docker with the **[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)**,
   so containers can use the card. Docker Desktop on Windows has it built in.
-- Disk space: the image is about 4 GB, and models take 2 to 30 GB each.
+- Disk space: the image is a 2.5 GB download and takes about 7 GB once
+  unpacked; models take 2 to 30 GB each.
 
 Without an NVIDIA card, or with an older driver, Hatchlight still runs: local
 models run on the processor, which is much slower, and cloud models work as
@@ -53,6 +54,10 @@ docker run -d --name hatchlight --gpus all -p 4096:4096 \
   --restart unless-stopped \
   ghcr.io/hatchlight/hatchlight:latest
 ```
+
+In the Compose files, `HATCHLIGHT_PORT` changes the port on the host (4096
+by default), and `HATCHLIGHT_IMAGE` pins a version, such as
+`ghcr.io/hatchlight/hatchlight:0.3.0`.
 
 `HATCHLIGHT_PUBLIC_URL` is the address people type in their browser. Use this
 machine's address on your network (`192.168.1.20` above is an example). The

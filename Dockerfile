@@ -40,8 +40,11 @@ LABEL org.opencontainers.image.title="Hatchlight" \
 	org.opencontainers.image.licenses="MIT"
 
 # tini forwards signals and reaps processes; tar and gzip unpack the trainer's
-# tools; setpriv (util-linux, in the base image) drops root.
+# tools; setpriv (util-linux, in the base image) drops root. The upgrade takes
+# Ubuntu's security fixes the base image was built before; NVIDIA holds the
+# CUDA libraries at their versions.
 RUN apt-get update \
+	&& apt-get upgrade -y --no-install-recommends \
 	&& apt-get install -y --no-install-recommends ca-certificates tini tar gzip \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& groupadd --gid 1000 hatchlight \

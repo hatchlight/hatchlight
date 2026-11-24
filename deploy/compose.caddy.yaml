@@ -32,7 +32,7 @@ services:
         ipv4_address: 172.30.0.2
 
   hatchlight:
-    image: ghcr.io/hatchlight/hatchlight:latest
+    image: ${HATCHLIGHT_IMAGE:-ghcr.io/hatchlight/hatchlight:latest}
     container_name: hatchlight
     restart: unless-stopped
     # No ports: only Caddy, on the network below, reaches it.
