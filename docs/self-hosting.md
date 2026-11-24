@@ -455,6 +455,12 @@ the person running it. In short:
   and come from its own page, which stops other websites and DNS rebinding
   from acting for a signed-in person. `X-Forwarded-*` headers count only from
   trusted proxies.
+- **The data on disk.** The data folder and the database are readable by
+  the server's user only, so other users and containers on the host cannot
+  read them through a shared folder.
+- **The container.** The app runs as an unprivileged user, with no Linux
+  capabilities and `no-new-privileges`; only the entrypoint starts as root,
+  to hand the volumes to `PUID:PGID`.
 - **Downloads.** Models and engines are checked against pinned SHA-256
   hashes before they are used.
 
@@ -465,6 +471,13 @@ the person running it. In short:
   key. `docker exec` can reset any password.
 - **Traffic on a network without HTTPS.** On plain `http://`, passwords and
   pictures can be read on the network. Use Tailscale or a proxy with HTTPS.
+- **A proxy set up wrong.** `HATCHLIGHT_TRUSTED_PROXIES` trusts what those
+  addresses say about the client and the scheme. Trusting a proxy that passes
+  on headers from anyone, or a whole network others share, lets them pose as
+  someone else's address or as HTTPS.
+- **A lost secret.** Without `secret.key` (or the `HATCHLIGHT_SECRET_FILE`),
+  saved API keys cannot be read back. Keep it in your backups; anyone who has
+  it and the data can read them.
 - **The internet at large.** It has no defense against heavy traffic or
   denial of service. Put it behind Tailscale, or a proxy or Cloudflare with
   their own protections, rather than on an open port.
