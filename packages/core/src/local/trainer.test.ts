@@ -475,6 +475,45 @@ function trainingWithSamples(args: string[], pause = false) {
 	return { ...program, output };
 }
 
+test("what a closed app left behind is cleared before a training, never under it", async () => {
+	const dir = await temp();
+	// Many pictures of an old training: clearing them takes a while.
+	const old = join(dir, "runs", "old");
+	for (let folder = 0; folder < 100; folder++) {
+		await Promise.all(
+			Array.from({ length: 50 }, (_, i) =>
+				Bun.write(join(old, String(folder), `${i}.png`), "x"),
+			),
+		);
+	}
+	const loras = new LoraShelf({ root: () => dir });
+	const trainer = new Trainer({
+		dir,
+		platform: "linux",
+		gpu: new GpuLock({
+			root: await temp(),
+			capacity: async () => 12 * 2 ** 30,
+		}),
+		loras,
+		baseModel: async () => ({
+			file: "/models/sdxl.safetensors",
+			scratch: "/models/tmp",
+		}),
+		fetch: async () => new Response("not used", { status: 404 }),
+		run: (args) => trainingWithSamples(args),
+		freeMemory: async () => 8 * 2 ** 30,
+		memoryCheckMs: 5,
+	});
+	await Bun.write(
+		join(dir, "ready.json"),
+		JSON.stringify({ version: "sd-scripts-cb70b96+torch-2.14.1-cu130+py3.11" }),
+	);
+	// At once, as when someone trains right after the app starts.
+	await trainer.train(request());
+	expect(await settled(trainer)).toMatchObject({ state: "done" });
+	expect(await Bun.file(join(old, "0", "0.png")).exists()).toBe(false);
+});
+
 describe("watching a training", () => {
 	test("samples show how it learns, and stay after it ends", async () => {
 		let argv: string[] = [];

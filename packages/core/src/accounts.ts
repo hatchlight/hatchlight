@@ -11,11 +11,19 @@ import { newId } from "./ids";
 import { matchTotp, newTotpSecret, totpUri } from "./totp";
 import type {
 	AccountView,
+	ApiTokenView,
 	AuthSessionView,
 	InviteView,
+	TokenExpiryDays,
+	TokenScope,
 	UserRole,
 } from "./types";
-import { USER_ROLES } from "./types";
+import {
+	TOKEN_EXPIRY_DAYS,
+	TOKEN_PREFIX,
+	TOKEN_SCOPES,
+	USER_ROLES,
+} from "./types";
 
 export const MIN_PASSWORD_LENGTH = 10;
 /** Longer is no safer, and hashing it would be work for nothing. */
@@ -26,6 +34,11 @@ export const SESSION_MS = 30 * DAY_MS;
 /** Sessions are written to at most this often as they are used. */
 const TOUCH_MS = 60 * 1000;
 const INVITE_MS = 7 * DAY_MS;
+/** How long a token lasts when its maker does not say. */
+const DEFAULT_TOKEN_DAYS = 90;
+/** API tokens each person may have at once. */
+const MAX_TOKENS = 50;
+const MAX_TOKEN_NAME = 64;
 const RESET_MS = DAY_MS;
 /**
  * Argon2 takes memory and time on purpose; a flood of sign-ins must not
@@ -373,6 +386,7 @@ export class AccountService {
 
 	/** Who an API token belongs to. */
 	resolveApiToken(token: string): Seen | null {
+		if (!token.startsWith(TOKEN_PREFIX)) return null;
 		const row = this.repo.getToken(hashToken(token));
 		const now = this.now();
 		if (!row || (row.expiresAt != null && row.expiresAt < now)) return null;
@@ -405,8 +419,17 @@ export class AccountService {
 		}
 	}
 
-	revokeOtherSessions(userId: string, keep: string | null): void {
+	/**
+	 * Signs out every browser but `keep`; with `tokens`, ends every API
+	 * token too, as when a session may have been stolen.
+	 */
+	revokeOtherSessions(
+		userId: string,
+		keep: string | null,
+		options: { tokens?: boolean } = {},
+	): void {
 		this.repo.deleteSessionsOf(userId, keep ?? undefined);
+		if (options.tokens) this.repo.deleteTokensOf(userId);
 	}
 
 	/** Changes one's own password; other browsers are signed out. */
@@ -787,29 +810,148 @@ export class AccountService {
 		return this.repo.getUser(id);
 	}
 
-	/** A token for programs, shown once. */
+	/**
+	 * A token for programs, shown once: what it may do (never more than its
+	 * person may), the most it may spend, and how long it lasts.
+	 */
 	createApiToken(
 		userId: string,
 		input: {
 			name: string;
-			scopes?: string[];
+			scopes: readonly string[];
 			spendLimitUsd?: number | null;
-			expiresAt?: number | null;
+			expiresInDays?: number | null;
 		},
-	): string {
-		this.mustGet(userId);
-		const token = newToken();
-		this.repo.createToken({
+	): { token: string; view: ApiTokenView } {
+		const user = this.mustGet(userId);
+		const name = input.name.trim();
+		if (!name || name.length > MAX_TOKEN_NAME) {
+			throw new ValidationError(
+				`A token needs a name of at most ${MAX_TOKEN_NAME} characters`,
+			);
+		}
+		const scopes = [...new Set(input.scopes)];
+		if (
+			scopes.length === 0 ||
+			scopes.some((scope) => !TOKEN_SCOPES.includes(scope as TokenScope))
+		) {
+			throw new ValidationError(
+				`A token needs scopes among ${TOKEN_SCOPES.join(", ")}`,
+			);
+		}
+		// Never more than the person may do.
+		if (scopes.includes("paid") && !mayUsePaid(user)) {
+			throw new AccessError(
+				"This account cannot use paid models",
+				"paidNotAllowed",
+				403,
+			);
+		}
+		if (scopes.includes("train") && !mayTrain(user)) {
+			throw new AccessError("This account cannot train", "forbidden", 403);
+		}
+		const limit = input.spendLimitUsd ?? null;
+		if (limit !== null && !(Number.isFinite(limit) && limit >= 0)) {
+			throw new ValidationError("The spending limit must be 0 or more");
+		}
+		// Left out, a token lasts 90 days; null asks for one that never ends.
+		const days =
+			input.expiresInDays === undefined
+				? DEFAULT_TOKEN_DAYS
+				: input.expiresInDays;
+		if (!TOKEN_EXPIRY_DAYS.includes(days as TokenExpiryDays)) {
+			throw new ValidationError(
+				"A token lasts 30, 90 or 365 days, or until revoked",
+			);
+		}
+		if (this.repo.listTokensOf(userId).length >= MAX_TOKENS) {
+			throw new ValidationError(
+				`At most ${MAX_TOKENS} tokens each: revoke one first`,
+			);
+		}
+		const token = `${TOKEN_PREFIX}${newToken()}`;
+		const now = this.now();
+		const row: ApiTokenRow = {
 			id: hashToken(token),
+			ref: newId("tok"),
 			userId,
-			name: input.name,
-			scopes: input.scopes ?? [],
-			spendLimitUsd: input.spendLimitUsd ?? null,
-			createdAt: this.now(),
+			name,
+			scopes,
+			spendLimitUsd: limit,
+			createdAt: now,
 			lastUsedAt: null,
-			expiresAt: input.expiresAt ?? null,
-		});
-		return token;
+			expiresAt: days === null ? null : now + days * DAY_MS,
+		};
+		this.repo.createToken(row);
+		return { token, view: this.tokenView(row) };
+	}
+
+	/**
+	 * A token made by the person themselves, who shows it is them with
+	 * their password (and the code from their app, when two-step sign-in
+	 * is on): a stolen browser session alone cannot mint a lasting token.
+	 */
+	async createApiTokenConfirmed(
+		userId: string,
+		proof: { password: string; code?: string },
+		input: Parameters<AccountService["createApiToken"]>[1],
+		signal?: AbortSignal,
+	): Promise<{ token: string; view: ApiTokenView }> {
+		const user = this.mustGet(userId);
+		await this.assertOwnsAccount(user, proof.password, proof.code, signal);
+		return this.createApiToken(userId, input);
+	}
+
+	/** A person's tokens, newest first; never the tokens themselves. */
+	listApiTokens(userId: string): ApiTokenView[] {
+		this.mustGet(userId);
+		return this.repo.listTokensOf(userId).map((row) => this.tokenView(row));
+	}
+
+	/** Ends one of one's own tokens. */
+	revokeApiToken(userId: string, ref: string): void {
+		if (!this.repo.deleteToken(userId, ref)) {
+			throw new NotFoundError("Token not found", "tokenNotFound");
+		}
+	}
+
+	/** Another person's tokens, for an admin or owner who manages them. */
+	listApiTokensOf(actor: UserRow, userId: string): ApiTokenView[] {
+		this.assertMayManage(actor, this.mustGet(userId));
+		return this.listApiTokens(userId);
+	}
+
+	/** Ends another person's token, as an admin or owner who manages them. */
+	revokeApiTokenOf(actor: UserRow, userId: string, ref: string): void {
+		this.assertMayManage(actor, this.mustGet(userId));
+		this.revokeApiToken(userId, ref);
+	}
+
+	/** A token by its ref, while it still works. */
+	liveToken(ref: string): ApiTokenRow | null {
+		const row = this.repo.getTokenByRef(ref);
+		if (!row || (row.expiresAt != null && row.expiresAt < this.now())) {
+			return null;
+		}
+		return row;
+	}
+
+	/** What was spent through a token, whoever's key paid, in dollars. */
+	spentByToken(ref: string): number {
+		return this.repo.spentByToken(ref);
+	}
+
+	private tokenView(row: ApiTokenRow): ApiTokenView {
+		return {
+			id: row.ref ?? "",
+			name: row.name,
+			scopes: row.scopes as TokenScope[],
+			spendLimitUsd: row.spendLimitUsd,
+			spentUsd: row.ref ? this.repo.spentByToken(row.ref) : 0,
+			createdAt: row.createdAt,
+			lastUsedAt: row.lastUsedAt,
+			expiresAt: row.expiresAt,
+		};
 	}
 
 	/** Writes down who added a LoRA, for their quota. */

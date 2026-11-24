@@ -204,12 +204,69 @@ export function mountAccounts(
 	});
 	app.delete("/api/account/sessions", (c) => {
 		const { user, sessionId } = c.get("viewer");
-		accounts.revokeOtherSessions(user.id, sessionId);
+		// ?tokens=true ends the API tokens too.
+		accounts.revokeOtherSessions(user.id, sessionId, {
+			tokens: c.req.query("tokens") === "true",
+		});
 		return c.body(null, 204);
 	});
 	app.delete("/api/account/sessions/:id", (c) => {
 		const { user } = c.get("viewer");
 		accounts.revokeSession(user.id, c.req.param("id"));
+		return c.body(null, 204);
+	});
+	// Tokens for programs and agents: made, seen and revoked in a browser.
+	app.get("/api/account/tokens", (c) =>
+		c.json(accounts.listApiTokens(c.get("viewer").user.id)),
+	);
+	app.post("/api/account/tokens", async (c) => {
+		const body = await json(c);
+		const { user } = c.get("viewer");
+		if (user.mustChangePassword) {
+			throw new AccessError(
+				"Choose a new password before going on",
+				"passwordChangeRequired",
+				403,
+			);
+		}
+		if (
+			!Array.isArray(body.scopes) ||
+			body.scopes.some((scope) => typeof scope !== "string")
+		) {
+			throw new ValidationError("scopes must be a list of scopes");
+		}
+		const spend = body.spendLimitUsd ?? null;
+		if (spend !== null && typeof spend !== "number") {
+			throw new ValidationError("spendLimitUsd must be a number or null");
+		}
+		// Left out, 90 days; null for a token that never ends.
+		const days = body.expiresInDays;
+		if (days !== undefined && days !== null && typeof days !== "number") {
+			throw new ValidationError("expiresInDays must be a number or null");
+		}
+		// The password, and the two-step code when it is on, as for any
+		// change a stolen session must not make; guessing slows down.
+		const { token, view } = await guarded(c, user.username, "signIn", () =>
+			accounts.createApiTokenConfirmed(
+				user.id,
+				{
+					password: text(body.password, "password"),
+					code: optionalText(body.code, "code"),
+				},
+				{
+					name: text(body.name, "name"),
+					scopes: body.scopes as string[],
+					spendLimitUsd: spend,
+					expiresInDays: days,
+				},
+				c.req.raw.signal,
+			),
+		);
+		// The only time the token is shown.
+		return c.json({ ...view, token }, 201);
+	});
+	app.delete("/api/account/tokens/:id", (c) => {
+		accounts.revokeApiToken(c.get("viewer").user.id, c.req.param("id"));
 		return c.body(null, 204);
 	});
 	app.post("/api/account/totp", (c) =>
@@ -337,6 +394,18 @@ export function mountAccounts(
 		return c.json(
 			accounts.updateUser(c.get("viewer").user, c.req.param("id"), change),
 		);
+	});
+	// Another person's tokens, for those who manage them.
+	app.get("/api/users/:id/tokens", (c) =>
+		c.json(accounts.listApiTokensOf(c.get("viewer").user, c.req.param("id"))),
+	);
+	app.delete("/api/users/:id/tokens/:token", (c) => {
+		accounts.revokeApiTokenOf(
+			c.get("viewer").user,
+			c.req.param("id"),
+			c.req.param("token"),
+		);
+		return c.body(null, 204);
 	});
 	// A link for the person to choose a new password: nobody else learns it.
 	app.post("/api/users/:id/password", (c) =>

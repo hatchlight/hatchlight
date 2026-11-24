@@ -17,6 +17,11 @@ export type Operation = "generate" | "edit";
 /** Who an operation runs for. Local installs use a single fixed user. */
 export interface UserContext {
 	userId: string;
+	/**
+	 * The API token asking, by its `ref`, when a program asks: what it starts
+	 * is held to the token's scopes and spending limit.
+	 */
+	tokenId?: string | null;
 }
 
 export const LOCAL_USER: UserContext = { userId: "local" };
@@ -55,6 +60,39 @@ export interface AccountView {
 	resetNotice: { by: string; at: number } | null;
 	/** What their pictures and videos take, and the most they may (null: no limit). */
 	storage: { usedBytes: number; quotaBytes: number | null };
+}
+
+/**
+ * What an API token may do, on top of what its person may:
+ *
+ * - `read`: see models, sessions, the gallery and pictures;
+ * - `generate`: make, upload and delete pictures and videos;
+ * - `paid`: use paid models, for a person allowed to;
+ * - `train`: train LoRAs and add them, for a person allowed to.
+ */
+export const TOKEN_SCOPES = ["read", "generate", "paid", "train"] as const;
+export type TokenScope = (typeof TOKEN_SCOPES)[number];
+
+/** How long a new token lasts, in days; null for until revoked. */
+export const TOKEN_EXPIRY_DAYS = [30, 90, 365, null] as const;
+export type TokenExpiryDays = (typeof TOKEN_EXPIRY_DAYS)[number];
+
+/** What API tokens begin with, so secret scanners can tell them. */
+export const TOKEN_PREFIX = "hl_";
+
+/** An API token as lists show it: never the token itself. */
+export interface ApiTokenView {
+	id: string;
+	name: string;
+	scopes: TokenScope[];
+	/** The most it may spend on paid models, in dollars; null for no limit. */
+	spendLimitUsd: number | null;
+	/** What it has spent on paid models, in dollars. */
+	spentUsd: number;
+	createdAt: number;
+	lastUsedAt: number | null;
+	/** Null for a token that lasts until revoked. */
+	expiresAt: number | null;
 }
 
 /** A browser someone is signed in on. */
@@ -407,6 +445,8 @@ export interface Job {
 	createdAt: number;
 	startedAt: number | null;
 	finishedAt: number | null;
+	/** The API token that asked for it, by its `ref`; held to its limits. */
+	tokenId?: string | null;
 }
 
 export type AssetKind = "output" | "upload";

@@ -1,3 +1,5 @@
+import type { TokenScope } from "@hatchlight/core";
+
 /**
  * Who may call a route on a server:
  *
@@ -48,6 +50,9 @@ export const ROUTE_ACCESS: Readonly<Record<string, Access>> = {
 	"POST /api/account/totp": "account",
 	"PUT /api/account/totp": "account",
 	"DELETE /api/account/totp": "account",
+	"GET /api/account/tokens": "account",
+	"POST /api/account/tokens": "account",
+	"DELETE /api/account/tokens/:id": "account",
 
 	// Making pictures, and a person's own sessions, gallery and assistant.
 	"GET /api/models": "member",
@@ -101,6 +106,8 @@ export const ROUTE_ACCESS: Readonly<Record<string, Access>> = {
 	"GET /api/users": "admin",
 	"PATCH /api/users/:id": "admin",
 	"POST /api/users/:id/password": "admin",
+	"GET /api/users/:id/tokens": "admin",
+	"DELETE /api/users/:id/tokens/:token": "admin",
 	"GET /api/invites": "admin",
 	"POST /api/invites": "admin",
 	"DELETE /api/invites/:id": "admin",
@@ -118,6 +125,58 @@ export const ROUTE_ACCESS: Readonly<Record<string, Access>> = {
 	"POST /api/trainer/install/cancel": "owner",
 	"DELETE /api/trainer": "owner",
 };
+
+/**
+ * What an API token needs in its scopes to call a route, for the routes a
+ * token may call at all (`member` and `train`). A route left out, such as
+ * a person's own choices, is for browsers only. `paid` is not a route's: it
+ * is checked where money is spent.
+ */
+export const ROUTE_SCOPE: Readonly<Record<string, TokenScope>> = {
+	"GET /api/models": "read",
+	"GET /api/providers": "read",
+	"GET /api/sessions": "read",
+	"GET /api/sessions/:id": "read",
+	"GET /api/jobs/:id/preview": "read",
+	"GET /api/assets/:id": "read",
+	"GET /api/gallery": "read",
+	"GET /api/assistant": "read",
+	"GET /api/sessions/:id/assistant": "read",
+	"GET /api/events": "read",
+	"GET /api/settings": "read",
+	"GET /api/local-models": "read",
+	"GET /api/local-models/:id/demos/:index": "read",
+	"GET /api/loras": "read",
+	"GET /api/checkpoints": "read",
+	"GET /api/trainer": "read",
+	"GET /api/captioner": "read",
+
+	"DELETE /api/sessions/:id": "generate",
+	"POST /api/turns": "generate",
+	"POST /api/jobs/:id/cancel": "generate",
+	"POST /api/jobs/:id/retry": "generate",
+	"POST /api/assets": "generate",
+	"DELETE /api/assets/:id": "generate",
+	"POST /api/prompts/improve": "generate",
+	"POST /api/assistant/messages": "generate",
+	"POST /api/sessions/:id/assistant/stop": "generate",
+	"POST /api/sessions/:id/assistant/answers": "generate",
+
+	"POST /api/loras": "train",
+	"POST /api/trainings": "train",
+	"POST /api/trainings/cancel": "train",
+	"POST /api/trainings/finish": "train",
+	"GET /api/trainings/:id/samples/:step": "train",
+	"POST /api/captions": "train",
+};
+
+/** The scope a token needs for a route, or null when no token may call it. */
+export function routeScope(
+	method: string,
+	routePath: string,
+): TokenScope | null {
+	return ROUTE_SCOPE[`${method.toUpperCase()} ${routePath}`] ?? null;
+}
 
 /**
  * The access a route needs, by its method and Hono route pattern

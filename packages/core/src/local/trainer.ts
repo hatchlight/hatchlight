@@ -363,6 +363,8 @@ export class Trainer {
 	private pending: ReturnType<typeof setTimeout> | null = null;
 	/** Stops the training under way and keeps its latest saved LoRA. */
 	private finishing: (() => void) | null = null;
+	/** Clearing what a closed app left behind, started with the trainer. */
+	private leftovers: Promise<void>;
 
 	constructor(options: TrainerOptions) {
 		this.options = {
@@ -374,12 +376,13 @@ export class Trainer {
 			...options,
 			letGo: options.letGo ?? (async () => {}),
 		};
-		// Pictures of a training that a closed app left behind.
-		for (const folder of ["runs", "samples"]) {
-			void rm(this.path(folder), { recursive: true, force: true }).catch(
-				() => {},
-			);
-		}
+		// Pictures of a training that a closed app left behind. A training
+		// waits for this, or it would go with them.
+		this.leftovers = Promise.all(
+			["runs", "samples"].map((folder) =>
+				rm(this.path(folder), { recursive: true, force: true }).catch(() => {}),
+			),
+		).then(() => {});
 	}
 
 	subscribe(listener: (event: TrainerEvent) => void): () => void {
@@ -939,6 +942,7 @@ export class Trainer {
 		signal: AbortSignal,
 	): Promise<string> {
 		const run = this.path("runs", view.id);
+		await this.leftovers;
 		try {
 			// The pictures and their captions, the trigger first in each.
 			const pictures = join(run, "dataset", "10_subject");

@@ -1138,6 +1138,22 @@ test("the assistant answers in a session, and asks before paying", async () => {
 	expect((await call("/api/sessions/ses_none/assistant")).status).toBe(404);
 });
 
+test("trying the app with fake models offers a paid one too, which needs a key", async () => {
+	const root = await mkdtemp(join(tmpdir(), "hatchlight-fake-"));
+	cleanups.push(() => rm(root, { recursive: true }));
+	process.env.HATCHLIGHT_FAKE = "1";
+	try {
+		const runtime = await createRuntime({ dataDir: root, providers: [] });
+		const providers = await runtime.service.listProviders({ userId: "local" });
+		const required = new Map(providers.map((p) => [p.id, p.requiresKey]));
+		expect(required.get("fake")).toBe(false);
+		expect(required.get("fake-paid")).toBe(true);
+		runtime.close();
+	} finally {
+		delete process.env.HATCHLIGHT_FAKE;
+	}
+});
+
 test("keys saved before encryption are encrypted on start; keys a new secret cannot open are set aside", async () => {
 	const root = await mkdtemp(join(tmpdir(), "hatchlight-secret-"));
 	cleanups.push(() => rm(root, { recursive: true }));

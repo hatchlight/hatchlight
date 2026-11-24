@@ -37,6 +37,12 @@ function isResumable(adapter: ProviderAdapter, handle: unknown): boolean {
 	return adapter.isResumable?.(handle) ?? adapter.resumable;
 }
 
+/**
+ * What a paid job or language call is held at while under way when its
+ * price is unknown: about what a picture or a long assistant step costs.
+ */
+export const DEFAULT_PAID_ESTIMATE_USD = 0.01;
+
 /** What a job cost going by the model's list price, when it has one. */
 function estimateCost(
 	model: ModelSpec,
@@ -91,7 +97,11 @@ export interface JobEngineDeps {
 	 * Why a person may not use models that need a key, which spend money, or
 	 * null when they may. Everyone may when absent, as on a personal install.
 	 */
-	paidRefusal?: (userId: string, source: KeySource) => PaidRefusal | null;
+	/**
+	 * Why who asked for a job (a person, and the API token they asked with)
+	 * may not spend on paid models now, or null.
+	 */
+	paidRefusal?: (who: UserContext, source: KeySource) => PaidRefusal | null;
 	/** Jobs running at once per provider. Defaults to 4. */
 	concurrencyPerProvider?: number;
 	/** The wait before the first try again; it doubles each time. */
@@ -102,21 +112,26 @@ export interface JobEngineDeps {
 	 * prompts go as written.
 	 */
 	translator?: (
-		userId: string,
+		who: UserContext,
 	) => Translator | null | Promise<Translator | null>;
 }
 
 /** Why someone may not spend on paid models. */
-export type PaidRefusal = "paidNotAllowed" | "monthlyLimitReached";
+export type PaidRefusal =
+	| "paidNotAllowed"
+	| "monthlyLimitReached"
+	| "tokenNotPaid"
+	| "tokenLimitReached";
+
+const PAID_REFUSALS: Record<PaidRefusal, string> = {
+	paidNotAllowed: "This account cannot use paid models",
+	monthlyLimitReached: "This month's limit for paid models is reached",
+	tokenNotPaid: "This API token cannot use paid models",
+	tokenLimitReached: "This API token's spending limit is reached",
+};
 
 export function paidError(refusal: PaidRefusal): AccessError {
-	return new AccessError(
-		refusal === "paidNotAllowed"
-			? "This account cannot use paid models"
-			: "This month's limit for paid models is reached",
-		refusal,
-		403,
-	);
+	return new AccessError(PAID_REFUSALS[refusal], refusal, 403);
 }
 
 /** A translation that takes longer is given up on; the prompt goes as written. */
@@ -206,6 +221,8 @@ export class JobEngine {
 
 	/** Picks up jobs left unfinished by a previous process. */
 	async start(): Promise<void> {
+		// What jobs held before a restart: those that go on hold it again.
+		await this.deps.repo.releasePendingSpending();
 		for (const job of await this.deps.repo.listUnfinishedJobs()) {
 			const adapter = this.deps.registry.adapter(job.providerId);
 			const canContinue =
@@ -302,7 +319,11 @@ export class JobEngine {
 	 * rather than sent anew; it keeps its handle unless the provider said the
 	 * job itself failed.
 	 */
-	async retry(job: Job): Promise<void> {
+	/**
+	 * Runs a failed or canceled job again, held to the limits of who asks
+	 * now: `tokenId` is the API token they ask with, if any.
+	 */
+	async retry(job: Job, tokenId: string | null = null): Promise<void> {
 		if (job.status !== "failed" && job.status !== "canceled") {
 			throw new ValidationError(
 				"Only a job that failed or was canceled can be tried again",
@@ -321,6 +342,7 @@ export class JobEngine {
 				costUsd: null,
 				startedAt: null,
 				finishedAt: null,
+				tokenId,
 			});
 		} catch (error) {
 			this.owned.delete(job.id);
@@ -379,6 +401,8 @@ export class JobEngine {
 		const adapter = registry.adapter(job.providerId);
 		const ctx: UserContext = { userId: job.userId };
 		let handle = job.handle;
+		// What a paid job holds of the limits while it runs.
+		let reservation: string | null = null;
 		let pctx = {
 			apiKey: undefined as string | undefined,
 			signal: controller.signal,
@@ -401,9 +425,30 @@ export class JobEngine {
 				(envKey ? { key: envKey, source: "server" } : undefined);
 			keySource = found?.source ?? "server";
 			const refusal = adapter.requiresKey
-				? this.deps.paidRefusal?.(job.userId, keySource)
+				? this.deps.paidRefusal?.(
+						{ userId: job.userId, tokenId: job.tokenId ?? null },
+						keySource,
+					)
 				: null;
 			if (refusal) throw paidError(refusal);
+			if (adapter.requiresKey) {
+				// Held at once, before anything else can start: jobs started
+				// together see each other's cost, so none goes far past a limit.
+				reservation = newId("spd");
+				await this.deps.repo.addSpending({
+					id: reservation,
+					userId: job.userId,
+					kind: "generation",
+					keySource,
+					tokenId: job.tokenId ?? null,
+					jobId,
+					costUsd:
+						estimateCost(model, job.params, job.params.count ?? 1) ??
+						DEFAULT_PAID_ESTIMATE_USD,
+					pending: true,
+					createdAt: Date.now(),
+				});
+			}
 			const apiKey = found?.key;
 			if (adapter.requiresKey && !apiKey) {
 				throw new CodedError(
@@ -499,12 +544,16 @@ export class JobEngine {
 								costUsd,
 							});
 							// Kept apart from the job, which can be deleted.
-							if (costUsd != null && costUsd > 0) {
+							if (reservation) {
+								await this.deps.repo.settleSpending(reservation, costUsd ?? 0);
+								reservation = null;
+							} else if (costUsd != null && costUsd > 0) {
 								await this.deps.repo.addSpending({
 									id: newId("spd"),
 									userId: job.userId,
 									kind: "generation",
 									keySource,
+									tokenId: job.tokenId ?? null,
 									jobId,
 									costUsd,
 									createdAt: Date.now(),
@@ -572,6 +621,10 @@ export class JobEngine {
 				});
 			}
 		} finally {
+			// Failed or canceled: what it held is let go.
+			if (reservation) {
+				await this.deps.repo.releaseSpending(reservation).catch(() => {});
+			}
 			// Only this run's: a job tried again may already have its own.
 			if (this.controllers.get(jobId) === controller) {
 				this.controllers.delete(jobId);
@@ -598,7 +651,10 @@ export class JobEngine {
 		const { prompt } = job.params;
 		// Asking a model whether English is English costs seconds.
 		if (plainlyEnglish(prompt)) return job.params;
-		const translator = await this.deps.translator?.(job.userId);
+		const translator = await this.deps.translator?.({
+			userId: job.userId,
+			tokenId: job.tokenId ?? null,
+		});
 		if (!translator) return job.params;
 		this.emit(job.userId, {
 			type: "job.progress",

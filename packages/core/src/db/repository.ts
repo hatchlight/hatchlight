@@ -31,6 +31,7 @@ export type JobPatch = Partial<
 		| "startedAt"
 		| "finishedAt"
 		| "params"
+		| "tokenId"
 	>
 >;
 
@@ -67,6 +68,12 @@ export interface Repository {
 
 	/** Writes down a charge, which nothing removes. */
 	addSpending(entry: SpendingEntry): Promise<void>;
+	/** A held charge becomes what it cost; nothing cost, it goes. */
+	settleSpending(id: string, costUsd: number): Promise<void>;
+	/** A held charge for what did not happen goes. */
+	releaseSpending(id: string): Promise<void>;
+	/** Every held charge goes: at start, nothing is under way. */
+	releasePendingSpending(): Promise<void>;
 
 	// Used by the job engine, which acts across users.
 	findJob(id: string): Promise<JobView | null>;
@@ -244,6 +251,32 @@ export class SqliteRepository implements Repository {
 
 	async addSpending(entry: SpendingEntry) {
 		this.db.insert(schema.spending).values(entry).run();
+	}
+
+	async settleSpending(id: string, costUsd: number) {
+		if (costUsd > 0) {
+			this.db
+				.update(schema.spending)
+				.set({ pending: false, costUsd })
+				.where(eq(schema.spending.id, id))
+				.run();
+		} else {
+			await this.releaseSpending(id);
+		}
+	}
+
+	async releaseSpending(id: string) {
+		this.db
+			.delete(schema.spending)
+			.where(and(eq(schema.spending.id, id), eq(schema.spending.pending, true)))
+			.run();
+	}
+
+	async releasePendingSpending() {
+		this.db
+			.delete(schema.spending)
+			.where(eq(schema.spending.pending, true))
+			.run();
 	}
 
 	async createAsset(asset: Asset) {

@@ -303,6 +303,48 @@ export class SqliteAccounts {
 		);
 	}
 
+	/** A person's tokens, newest first. */
+	listTokensOf(userId: string): ApiTokenRow[] {
+		return this.db
+			.select()
+			.from(schema.apiTokens)
+			.where(eq(schema.apiTokens.userId, userId))
+			.orderBy(sql`${schema.apiTokens.createdAt} desc, rowid desc`)
+			.all();
+	}
+
+	/** Ends one of a person's tokens; false if they have none by that ref. */
+	deleteToken(userId: string, ref: string): boolean {
+		return (
+			this.sqlite
+				.prepare("delete from api_tokens where user_id = ? and ref = ?")
+				.run(userId, ref).changes > 0
+		);
+	}
+
+	getTokenByRef(ref: string): ApiTokenRow | null {
+		return (
+			this.db
+				.select()
+				.from(schema.apiTokens)
+				.where(eq(schema.apiTokens.ref, ref))
+				.get() ?? null
+		);
+	}
+
+	/** What was spent through a token, whoever's key paid, in dollars. */
+	spentByToken(ref: string): number {
+		return (
+			this.db
+				.select({
+					total: sql<number>`coalesce(sum(${schema.spending.costUsd}), 0)`,
+				})
+				.from(schema.spending)
+				.where(eq(schema.spending.tokenId, ref))
+				.get()?.total ?? 0
+		);
+	}
+
 	touchToken(id: string, lastUsedAt: number): void {
 		this.db
 			.update(schema.apiTokens)

@@ -298,6 +298,7 @@ export class ReelService {
 			createdAt: now,
 			startedAt: null,
 			finishedAt: null,
+			tokenId: ctx.tokenId ?? null,
 		}));
 		await this.deps.repo.createTurn(turn, jobs);
 		for (const job of jobs) this.deps.engine.enqueue(job);
@@ -321,7 +322,7 @@ export class ReelService {
 		const job = await this.deps.repo.findJob(jobId);
 		if (!job || job.userId !== ctx.userId)
 			throw new NotFoundError("Job not found", "jobNotFound");
-		await this.deps.engine.retry(job);
+		await this.deps.engine.retry(job, ctx.tokenId ?? null);
 	}
 
 	/** The picture a running job shows as it forms. */

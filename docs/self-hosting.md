@@ -109,6 +109,89 @@ docker exec hatchlight hatchlight users reset-password <username>
 The reset prints a one-time password that must be changed at the next
 sign-in.
 
+<a id="agents"></a>
+
+## Agents
+
+AI agents that speak the [Model Context Protocol](https://modelcontextprotocol.io),
+such as Claude Code and Claude Desktop, can make pictures and videos on the
+server as a person, with an **API token** that person makes in **Settings >
+Use with AI agents**. An agent can list the models, generate and compare,
+redraw and upscale, and search the person's gallery. It cannot install
+models, manage people or change the server's settings, whatever the token.
+
+Each token has:
+
+- **Permissions**, never more than its person's own: _see_ (models, sessions,
+  gallery), _make_ (pictures and videos, uploads and deletions), _paid
+  models_ (only for people allowed them) and _train LoRAs_ (likewise).
+- **A spending limit** on paid models, on top of the person's monthly one,
+  whichever key pays.
+- **An expiry**: 30, 90 (the default) or 365 days, or none.
+
+Making a token takes the person's password, and their two-step code when
+it is on, so a stolen browser session alone cannot mint one. The token is
+shown once. Lists show its name, permissions, when it was last
+used and what it spent; its person revokes it there, and admins and owners
+revoke it from **Settings > People**. Changing the person's password or role,
+or disabling them, ends all their tokens, and so does **Sign out everywhere
+else** unless its box is unticked.
+
+An agent connects in one of two ways:
+
+- **Over HTTP, at `/mcp`**, with only the address and the token. For Claude
+  Code:
+
+  ```sh
+  claude mcp add --transport http --scope user hatchlight \
+    https://hatchlight.example.com/mcp --header "Authorization: Bearer hl_…"
+  ```
+
+  `--scope user` makes it available in every project. The token lands in the
+  shell's history, unless the command starts with a space in a shell set to
+  skip those, and Claude Code keeps it in its settings file (`~/.claude.json`).
+  To keep it off the command line, read it first:
+
+  ```sh
+  read -s HATCHLIGHT_TOKEN
+  claude mcp add --transport http --scope user hatchlight \
+    https://hatchlight.example.com/mcp --header "Authorization: Bearer $HATCHLIGHT_TOKEN"
+  ```
+
+  `/mcp` takes the token
+  only, never a browser's sign-in, and refuses requests from other websites.
+  It is served in server mode only.
+
+- **Through `hatchlight mcp`** on the agent's computer, for agents that start
+  a command, such as Claude Desktop: its settings file takes commands only,
+  and its connectors have no documented way to send a token. It needs
+  Hatchlight's command line there:
+
+  ```json
+  {
+    "mcpServers": {
+      "hatchlight": {
+        "command": "hatchlight",
+        "args": ["mcp", "--url", "https://hatchlight.example.com"],
+        "env": { "HATCHLIGHT_TOKEN": "hl_…" }
+      }
+    }
+  }
+  ```
+
+  `HATCHLIGHT_TOKEN=hl_… hatchlight mcp --url <address>` does the same from a
+  terminal; in the environment, unlike with `--token`, the token stays out of
+  other users' process lists. It refuses a plain `http://` address unless it is this
+  computer or `--insecure` is given. `--allow-paid` and `--spend-limit` add
+  their own limits on that computer.
+
+Treat a token like a password: anyone who has it acts as its person, within
+what it allows. Tokens start with `hl_` followed by 43 characters (letters,
+digits, `-` and `_`), so secret scanners can recognise them. To have GitHub
+look for them in a repository, add a
+[custom secret scanning pattern](https://docs.github.com/en/code-security/secret-scanning/using-advanced-secret-scanning-and-push-protection-features/custom-patterns/defining-custom-patterns-for-secret-scanning)
+with the regular expression `hl_[A-Za-z0-9_-]{43}`.
+
 <a id="reaching-it"></a>
 
 ## Reaching it: LAN, Tailscale, a domain
@@ -358,6 +441,9 @@ the person running it. In short:
   gallery and sessions.
 - **Spending.** Members use paid cloud models only when an admin allows it,
   up to a monthly limit. Quotas keep one person from filling the disk.
+- **Agents.** API tokens do only what their permissions name, never more than
+  their person may, and stop at their own spending limit. They cannot manage
+  accounts or the server, and a browser's sign-in never opens `/mcp`.
 - **Saved API keys.** They are never sent back to browsers, and are encrypted
   on disk with the server's secret.
 - **Requests from elsewhere.** Requests must name the server's own address

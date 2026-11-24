@@ -201,6 +201,10 @@ agent. By default only models on your computer are used, so it costs nothing;
 connection. Agents cannot install models: you do, in the app. See
 `bun run start mcp --help`.
 
+On a Hatchlight server, agents connect with an API token instead, over
+HTTP at `/mcp` or with `hatchlight mcp --url`: see
+[Agents](docs/self-hosting.md#agents) in the self-hosting guide.
+
 ## Your data
 
 Sessions, pictures and keys stay on your computer:

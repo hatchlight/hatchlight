@@ -6,6 +6,7 @@ import {
 	base32Decode,
 	FakeProvider,
 	LOCAL_USER,
+	type TokenScope,
 	type TrainerEvent,
 	type TrainerStatus,
 	type TrainingView,
@@ -18,6 +19,7 @@ import {
 	createApp,
 	createRuntime,
 	ROUTE_ACCESS,
+	ROUTE_SCOPE,
 	type Runtime,
 	serverConfig,
 } from "./index";
@@ -839,8 +841,9 @@ test("the last owner can be neither demoted nor disabled", async () => {
 test("an API token acts for its person, and only to use the server", async () => {
 	const { call, setupOwner, runtime, userId } = await serverApp();
 	await setupOwner();
-	const token = runtime.accounts.createApiToken(userId("owner"), {
+	const { token } = runtime.accounts.createApiToken(userId("owner"), {
 		name: "agent",
+		scopes: ["read", "generate"],
 	});
 	// A program sends no Origin; its token shows it is not another website.
 	const turn = await call("/api/turns", {
@@ -882,15 +885,383 @@ test("an API token acts for its person, and only to use the server", async () =>
 	).toBe(401);
 });
 
-/** Who may call a route, by its access. */
+test("API tokens are made in a browser, shown once, and revoked there or by an admin", async () => {
+	const { call, setupOwner, invite, userId } = await serverApp();
+	const owner = await setupOwner();
+	const member = await invite(owner);
+	const made = await call("/api/account/tokens", {
+		method: "POST",
+		who: member,
+		body: {
+			name: "laptop",
+			scopes: ["read"],
+			expiresInDays: 30,
+			password: PASSWORD,
+		},
+	});
+	expect(made.status).toBe(201);
+	const { token, id } = (await made.json()) as { token: string; id: string };
+	expect(token).toMatch(/^hl_/);
+	const listed = await (
+		await call("/api/account/tokens", { who: member })
+	).text();
+	expect(listed).toContain(id);
+	expect(listed).not.toContain(token.slice(3));
+	// A token cannot make, see or end tokens: only a browser can.
+	for (const [method, path] of [
+		["GET", "/api/account/tokens"],
+		["POST", "/api/account/tokens"],
+		["DELETE", `/api/account/tokens/${id}`],
+	] as const) {
+		const response = await call(path, {
+			method,
+			who: { token },
+			headers: { origin: "" },
+			body: method === "POST" ? { name: "x", scopes: ["read"] } : undefined,
+		});
+		expect(response.status).toBe(403);
+	}
+	// Only what its scopes name.
+	expect((await call("/api/models", { who: { token } })).status).toBe(200);
+	const turn = await call("/api/turns", {
+		method: "POST",
+		who: { token },
+		headers: { origin: "" },
+		body: { prompt: "x", modelIds: ["fake/alpha"] },
+	});
+	expect(turn.status).toBe(403);
+	expect(await errorCode(turn)).toBe("tokenScope");
+	// Revoked: it signs in no more.
+	expect(
+		(
+			await call(`/api/account/tokens/${id}`, {
+				method: "DELETE",
+				who: member,
+			})
+		).status,
+	).toBe(204);
+	expect((await call("/api/models", { who: { token } })).status).toBe(401);
+
+	// An admin or owner sees and ends a person's tokens.
+	const other = (await (
+		await call("/api/account/tokens", {
+			method: "POST",
+			who: member,
+			body: { name: "ci", scopes: ["read"], password: PASSWORD },
+		})
+	).json()) as { token: string; id: string };
+	const memberId = userId(member.username);
+	const seen = (await (
+		await call(`/api/users/${memberId}/tokens`, { who: owner })
+	).json()) as { id: string }[];
+	expect(seen.map((t) => t.id)).toEqual([other.id]);
+	expect(
+		(
+			await call(`/api/users/${memberId}/tokens/${other.id}`, {
+				method: "DELETE",
+				who: owner,
+			})
+		).status,
+	).toBe(204);
+	expect(
+		(await call("/api/models", { who: { token: other.token } })).status,
+	).toBe(401);
+	// Members see nobody else's.
+	expect(
+		(await call(`/api/users/${userId("owner")}/tokens`, { who: member }))
+			.status,
+	).toBe(403);
+});
+
+test("a token pays only with the paid scope, and up to its own limit", async () => {
+	const { call, setupOwner, invite, runtime, paid } = await serverApp();
+	const owner = await setupOwner();
+	await call("/api/providers/paid/key", {
+		method: "PUT",
+		who: owner,
+		body: { key: "server-key" },
+	});
+	const member = await invite(owner, { canUsePaid: true });
+	const tokenFor = async (body: Record<string, unknown>) =>
+		(
+			(await (
+				await call("/api/account/tokens", {
+					method: "POST",
+					who: member,
+					body: { name: "agent", password: PASSWORD, ...body },
+				})
+			).json()) as { token: string; id: string }
+		).token;
+	const turn = (token: string, model = "paid/alpha") =>
+		call("/api/turns", {
+			method: "POST",
+			who: { token },
+			headers: { origin: "" },
+			body: { prompt: "x", modelIds: [model] },
+		});
+
+	const unpaid = await tokenFor({ scopes: ["read", "generate"] });
+	// Paid models are not even listed to it; the person sees them.
+	const listed = async (who: Who) =>
+		(
+			(await (await call("/api/models", { who })).json()) as { id: string }[]
+		).map((m) => m.id);
+	expect(await listed({ token: unpaid })).not.toContain("paid/alpha");
+	expect(await listed({ token: unpaid })).toContain("fake/alpha");
+	expect(await listed(member)).toContain("paid/alpha");
+	const refused = await turn(unpaid);
+	expect(refused.status).toBe(403);
+	expect(await errorCode(refused)).toBe("tokenNotPaid");
+	expect((await turn(unpaid, "fake/alpha")).status).toBe(201);
+
+	// Two pictures at a cent each: the second goes over its limit.
+	const limited = await tokenFor({
+		scopes: ["read", "generate", "paid"],
+		spendLimitUsd: 0.015,
+	});
+	expect(await listed({ token: limited })).toContain("paid/alpha");
+	for (let i = 0; i < 2; i++) {
+		expect((await turn(limited)).status).toBe(201);
+		await runtime.engine.idle();
+	}
+	const over = await turn(limited);
+	expect(over.status).toBe(403);
+	expect(await errorCode(over)).toBe("tokenLimitReached");
+	const tokens = (await (
+		await call("/api/account/tokens", { who: member })
+	).json()) as { spentUsd: number; spendLimitUsd: number | null }[];
+	expect(tokens.find((t) => t.spendLimitUsd === 0.015)?.spentUsd).toBeCloseTo(
+		0.02,
+	);
+	// The person, in a browser, is not held to the token's limit.
+	expect(
+		(
+			await call("/api/turns", {
+				method: "POST",
+				who: member,
+				body: { prompt: "x", modelIds: ["paid/alpha"] },
+			})
+		).status,
+	).toBe(201);
+	await runtime.engine.idle();
+
+	// A job tried again with a token is held to that token when it runs.
+	paid.failWith = "down";
+	const failed = (await (
+		await call("/api/turns", {
+			method: "POST",
+			who: member,
+			body: { prompt: "x", modelIds: ["paid/alpha"] },
+		})
+	).json()) as { session: { id: string }; turn: { jobs: { id: string }[] } };
+	await runtime.engine.idle();
+	paid.failWith = null;
+	const jobId = failed.turn.jobs[0]?.id as string;
+	expect(
+		(
+			await call(`/api/jobs/${jobId}/retry`, {
+				method: "POST",
+				who: { token: unpaid },
+				headers: { origin: "" },
+			})
+		).status,
+	).toBe(204);
+	await runtime.engine.idle();
+	const detail = (await (
+		await call(`/api/sessions/${failed.session.id}`, { who: member })
+	).json()) as {
+		turns: { jobs: { id: string; errorCode: string | null }[] }[];
+	};
+	expect(
+		detail.turns.flatMap((t) => t.jobs).find((j) => j.id === jobId)?.errorCode,
+	).toBe("tokenNotPaid");
+});
+
+test("making a token takes the password, and the code with two-step sign-in", async () => {
+	const { call, setupOwner, runtime, userId } = await serverApp();
+	const owner = await setupOwner();
+	const make = (body: Record<string, unknown>) =>
+		call("/api/account/tokens", {
+			method: "POST",
+			who: owner,
+			body: { name: "agent", scopes: ["read"], ...body },
+		});
+	// A stolen session alone cannot mint a token.
+	expect((await make({})).status).toBe(400);
+	const wrong = await make({ password: "not the password at all" });
+	expect(wrong.status).toBe(403);
+	expect(await errorCode(wrong)).toBe("badPassword");
+	const made = await make({ password: PASSWORD });
+	expect(made.status).toBe(201);
+	// Left out, the expiry is 90 days; null is never.
+	const { createdAt, expiresAt } = (await made.json()) as {
+		createdAt: number;
+		expiresAt: number | null;
+	};
+	expect(expiresAt).toBe(createdAt + 90 * 24 * 60 * 60 * 1000);
+	expect(
+		(
+			(await (
+				await make({ password: PASSWORD, expiresInDays: null })
+			).json()) as {
+				expiresAt: number | null;
+			}
+		).expiresAt,
+	).toBeNull();
+
+	// With two-step sign-in on, the code too.
+	const { secret } = runtime.accounts.startTotp(userId("owner"));
+	const code = (step: number) =>
+		totp(
+			base32Decode(secret) as Uint8Array,
+			Math.floor(Date.now() / 1000) + 30 * step,
+		);
+	await runtime.accounts.enableTotp(userId("owner"), {
+		secret,
+		code: code(0),
+		password: PASSWORD,
+	});
+	const noCode = await make({ password: PASSWORD });
+	expect(noCode.status).toBe(403);
+	expect(await errorCode(noCode)).toBe("totpRequired");
+	expect((await make({ password: PASSWORD, code: code(1) })).status).toBe(201);
+});
+
+test("signing out elsewhere can end the API tokens too", async () => {
+	const { call, setupOwner, runtime, userId } = await serverApp();
+	const owner = await setupOwner();
+	const id = userId("owner");
+	const make = () =>
+		runtime.accounts.createApiToken(id, { name: "t", scopes: ["read"] }).token;
+	const kept = make();
+	await call("/api/account/sessions", { method: "DELETE", who: owner });
+	expect((await call("/api/models", { who: { token: kept } })).status).toBe(
+		200,
+	);
+	const ended = make();
+	await call("/api/account/sessions?tokens=true", {
+		method: "DELETE",
+		who: owner,
+	});
+	expect((await call("/api/models", { who: { token: ended } })).status).toBe(
+		401,
+	);
+	expect((await call("/api/models", { who: { token: kept } })).status).toBe(
+		401,
+	);
+	// This browser stays signed in.
+	expect((await call("/api/account", { who: owner })).status).toBe(200);
+});
+
+test("paid jobs hold their cost while they run, so limits hold against jobs at once", async () => {
+	const { call, setupOwner, invite, runtime, paid, userId } = await serverApp();
+	const owner = await setupOwner();
+	await call("/api/providers/paid/key", {
+		method: "PUT",
+		who: owner,
+		body: { key: "server-key" },
+	});
+	// Jobs run side by side, each for a while.
+	paid.maxConcurrency = 8;
+	paid.delayMs = 50;
+	const turns = (who: Who, n: number) =>
+		Promise.all(
+			Array.from({ length: n }, () =>
+				call("/api/turns", {
+					method: "POST",
+					who,
+					headers: "token" in who ? { origin: "" } : {},
+					body: { prompt: "x", modelIds: ["paid/alpha"] },
+				}),
+			),
+		);
+	/** What the jobs of `limited` ended with. */
+	const codes = async () => {
+		const sessions = (await (
+			await call("/api/sessions", { who: limited })
+		).json()) as { id: string }[];
+		const jobs = [];
+		for (const session of sessions) {
+			const detail = (await (
+				await call(`/api/sessions/${session.id}`, { who: limited })
+			).json()) as { turns: { jobs: { errorCode: string | null }[] }[] };
+			jobs.push(...detail.turns.flatMap((t) => t.jobs));
+		}
+		return jobs.map((j) => j.errorCode);
+	};
+
+	// A token with a 2.5 cent limit, five pictures at a cent at once: each
+	// that starts holds its cent, so three run and two are refused.
+	const limited = await invite(owner, { canUsePaid: true });
+	const { token, view } = runtime.accounts.createApiToken(
+		userId(limited.username),
+		{ name: "agent", scopes: ["generate", "paid"], spendLimitUsd: 0.025 },
+	);
+	await turns({ token }, 5);
+	await runtime.engine.idle();
+	expect(runtime.accounts.spentByToken(view.id)).toBeCloseTo(0.03);
+	expect((await codes()).filter((c) => c === "tokenLimitReached").length).toBe(
+		2,
+	);
+
+	// The same for a person's monthly limit, in a browser.
+	const monthly = await invite(owner, {
+		canUsePaid: true,
+		monthlyLimitUsd: 0.015,
+	});
+	await turns(monthly, 4);
+	await runtime.engine.idle();
+	expect(runtime.accounts.spentThisMonth(userId(monthly.username))).toBeCloseTo(
+		0.02,
+	);
+
+	// What fails lets go of what it held.
+	const other = runtime.accounts.createApiToken(userId(limited.username), {
+		name: "other",
+		scopes: ["generate", "paid"],
+	});
+	paid.failWith = "down";
+	await turns({ token: other.token }, 2);
+	await runtime.engine.idle();
+	expect(runtime.accounts.spentByToken(other.view.id)).toBe(0);
+});
+
+/** Who may call a route, by its access, signed in with a browser. */
 const MAY: Record<Access, string[]> = {
-	public: ["anonymous", "member", "trainer", "admin", "owner", "token"],
+	public: ["anonymous", "member", "trainer", "admin", "owner"],
 	account: ["member", "trainer", "admin", "owner"],
-	member: ["member", "trainer", "admin", "owner", "token"],
+	member: ["member", "trainer", "admin", "owner"],
 	train: ["trainer", "admin", "owner"],
 	admin: ["admin", "owner"],
 	owner: ["owner"],
 };
+
+/**
+ * Tokens, by whose they are and their scopes: never more than their person
+ * may, and only the routes their scopes name.
+ */
+const TOKENS: Record<string, { of: string; scopes: TokenScope[] }> = {
+	"read token": { of: "member", scopes: ["read"] },
+	"generate token": { of: "member", scopes: ["generate"] },
+	"trainer's train token": { of: "trainer", scopes: ["train"] },
+	"member's every-scope token": { of: "member", scopes: ["read", "generate"] },
+	"owner's every-scope token": {
+		of: "owner",
+		scopes: ["read", "generate", "paid", "train"],
+	},
+};
+
+function tokenMay(
+	route: string,
+	access: Access,
+	token: { of: string; scopes: TokenScope[] },
+): boolean {
+	if (access === "public") return true;
+	if (access !== "member" && access !== "train") return false;
+	if (access === "train" && !MAY.train.includes(token.of)) return false;
+	const scope = ROUTE_SCOPE[route];
+	return scope !== undefined && token.scopes.includes(scope);
+}
 
 test("every route lets in exactly who it should", async () => {
 	const { call, setupOwner, invite, runtime, userId } = await serverApp();
@@ -901,10 +1272,15 @@ test("every route lets in exactly who it should", async () => {
 		trainer: await invite(owner, { canTrain: true }, "trainer"),
 		admin: await invite(owner, { role: "admin" }, "admin"),
 		owner,
-		token: {
-			token: runtime.accounts.createApiToken(userId("member"), { name: "t" }),
-		},
 	};
+	for (const [name, { of, scopes }] of Object.entries(TOKENS)) {
+		principals[name] = {
+			token: runtime.accounts.createApiToken(userId(of), {
+				name,
+				scopes,
+			}).token,
+		};
+	}
 	// Signing out last, so the sessions stay for the other routes.
 	const routes = Object.entries(ROUTE_ACCESS).sort(([a], [b]) =>
 		a === "POST /api/logout" ? 1 : b === "POST /api/logout" ? -1 : 0,
@@ -928,8 +1304,13 @@ test("every route lets in exactly who it should", async () => {
 			const refused =
 				response.status === 401 ||
 				(response.status === 403 &&
-					["forbidden", "signInRequired"].includes(body.code ?? ""));
-			const allowed = MAY[access].includes(name);
+					["forbidden", "signInRequired", "tokenScope"].includes(
+						body.code ?? "",
+					));
+			const token = TOKENS[name];
+			const allowed = token
+				? tokenMay(route, access, token)
+				: MAY[access].includes(name);
 			if (refused === allowed) {
 				wrong.push(
 					`${route} as ${name}: ${response.status} ${body.code ?? ""}`,

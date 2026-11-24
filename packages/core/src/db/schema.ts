@@ -70,6 +70,8 @@ export const jobs = sqliteTable(
 		createdAt: integer("created_at").notNull(),
 		startedAt: integer("started_at"),
 		finishedAt: integer("finished_at"),
+		/** The API token that asked for it (its `ref`), held to that token's limits. */
+		tokenId: text("token_id"),
 	},
 	(t) => [index("jobs_turn").on(t.turnId), index("jobs_status").on(t.status)],
 );
@@ -174,6 +176,8 @@ export const apiTokens = sqliteTable(
 	"api_tokens",
 	{
 		id: text("id").primaryKey(),
+		/** How the token is named in lists and links, apart from its secret. */
+		ref: text("ref"),
 		userId: text("user_id")
 			.notNull()
 			.references(() => users.id, { onDelete: "cascade" }),
@@ -184,7 +188,10 @@ export const apiTokens = sqliteTable(
 		lastUsedAt: integer("last_used_at"),
 		expiresAt: integer("expires_at"),
 	},
-	(t) => [index("api_tokens_user").on(t.userId)],
+	(t) => [
+		index("api_tokens_user").on(t.userId),
+		uniqueIndex("api_tokens_ref").on(t.ref),
+	],
 );
 
 /**
@@ -201,6 +208,13 @@ export const spending = sqliteTable(
 		kind: text("kind").$type<SpendingKind>().notNull(),
 		/** The job it paid for, if any; no foreign key, so it outlives the job. */
 		jobId: text("job_id"),
+		/** The API token it was spent through (its `ref`), if any. */
+		tokenId: text("token_id"),
+		/**
+		 * Held for a paid job or call under way, at its estimated cost: it
+		 * counts against limits until settled to what it cost, or released.
+		 */
+		pending: integer("pending", { mode: "boolean" }).notNull().default(false),
 		/** Whose key paid: monthly limits count the server's only. */
 		keySource: text("key_source")
 			.$type<KeySource>()
@@ -209,7 +223,10 @@ export const spending = sqliteTable(
 		costUsd: real("cost_usd").notNull(),
 		createdAt: integer("created_at").notNull(),
 	},
-	(t) => [index("spending_user_created").on(t.userId, t.createdAt)],
+	(t) => [
+		index("spending_user_created").on(t.userId, t.createdAt),
+		index("spending_token").on(t.tokenId),
+	],
 );
 
 /**

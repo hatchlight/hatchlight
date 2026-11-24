@@ -15,6 +15,7 @@ import {
 	type LocalModelsView,
 	MAX_CHECKPOINT_BYTES,
 	MAX_LORA_BYTES,
+	mayUsePaid,
 	NotFoundError,
 	type PaidRefusal,
 	paidError,
@@ -37,6 +38,7 @@ import { mountAccounts } from "./accounts-routes";
 import type { Agents } from "./agents";
 import { requireAccess } from "./auth";
 import { DeviceCookies } from "./devices";
+import { Limiter } from "./limiter";
 import type { AssistantBrain, ImproveRequest } from "./runtime";
 import {
 	DEFAULT_LORA_QUOTA,
@@ -75,8 +77,11 @@ export interface AppOptions {
 	deviceKey?: Uint8Array;
 	/** The people of a server, who sign in; needed in server mode. */
 	accounts?: AccountService;
-	/** Why a person may not spend on paid models now, or null; servers only. */
-	paidRefusal?: (userId: string, source: KeySource) => PaidRefusal | null;
+	/**
+	 * Why a person, and the API token they ask with, may not spend on paid
+	 * models now, or null; servers only.
+	 */
+	paidRefusal?: (who: UserContext, source: KeySource) => PaidRefusal | null;
 	/** Maps a request to its user. Local installs have a single user. */
 	resolveUser?: (c: Context) => UserContext;
 	/** Connects AI agents to this installation; absent where it cannot. */
@@ -85,6 +90,16 @@ export interface AppOptions {
 	trainer?: Trainer;
 	/** Captions training pictures; absent where no model can see. */
 	captioner?: Captioner;
+	/**
+	 * Answers MCP over HTTP at /mcp, for agents with an API token; servers
+	 * only. Given the request and who it is from, once checked here.
+	 */
+	mcp?: (
+		request: Request,
+		caller: { token: string; origin: string; allowPaid: boolean },
+		/** The JSON-RPC message, read and checked here already. */
+		message: unknown,
+	) => Promise<Response>;
 	/** Makes and changes pictures by talking; absent where it cannot. */
 	assistant?: Assistant;
 	/** What a person's assistant thinks with now. */
@@ -128,6 +143,15 @@ const TRAINING_TYPES: Record<string, string> = {
 
 /** More than any JSON request the interface sends. */
 const MAX_JSON_BYTES = 1024 * 1024;
+/** MCP calls one API token may have under way at once. */
+const MAX_MCP_CALLS = 4;
+
+/** A JSON-RPC error answering no message in particular. */
+const rpcError = (code: number, message: string) => ({
+	jsonrpc: "2.0",
+	error: { code, message },
+	id: null,
+});
 
 function hostname(host: string): string {
 	return host.replace(/:\d+$/, "");
@@ -264,7 +288,10 @@ export function createApp(options: AppOptions): Hono {
 	const user =
 		options.resolveUser ??
 		(server
-			? (c: Context): UserContext => ({ userId: c.get("viewer").user.id })
+			? (c: Context): UserContext => {
+					const { user, apiToken } = c.get("viewer");
+					return { userId: user.id, tokenId: apiToken?.ref ?? null };
+				}
 			: () => LOCAL_USER);
 	const app = new Hono();
 
@@ -375,6 +402,98 @@ export function createApp(options: AppOptions): Hono {
 		})(c, next);
 	});
 
+	if (accounts && options.mcp && server) {
+		const answer = options.mcp;
+		// Wrong tokens slow down, per address; a token runs a few calls at once.
+		const failures = new Limiter({ freeTries: 10 });
+		const running = new Map<string, number>();
+		app.all(
+			"/mcp",
+			bodyLimit({
+				maxSize: MAX_JSON_BYTES,
+				onError: (c) => c.json({ error: "The request is too large" }, 413),
+			}),
+			async (c) => {
+				// Without sessions, there is no stream to open or session to end.
+				if (c.req.method !== "POST") {
+					return c.json({ error: "Use POST" }, 405, { allow: "POST" });
+				}
+				const address = c.get("client") ?? peerOf(c) ?? "unknown";
+				const wait = failures.wait(address);
+				if (wait > 0) {
+					throw new AccessError(
+						"Too many wrong tokens. Try again later",
+						"tooManyAttempts",
+						429,
+						{ seconds: Math.ceil(wait / 1000) },
+					);
+				}
+				// A token only: a browser's cookie never opens this.
+				const token = c.req
+					.header("authorization")
+					?.match(/^Bearer\s+(\S+)$/i)?.[1];
+				const seen = token ? accounts.resolveApiToken(token) : null;
+				if (!token || !seen?.apiToken) {
+					failures.fail(address);
+					c.header("www-authenticate", 'Bearer realm="hatchlight"');
+					throw new AccessError(
+						"An API token is needed: Authorization: Bearer <token>",
+						"signInRequired",
+						401,
+					);
+				}
+				if (seen.user.mustChangePassword) {
+					throw new AccessError(
+						"Choose a new password before going on",
+						"passwordChangeRequired",
+						403,
+					);
+				}
+				const ref = seen.apiToken.ref ?? seen.apiToken.id;
+				const busy = running.get(ref) ?? 0;
+				if (busy >= MAX_MCP_CALLS) {
+					throw new AccessError(
+						"This token has too many calls under way. Try again shortly",
+						"tooManyAttempts",
+						429,
+						{ seconds: 5 },
+					);
+				}
+				// One message per request: a batch would carry many calls past
+				// the cap on calls under way.
+				let message: unknown;
+				try {
+					message = JSON.parse(await c.req.text());
+				} catch {
+					return c.json(rpcError(-32700, "The body is not JSON"), 400);
+				}
+				if (Array.isArray(message)) {
+					return c.json(
+						rpcError(-32600, "Batches are not accepted: send one message"),
+						400,
+					);
+				}
+				running.set(ref, busy + 1);
+				try {
+					return await answer(
+						c.req.raw,
+						{
+							token,
+							origin: server.publicOrigin,
+							allowPaid:
+								seen.apiToken.scopes.includes("paid") && mayUsePaid(seen.user),
+						},
+						message,
+					);
+				} finally {
+					const left = (running.get(ref) ?? 1) - 1;
+					if (left > 0) running.set(ref, left);
+					else running.delete(ref);
+				}
+			},
+		);
+	}
+
 	app.onError((error, c) => {
 		// The browser went away: nobody to answer, nothing to log.
 		if (c.req.raw.signal.aborted) return new Response(null, { status: 499 });
@@ -423,9 +542,20 @@ export function createApp(options: AppOptions): Hono {
 
 	/** Why the person asking may not spend on paid models now, if they may not. */
 	const paidRefusal = (c: Context, source: KeySource) =>
-		server ? (options.paidRefusal?.(user(c).userId, source) ?? null) : null;
+		server ? (options.paidRefusal?.(user(c), source) ?? null) : null;
 
-	app.get("/api/models", (c) => c.json(service.listModels()));
+	app.get("/api/models", async (c) => {
+		const models = service.listModels();
+		// A token that may not pay is not shown what it could not use.
+		const token = server ? c.get("viewer").apiToken : null;
+		if (!token || token.scopes.includes("paid")) return c.json(models);
+		const paid = new Set(
+			(await service.listProviders(user(c)))
+				.filter((p) => p.requiresKey)
+				.map((p) => p.id),
+		);
+		return c.json(models.filter((m) => !paid.has(m.providerId)));
+	});
 
 	app.get("/api/providers", async (c) => {
 		const providers = await service.listProviders(user(c));

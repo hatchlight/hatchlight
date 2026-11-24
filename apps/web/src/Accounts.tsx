@@ -15,6 +15,7 @@ import { Logo } from "@/components/Logo";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -35,6 +36,7 @@ import {
 } from "./api";
 import { type I18n, useI18n } from "./i18n";
 import { Bar, ConfirmButton, LABEL, SECTION } from "./Training";
+import { TokenFacts } from "./tokens";
 
 const MIN_PASSWORD = 10;
 
@@ -1052,9 +1054,14 @@ function Sessions() {
 		mutationFn: api.revokeSession,
 		onSuccess: refresh,
 	});
+	// A stolen session could have made tokens: ended too, unless unticked.
+	const [endTokens, setEndTokens] = useState(true);
 	const others = useMutation({
-		mutationFn: api.revokeOtherSessions,
-		onSuccess: refresh,
+		mutationFn: () => api.revokeOtherSessions(endTokens),
+		onSuccess: () => {
+			void client.invalidateQueries({ queryKey: ["tokens"] });
+			return refresh();
+		},
 	});
 	return (
 		<div className={cn(PANEL, "flex flex-col gap-4")}>
@@ -1067,7 +1074,15 @@ function Sessions() {
 						confirm={t("account.signOutOthers")}
 						disabled={others.isPending}
 						onConfirm={() => others.mutate()}
-					/>
+					>
+						<Label className="min-h-9 gap-3 font-normal">
+							<Checkbox
+								checked={endTokens}
+								onCheckedChange={(checked) => setEndTokens(checked)}
+							/>
+							{t("account.signOutOthersTokens")}
+						</Label>
+					</ConfirmButton>
 				)}
 			</div>
 			<ul className="flex flex-col divide-y divide-line">
@@ -1413,10 +1428,54 @@ function People({ me }: { me: AccountView }) {
 	);
 }
 
+/** A person's API tokens, for an admin or owner who may end them. */
+function PersonTokens({ userId }: { userId: string }) {
+	const { t } = useI18n();
+	const client = useQueryClient();
+	const tokens = useQuery({
+		queryKey: ["user-tokens", userId],
+		queryFn: () => api.userTokens(userId),
+	});
+	const revoke = useMutation({
+		mutationFn: (id: string) => api.revokeUserToken(userId, id),
+		onSuccess: () =>
+			client.invalidateQueries({ queryKey: ["user-tokens", userId] }),
+	});
+	return (
+		<div className="flex flex-col gap-2">
+			{tokens.data?.length === 0 && (
+				<p className="text-sm text-dim">{t("users.noTokens")}</p>
+			)}
+			<ul className="flex flex-col gap-2">
+				{tokens.data?.map((token) => (
+					<li
+						key={token.id}
+						className="flex flex-wrap items-center justify-between gap-3"
+					>
+						<span className="flex min-w-0 flex-col gap-0.5">
+							<span className="text-sm break-all">{token.name}</span>
+							<TokenFacts token={token} />
+						</span>
+						<ConfirmButton
+							label={t("tokens.revoke")}
+							question={t("tokens.revokeQuestion", { name: token.name })}
+							confirm={t("tokens.revoke")}
+							disabled={revoke.isPending}
+							onConfirm={() => revoke.mutate(token.id)}
+						/>
+					</li>
+				))}
+			</ul>
+			<Problem error={tokens.error ?? revoke.error} />
+		</div>
+	);
+}
+
 function Person({ user, me }: { user: AccountView; me: AccountView }) {
 	const { t, date, bytes } = useI18n();
 	const client = useQueryClient();
 	const [copied, setCopied] = useState(false);
+	const [showTokens, setShowTokens] = useState(false);
 	// Owners manage anyone; admins only members other than themselves.
 	const mayChange =
 		me.role === "owner" || (user.role === "member" && user.id !== me.id);
@@ -1515,8 +1574,16 @@ function Person({ user, me }: { user: AccountView; me: AccountView }) {
 								disabled={reset.isPending}
 								onConfirm={() => reset.mutate()}
 							/>
+							<Button
+								variant="outline"
+								aria-expanded={showTokens}
+								onClick={() => setShowTokens((shown) => !shown)}
+							>
+								{t("users.tokens")}
+							</Button>
 						</div>
 					)}
+					{showTokens && <PersonTokens userId={user.id} />}
 				</>
 			)}
 			{link && (
