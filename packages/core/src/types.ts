@@ -469,7 +469,7 @@ export interface EngineBuildSpec {
 /** One downloadable build of an engine, for one platform and backend. */
 export interface EngineBuild extends EngineBuildSpec {
 	version: string;
-	/** Zip archives, extracted together into the build's folder. */
+	/** Zip or tar.gz archives, extracted together into the build's folder. */
 	files: LocalModelFile[];
 	/** The program to run, relative to the build's folder. */
 	executable: string;

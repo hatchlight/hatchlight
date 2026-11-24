@@ -256,6 +256,8 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		hardware: options.hardware,
 		checkEngine: options.checkEngine,
 		locationFile: options.modelsLocationFile,
+		// Engines a Docker image comes with, used instead of downloading them.
+		enginesDir: appEnv(process.env, "ENGINES_DIR"),
 	});
 	const trainer = new Trainer({
 		dir: options.trainerDir ?? join(options.dataDir, "trainer"),

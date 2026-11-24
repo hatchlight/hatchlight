@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { lstat, mkdtemp, readdir, readlink, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 import fc from "fast-check";
 import {
 	cleanTranslation,
@@ -6,6 +10,8 @@ import {
 	sameWords,
 	samplingProgress,
 } from "./index";
+import { extractTarGz } from "./local/tar";
+import { tarGz } from "./local/testing";
 
 /**
  * Text that comes from outside — a pasted prompt, a language model's reply,
@@ -123,6 +129,61 @@ describe("the engine's progress bar", () => {
 					).toEqual({ step: shown, steps });
 				},
 			),
+		);
+	});
+});
+
+/** Every link below `dir`, as `[path, target]`. */
+async function links(dir: string): Promise<[string, string][]> {
+	const found: [string, string][] = [];
+	for (const name of await readdir(dir).catch(() => [])) {
+		const path = join(dir, name);
+		const info = await lstat(path);
+		if (info.isSymbolicLink()) found.push([path, await readlink(path)]);
+		else if (info.isDirectory()) found.push(...(await links(path)));
+	}
+	return found;
+}
+
+describe("a downloaded engine archive", () => {
+	const name = tricky(["..", "/", "\\", ".", "a", "lib.so", "C:"]);
+	const entry = fc.record({
+		name,
+		type: fc.constantFrom("0", "5", "2", "1", "x", "L", "K", "g", "3"),
+		linkname: name,
+		data: fc.uint8Array({ maxLength: 600 }),
+		pax: fc.boolean(),
+	});
+	const archive = fc.oneof(
+		fc.array(entry, { maxLength: 6 }).map((entries) => tarGz(entries)),
+		fc.uint8Array({ maxLength: 2048 }).map((bytes) => gzipSync(bytes)),
+		fc.uint8Array({ maxLength: 2048 }),
+	);
+
+	test("never writes outside its folder, nor links out of it", async () => {
+		await fc.assert(
+			fc.asyncProperty(archive, async (bytes) => {
+				const dir = await mkdtemp(join(tmpdir(), "hatchlight-fuzz-"));
+				try {
+					const file = join(dir, "archive.tar.gz");
+					await Bun.write(file, bytes);
+					const out = join(dir, "out");
+					await extractTarGz(file, out).catch((error: unknown) => {
+						expect(error).toBeInstanceOf(Error);
+					});
+					// Nothing next to the folder: only the archive and the folder.
+					expect((await readdir(dir)).sort()).toEqual([
+						"archive.tar.gz",
+						"out",
+					]);
+					for (const [, target] of await links(out)) {
+						expect(target).not.toMatch(/[/\\]|^\.\.?$/);
+					}
+				} finally {
+					await rm(dir, { recursive: true, force: true });
+				}
+			}),
+			{ numRuns: 200 },
 		);
 	});
 });

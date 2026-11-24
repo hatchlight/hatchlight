@@ -1,0 +1,135 @@
+name: Engines
+
+# Builds the Linux engines Hatchlight runs local models with, for linux-x64,
+# with scripts/build-engines.sh: stable-diffusion.cpp on the processor and on
+# NVIDIA cards, llama.cpp on the processor only. Upstream publishes no Linux build that runs
+# on current LTS distributions, nor a Linux CUDA one of stable-diffusion.cpp.
+#
+# Builds run in Ubuntu 22.04 containers, so the programs need glibc 2.35 at
+# most. cuda archives do NOT include the CUDA runtime (libcudart, libcublas,
+# libcublasLt) nor the driver: the Docker image that runs them provides them.
+#
+# A pull request that changes this file or the script builds without
+# publishing. Run by hand on main, it publishes the archives and their .sha256 files
+# as the prerelease engines-<sd.cpp version>-<llama.cpp version>; their sizes
+# and hashes then go into packages/providers/src/engines.ts.
+on:
+  workflow_dispatch:
+    inputs:
+      sd-cpp-version:
+        description: stable-diffusion.cpp release tag
+        default: master-1106-532d2c1
+        required: true
+      llama-cpp-version:
+        description: llama.cpp release tag
+        default: b12034
+        required: true
+      publish:
+        description: Publish the archives as a GitHub release
+        type: boolean
+        default: true
+  pull_request:
+    paths:
+      - .github/workflows/engines.yml
+      - scripts/build-engines.sh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: engines-${{ github.ref }}
+  # A run that publishes is never cut short by another.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: ${{ matrix.engine }} ${{ matrix.variant }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - engine: sd-cpp
+            variant: cpu
+            image: ubuntu:22.04@sha256:b000e69a50ff940390233025e7a337fb8469b509e2334fa4d018ac30f3e18cdb
+            jobs: 4
+          # Two compilers at a time: nvcc on the CUTLASS kernels takes
+          # several GB each, and the runner has 16.
+          - engine: sd-cpp
+            variant: cuda
+            image: nvidia/cuda:12.8.1-devel-ubuntu22.04@sha256:a99a1860ba8e2916e5c3e73b72ec4c4301653a84586e05bfc9a2aa2d58027e97
+            jobs: 2
+          # llama.cpp runs on the processor only, on purpose: the card stays
+          # for pictures.
+          - engine: llama-cpp
+            variant: cpu
+            image: ubuntu:22.04@sha256:b000e69a50ff940390233025e7a337fb8469b509e2334fa4d018ac30f3e18cdb
+            jobs: 4
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    # CUDA code for several card generations takes hours; jobs stop at 360.
+    timeout-minutes: 350
+    env:
+      SD_CPP_VERSION: ${{ inputs.sd-cpp-version || 'master-1106-532d2c1' }}
+      LLAMA_CPP_VERSION: ${{ inputs.llama-cpp-version || 'b12034' }}
+      ENGINE: ${{ matrix.engine }}
+      VARIANT: ${{ matrix.variant }}
+      CMAKE_BUILD_PARALLEL_LEVEL: ${{ matrix.jobs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: scripts/build-engines.sh deps
+      - name: Build
+        run: scripts/build-engines.sh build "$ENGINE" "$VARIANT" dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.engine }}-linux-x64-${{ matrix.variant }}
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    # Only from main: a release must come from reviewed code.
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # creates the release and uploads the archives
+    env:
+      SD_CPP_VERSION: ${{ inputs.sd-cpp-version }}
+      LLAMA_CPP_VERSION: ${{ inputs.llama-cpp-version }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="engines-${SD_CPP_VERSION}-${LLAMA_CPP_VERSION}"
+          cd dist
+          sha256sum --check ./*.sha256
+          # A published archive is never replaced: the app pins its hash.
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "$tag is already published; change a version to build again" >&2
+            exit 1
+          fi
+          {
+            echo "Linux engines for Hatchlight, built by the Engines workflow."
+            echo
+            echo "- stable-diffusion.cpp ${SD_CPP_VERSION}"
+            echo "- llama.cpp ${LLAMA_CPP_VERSION}"
+            echo
+            echo "cuda archives need the CUDA 12 runtime and an NVIDIA driver from the system."
+            echo
+            echo '```'
+            cat ./*.sha256
+            echo '```'
+          } >notes.md
+          gh release create "$tag" ./*.tar.gz ./*.sha256 \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Engines: stable-diffusion.cpp ${SD_CPP_VERSION}, llama.cpp ${LLAMA_CPP_VERSION}" \
+            --notes-file notes.md \
+            --prerelease

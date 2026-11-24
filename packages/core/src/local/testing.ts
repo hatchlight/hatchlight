@@ -1,4 +1,4 @@
-import { crc32, deflateRawSync, deflateSync } from "node:zlib";
+import { crc32, deflateRawSync, deflateSync, gzipSync } from "node:zlib";
 
 export interface ZipItem {
 	name: string;
@@ -63,6 +63,69 @@ export function zip(
 	end.writeUInt32LE(directory.length, 12);
 	end.writeUInt32LE(offset, 16);
 	return Buffer.concat([...locals, directory, end]);
+}
+
+export interface TarItem {
+	name: string;
+	data?: Uint8Array;
+	/** "0" a file (the default), "5" a folder, "2" a link, or any other. */
+	type?: string;
+	linkname?: string;
+	mode?: number;
+	/** Gives the name in a pax header, as tools do for long names. */
+	pax?: boolean;
+	/** Overrides the header checksum, to make a damaged archive. */
+	checksum?: number;
+}
+
+function tarHeader(item: TarItem, name: string, size: number): Buffer {
+	const header = Buffer.alloc(512);
+	const field = (value: string, start: number, length: number) => {
+		header.write(value.slice(0, length), start, length, "utf8");
+	};
+	const octal = (value: number, start: number, length: number) =>
+		field(`${value.toString(8).padStart(length - 1, "0")}\0`, start, length);
+	field(name, 0, 100);
+	octal(item.mode ?? (item.type === "5" ? 0o755 : 0o644), 100, 8);
+	octal(0, 108, 8);
+	octal(0, 116, 8);
+	octal(size, 124, 12);
+	octal(0, 136, 12);
+	field(item.type ?? "0", 156, 1);
+	field(item.linkname ?? "", 157, 100);
+	field("ustar\0", 257, 6);
+	field("00", 263, 2);
+	header.fill(0x20, 148, 156);
+	let sum = 0;
+	for (const byte of header) sum += byte;
+	octal(item.checksum ?? sum, 148, 7);
+	return header;
+}
+
+const pad = (length: number) => Buffer.alloc((512 - (length % 512)) % 512);
+
+/** Writes a gzip-compressed tar archive the way GNU tar does. */
+export function tarGz(items: TarItem[]): Uint8Array {
+	const blocks: Buffer[] = [];
+	for (const item of items) {
+		const data = Buffer.from(item.data ?? new Uint8Array());
+		if (item.pax) {
+			const body = ` path=${item.name}\n`;
+			// The length counts its own digits.
+			let length = body.length + 1;
+			while (`${length}${body}`.length !== length) length++;
+			const record = Buffer.from(`${length}${body}`);
+			blocks.push(
+				tarHeader({ name: "PaxHeader", type: "x" }, "PaxHeader", record.length),
+				record,
+				pad(record.length),
+			);
+		}
+		const name = item.pax ? item.name.slice(-100) : item.name;
+		blocks.push(tarHeader(item, name, data.length), data, pad(data.length));
+	}
+	blocks.push(Buffer.alloc(1024));
+	return gzipSync(Buffer.concat(blocks));
 }
 
 /** A real, flat grey PNG picture of the given size. */

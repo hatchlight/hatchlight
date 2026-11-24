@@ -35,9 +35,31 @@ const build = (
  * hashes are the ones GitHub reports for the release.
  *
  * stable-diffusion.cpp publishes no Linux build that runs on current LTS
- * distributions (they need glibc 2.43), nor a Linux CUDA build, so Linux is
- * served only under WSL, through the Windows builds, until Hatchlight ships
- * builds of its own.
+ * distributions (they need glibc 2.43), nor a Linux CUDA build, so Hatchlight
+ * builds its own: .github/workflows/engines.yml (scripts/build-engines.sh)
+ * makes linux-x64 `cpu` and `cuda` archives of both engines on Ubuntu 22.04
+ * (glibc 2.35) and publishes them as the GitHub release
+ * `engines-<sd.cpp version>-<llama.cpp version>`. The `cuda` archives leave
+ * out the CUDA runtime: the Docker image that runs them provides it.
+ *
+ * Their entries go here once that release exists, with the size and the
+ * hash from its `.sha256` files (never before: a hash is what makes an
+ * archive trusted). Each is one tar.gz, extracted into the build's folder:
+ *
+ *   build("cuda", "linux", "x64", [
+ *     {
+ *       name: "sd-cpp-<version>-linux-x64-cuda.tar.gz",
+ *       url: "https://github.com/hatchlight/hatchlight/releases/download/engines-<sd.cpp version>-<llama.cpp version>/sd-cpp-<version>-linux-x64-cuda.tar.gz",
+ *       size: <bytes>,
+ *       sha256: "<from the .sha256 file>",
+ *     },
+ *   ], { minNvidiaDriver: "<oldest driver for CUDA 12.8 programs>" }),
+ *
+ * which makes the build `sd-cpp-linux-x64-cuda` running `sd-cli`; the `cpu`
+ * one is `sd-cpp-linux-x64-cpu`, without a driver. llama.cpp has only
+ * `llama-cpp-linux-x64-cpu` (it runs on the processor on purpose), running
+ * `llama-server`, with `llama-completion` and `llama-mtmd-cli` next to it.
+ * Under WSL the Windows builds keep being chosen (see chooseBuild).
  */
 export function builtinEngines(): LocalEngineSpec[] {
 	return [
@@ -105,8 +127,9 @@ const LLAMA_CPP_VERSION = "b12034";
 /**
  * Runs the small language model that puts prompts into English. Only on the
  * processor, on purpose: a prompt is a few words, and the graphics card
- * stays for pictures. Windows only for now, as its archives are zip; under
- * WSL the Windows build runs through it.
+ * stays for pictures. Windows only for now; under WSL the Windows build runs
+ * through it. Linux builds come from .github/workflows/engines.yml (see
+ * builtinEngines).
  */
 const LLAMA_CPP: LocalEngineSpec = {
 	id: "llama-cpp",
