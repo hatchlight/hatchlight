@@ -9,20 +9,26 @@ afterEach(async () => {
 	for (const dir of dirs.splice(0)) await rm(dir, { recursive: true });
 });
 
-test("a device cookie vouches for its name only, and only from this server", () => {
+test("a device cookie vouches for its person only, and only from this server", () => {
 	const key = crypto.getRandomValues(new Uint8Array(32));
 	const devices = new DeviceCookies(key);
-	const cookie = devices.issue("Owner");
-	expect(devices.vouchesFor(cookie, "owner")).toBe(true);
-	expect(devices.vouchesFor(cookie, "admin")).toBe(false);
-	expect(devices.vouchesFor(undefined, "owner")).toBe(false);
-	expect(devices.vouchesFor("a.b", "owner")).toBe(false);
+	const owner = { id: "usr_owner", username: "owner" };
+	const admin = { id: "usr_admin", username: "admin" };
+	const cookie = devices.issue(owner);
+	expect(devices.vouchesFor(cookie, owner)).toBe(true);
+	expect(devices.vouchesFor(cookie, admin)).toBe(false);
+	expect(devices.vouchesFor(cookie, null)).toBe(false);
+	expect(devices.vouchesFor(undefined, owner)).toBe(false);
+	expect(devices.vouchesFor("a.b", owner)).toBe(false);
 	const other = new DeviceCookies(crypto.getRandomValues(new Uint8Array(32)));
-	expect(other.vouchesFor(cookie, "owner")).toBe(false);
-	// The name cannot be swapped under the signature.
-	const [, id, mac] = cookie.split(".");
-	const renamed = `${Buffer.from("admin").toString("base64url")}.${id}.${mac}`;
-	expect(devices.vouchesFor(renamed, "admin")).toBe(false);
+	expect(other.vouchesFor(cookie, owner)).toBe(false);
+	// The person cannot be swapped under the signature.
+	const [, device, mac] = cookie.split(".");
+	expect(devices.vouchesFor(`usr_admin.${device}.${mac}`, admin)).toBe(false);
+	// A name given to another account later does not inherit the cookie.
+	expect(
+		devices.vouchesFor(cookie, { id: "usr_owner", username: "renamed" }),
+	).toBe(false);
 });
 
 test("the device key is made once, readable only by the server's user", async () => {

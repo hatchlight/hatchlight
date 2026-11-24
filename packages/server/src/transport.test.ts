@@ -210,3 +210,16 @@ test("personal mode, which has no login, refuses to listen on the network", () =
 	expect(isLoopback("::ffff:127.0.0.1")).toBe(true);
 	expect(isLoopback("10.0.0.1")).toBe(false);
 });
+
+test("addresses full of zone marks are read in linear time", () => {
+	const many = "%".repeat(50_000);
+	const start = performance.now();
+	// A line break after the marks is what made the old pattern quadratic.
+	for (const text of [many, `${many}\n`, `[${many}]`, `fe80::1${many}\n`]) {
+		parseIp(text);
+		isLoopback(text);
+		hostName(text);
+	}
+	expect(performance.now() - start).toBeLessThan(200);
+	expect(parseIp("fe80::1%%%")?.[0]).toBe(0xfe);
+});

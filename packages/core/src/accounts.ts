@@ -81,18 +81,16 @@ async function hashing<T>(
 export const hashingRunning = () => hashingNow;
 export const hashingWaiting = () => hashingQueue.length;
 
-/**
- * Checks a password against its hash. One that cannot be right (shorter or
- * longer than any password allowed) is refused without the work.
- */
-const verifyPassword = async (
-	password: string,
-	hash: string,
-	signal?: AbortSignal,
-) =>
-	password.length >= MIN_PASSWORD_LENGTH &&
-	password.length <= MAX_PASSWORD_LENGTH &&
-	(await hashing(() => Bun.password.verify(password, hash), signal));
+/** How passwords are hashed and checked: argon2id unless a test says otherwise. */
+export interface PasswordHasher {
+	hash(password: string): Promise<string>;
+	verify(password: string, hash: string): Promise<boolean>;
+}
+
+const ARGON2: PasswordHasher = {
+	hash: (password) => Bun.password.hash(password, { algorithm: "argon2id" }),
+	verify: (password, hash) => Bun.password.verify(password, hash),
+};
 
 /** ASCII only: names that look alike cannot be told apart otherwise. */
 const USERNAME = /^[a-z0-9._-]{3,32}$/;
@@ -174,6 +172,11 @@ export interface InviteTerms {
 export interface AccountServiceOptions {
 	now?: () => number;
 	/**
+	 * How passwords are hashed. Argon2id with its default cost; tests pass
+	 * a cheaper one so slow machines finish them in time.
+	 */
+	hasher?: PasswordHasher;
+	/**
 	 * Gives the first owner what was made before accounts: files outside the
 	 * database, such as settings. The database rows move with the owner.
 	 */
@@ -193,6 +196,7 @@ const badCredentials = () =>
  */
 export class AccountService {
 	private now: () => number;
+	private hasher: PasswordHasher;
 	private code: string | null = null;
 	private dummy: Promise<string> | null = null;
 
@@ -201,6 +205,35 @@ export class AccountService {
 		private options: AccountServiceOptions = {},
 	) {
 		this.now = options.now ?? Date.now;
+		this.hasher = options.hasher ?? ARGON2;
+	}
+
+	/**
+	 * Checks a password against its hash. One that cannot be right (shorter or
+	 * longer than any password allowed) is refused without the work, and so
+	 * is one whose request has gone.
+	 */
+	private async verifyPassword(
+		password: string,
+		hash: string,
+		signal?: AbortSignal,
+	): Promise<boolean> {
+		if (
+			password.length < MIN_PASSWORD_LENGTH ||
+			password.length > MAX_PASSWORD_LENGTH
+		) {
+			return false;
+		}
+		return hashing(() => this.hasher.verify(password, hash), signal);
+	}
+
+	/** Hashes a new password, after checking it is long enough. */
+	private hashPassword(
+		password: string,
+		signal?: AbortSignal,
+	): Promise<string> {
+		checkPassword(password);
+		return hashing(() => this.hasher.hash(password), signal);
 	}
 
 	needsSetup(): boolean {
@@ -216,7 +249,8 @@ export class AccountService {
 		if (!this.code) {
 			const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 			const bytes = crypto.getRandomValues(new Uint8Array(12));
-			const chars = [...bytes].map((b) => alphabet[b % alphabet.length]);
+			// 32 letters: the top 5 bits of a byte pick one, each as likely.
+			const chars = [...bytes].map((b) => alphabet[b >> 3]);
 			this.code = [0, 4, 8]
 				.map((i) => chars.slice(i, i + 4).join(""))
 				.join("-");
@@ -271,13 +305,14 @@ export class AccountService {
 		input: { username: string; password: string; totp?: string },
 		where: Where = {},
 	): Promise<SignedIn> {
+		where.signal?.throwIfAborted();
 		const user = this.repo.findUser(input.username.trim());
 		const password = input.password;
 		if (!user) {
-			await verifyPassword(password, await this.dummyHash(), where.signal);
+			await this.verifyPassword(password, await this.dummyHash(), where.signal);
 			throw badCredentials();
 		}
-		const right = await verifyPassword(
+		const right = await this.verifyPassword(
 			password,
 			user.passwordHash,
 			where.signal,
@@ -298,7 +333,7 @@ export class AccountService {
 
 	/** A hash to check unknown usernames against, so they take as long. */
 	private dummyHash(): Promise<string> {
-		this.dummy ??= Bun.password.hash(newToken(), { algorithm: "argon2id" });
+		this.dummy ??= this.hasher.hash(newToken());
 		return this.dummy;
 	}
 
@@ -379,7 +414,9 @@ export class AccountService {
 		signal?: AbortSignal,
 	): Promise<void> {
 		const user = this.mustGet(userId);
-		if (!(await verifyPassword(input.current, user.passwordHash, signal))) {
+		if (
+			!(await this.verifyPassword(input.current, user.passwordHash, signal))
+		) {
 			throw new AccessError(
 				"The current password is not right",
 				"badPassword",
@@ -387,7 +424,7 @@ export class AccountService {
 			);
 		}
 		this.repo.updateUser(userId, {
-			passwordHash: await hashPassword(input.next, signal),
+			passwordHash: await this.hashPassword(input.next, signal),
 			mustChangePassword: false,
 		});
 		this.repo.deleteSessionsOf(userId, keep ?? undefined);
@@ -424,7 +461,7 @@ export class AccountService {
 		code: string | undefined,
 		signal?: AbortSignal,
 	): Promise<void> {
-		if (!(await verifyPassword(password, user.passwordHash, signal))) {
+		if (!(await this.verifyPassword(password, user.passwordHash, signal))) {
 			throw new AccessError(
 				"The current password is not right",
 				"badPassword",
@@ -627,7 +664,7 @@ export class AccountService {
 		this.mustGet(id);
 		const temporary = newToken().slice(0, 16);
 		this.repo.updateUser(id, {
-			passwordHash: await hashPassword(temporary),
+			passwordHash: await this.hashPassword(temporary),
 			mustChangePassword: true,
 			totpSecret: null,
 			totpLastCounter: null,
@@ -695,7 +732,7 @@ export class AccountService {
 		}
 		const user = this.repo.getUser(reset.userId);
 		if (!user || user.disabledAt != null) throw invalid();
-		const passwordHash = await hashPassword(password, signal);
+		const passwordHash = await this.hashPassword(password, signal);
 		if (!this.repo.usePasswordReset(reset.id, this.now())) throw invalid();
 		this.repo.updateUser(user.id, { passwordHash, mustChangePassword: false });
 		this.repo.deleteSessionsOf(user.id);
@@ -837,7 +874,7 @@ export class AccountService {
 			id: newId("usr"),
 			username: name,
 			displayName: name,
-			passwordHash: await hashPassword(password, signal),
+			passwordHash: await this.hashPassword(password, signal),
 			role: terms.role,
 			canUsePaid: terms.canUsePaid,
 			canTrain: terms.canTrain,
@@ -855,11 +892,8 @@ function displayName(value: string, fallback: string): string {
 	return value.trim().slice(0, 64) || fallback;
 }
 
-/** Argon2id, after checking the password is long enough. */
-export async function hashPassword(
-	password: string,
-	signal?: AbortSignal,
-): Promise<string> {
+/** Refuses a new password that is too short or too long. */
+function checkPassword(password: string): void {
 	if (password.length < MIN_PASSWORD_LENGTH) {
 		throw new ValidationError(
 			`A password needs at least ${MIN_PASSWORD_LENGTH} characters`,
@@ -870,10 +904,6 @@ export async function hashPassword(
 	if (password.length > MAX_PASSWORD_LENGTH) {
 		throw new ValidationError("That password is too long");
 	}
-	return hashing(
-		() => Bun.password.hash(password, { algorithm: "argon2id" }),
-		signal,
-	);
 }
 
 function inviteView(row: InviteRow): InviteView {

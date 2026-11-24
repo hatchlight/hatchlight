@@ -10,32 +10,33 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 export class DeviceCookies {
 	constructor(private key: Uint8Array) {}
 
-	/** A new cookie value for `username`: the name, a random id, a signature. */
-	issue(username: string): string {
-		const name = Buffer.from(username.toLowerCase()).toString("base64url");
-		const id = Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString(
-			"base64url",
-		);
-		return `${name}.${id}.${this.sign(name, id)}`;
+	/**
+	 * A new cookie value for a person: their id, a random device id, and a
+	 * signature over both and their username, all as the server stores them.
+	 */
+	issue(user: { id: string; username: string }): string {
+		const device = Buffer.from(
+			crypto.getRandomValues(new Uint8Array(16)),
+		).toString("base64url");
+		return `${user.id}.${device}.${this.sign(user, device)}`;
 	}
 
-	/** Whether `value` is a cookie this server gave a browser that signed in as `username`. */
-	vouchesFor(value: string | undefined, username: string): boolean {
-		const [name, id, mac, ...rest] = value?.split(".") ?? [];
-		if (!name || !id || !mac || rest.length) return false;
-		const expected = Buffer.from(this.sign(name, id));
+	/** Whether `value` is a cookie this server gave a browser that signed in as `user`. */
+	vouchesFor(
+		value: string | undefined,
+		user: { id: string; username: string } | null,
+	): boolean {
+		if (!user) return false;
+		const [id, device, mac, ...rest] = value?.split(".") ?? [];
+		if (!id || !device || !mac || rest.length || id !== user.id) return false;
+		const expected = Buffer.from(this.sign(user, device));
 		const given = Buffer.from(mac);
-		return (
-			expected.length === given.length &&
-			timingSafeEqual(expected, given) &&
-			Buffer.from(name, "base64url").toString() ===
-				username.trim().toLowerCase()
-		);
+		return expected.length === given.length && timingSafeEqual(expected, given);
 	}
 
-	private sign(name: string, id: string): string {
+	private sign(user: { id: string; username: string }, device: string): string {
 		return createHmac("sha256", this.key)
-			.update(`${name}.${id}`)
+			.update(`${user.id}\n${user.username}\n${device}`)
 			.digest("base64url");
 	}
 }

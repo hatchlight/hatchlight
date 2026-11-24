@@ -35,6 +35,7 @@ import {
 	mayUsePaid,
 	newId,
 	type PaidRefusal,
+	type PasswordHasher,
 	type ProviderAdapter,
 	ProviderRegistry,
 	paidError,
@@ -442,6 +443,8 @@ export interface RuntimeOptions {
 	 * those allowed may spend them.
 	 */
 	server?: boolean;
+	/** How passwords are hashed; argon2id with its default cost unless a test says. */
+	passwordHasher?: PasswordHasher;
 	/** Stand-ins for the trainer's downloads and programs, in tests. */
 	trainerOptions?: Partial<
 		Pick<TrainerOptions, "fetch" | "run" | "freeMemory">
@@ -523,6 +526,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		join(options.dataDir, "settings.json"),
 	);
 	const accounts = new AccountService(repo.accounts(), {
+		hasher: options.passwordHasher,
 		// What the install had becomes the first owner's; its keys, the server's.
 		adoptLocal: async (ownerId) => {
 			await settings.moveUser(LOCAL_USER.userId, ownerId);

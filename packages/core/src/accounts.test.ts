@@ -7,20 +7,23 @@ import {
 	MAX_HASHING,
 	MAX_HASHING_QUEUE,
 	MIN_PASSWORD_LENGTH,
+	type PasswordHasher,
 	SESSION_MS,
 } from "./accounts";
 import { SqliteRepository } from "./db/repository";
 import { AccessError, ValidationError } from "./errors";
+import { FAST_HASHER } from "./local/testing";
 import { base32Decode, totp } from "./totp";
 import { LOCAL_USER } from "./types";
 
 const PASSWORD = "correct horse battery";
 
-function setup() {
+function setup(hasher: PasswordHasher = FAST_HASHER) {
 	const repo = new SqliteRepository(":memory:");
 	let now = Date.UTC(2026, 10, 24, 12);
 	const adopted: string[] = [];
 	const accounts = new AccountService(repo.accounts(), {
+		hasher,
 		now: () => now,
 		adoptLocal: async (id) => {
 			adopted.push(id);
@@ -32,8 +35,8 @@ function setup() {
 	return { repo, accounts, adopted, tick, now: () => now };
 }
 
-async function withOwner() {
-	const t = setup();
+async function withOwner(hasher?: PasswordHasher) {
+	const t = setup(hasher);
 	const code = t.accounts.setupCode() as string;
 	const owner = await t.accounts.setup({
 		code,
@@ -490,12 +493,32 @@ test("API tokens act for their person until they expire", async () => {
 	expect(accounts.resolveApiToken(token)).toBeNull();
 });
 
+/**
+ * A hasher that counts the checks running at once, each taking a little
+ * while so that those let through together overlap.
+ */
+function countingHasher() {
+	const seen = { now: 0, most: 0, calls: 0 };
+	const hasher: PasswordHasher = {
+		hash: FAST_HASHER.hash,
+		verify: async (password, hash) => {
+			seen.calls++;
+			seen.now++;
+			seen.most = Math.max(seen.most, seen.now);
+			try {
+				await Bun.sleep(5);
+				return await FAST_HASHER.verify(password, hash);
+			} finally {
+				seen.now--;
+			}
+		},
+	};
+	return { hasher, seen };
+}
+
 test("only a few password checks run at once, the others wait", async () => {
-	const { accounts } = await withOwner();
-	let most = 0;
-	const watch = setInterval(() => {
-		most = Math.max(most, hashingRunning());
-	}, 1);
+	const { hasher, seen } = countingHasher();
+	const { accounts } = await withOwner(hasher);
 	await Promise.all(
 		Array.from({ length: 12 }, () =>
 			accounts
@@ -503,9 +526,8 @@ test("only a few password checks run at once, the others wait", async () => {
 				.catch(() => {}),
 		),
 	);
-	clearInterval(watch);
-	expect(most).toBeGreaterThan(0);
-	expect(most).toBeLessThanOrEqual(MAX_HASHING);
+	expect(seen.calls).toBe(12);
+	expect(seen.most).toBe(MAX_HASHING);
 	expect(hashingRunning()).toBe(0);
 });
 
@@ -724,4 +746,15 @@ test("a new reset link ends older ones, and the person is told who reset", async
 	accounts.dismissResetNotice(member.user.id);
 	expect(accounts.view(user, true).resetNotice).toBeNull();
 	expect(accounts.view(user, true).lastReset?.by).toBe("owner");
+});
+
+test("a sign-in whose request is gone does not touch the database", async () => {
+	const { repo, accounts } = await withOwner();
+	repo.close();
+	const gone = new AbortController();
+	gone.abort(new Error("the browser left"));
+	const result = await accounts
+		.login({ username: "owner", password: PASSWORD }, { signal: gone.signal })
+		.catch((error: Error) => error.message);
+	expect(result).toBe("the browser left");
 });

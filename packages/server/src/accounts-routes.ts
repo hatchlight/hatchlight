@@ -80,8 +80,8 @@ export function mountAccounts(
 		const lowered = name?.trim().toLowerCase() ?? null;
 		// A browser that signed in as this name before is not held back by
 		// strangers guessing it from elsewhere.
-		const knownDevice =
-			lowered !== null && devices.vouchesFor(deviceCookie(c), lowered);
+		const known = lowered === null ? null : accounts.findUser(lowered);
+		const knownDevice = devices.vouchesFor(deviceCookie(c), known);
 		const counted: [Limiter, string][] =
 			kind === "joining"
 				? [[limits.joining, address]]
@@ -110,7 +110,11 @@ export function mountAccounts(
 			for (const [limit, key] of counted) limit.refund(key);
 		};
 		try {
-			const result = await oneAtATime(address, attempt);
+			const result = await oneAtATime(address, () => {
+				// Gone while it waited its turn: nothing left to do for it.
+				c.req.raw.signal.throwIfAborted();
+				return attempt();
+			});
 			refund();
 			if (lowered) limits.byNameAndAddress.succeed(`${lowered}|${address}`);
 			return result;
@@ -138,7 +142,7 @@ export function mountAccounts(
 			),
 		);
 		setSessionCookie(c, signed);
-		setDeviceCookie(c, devices.issue(signed.user.username));
+		setDeviceCookie(c, devices.issue(signed.user));
 		return c.json(accounts.view(signed.user, true), 201);
 	});
 
@@ -160,7 +164,7 @@ export function mountAccounts(
 			),
 		);
 		setSessionCookie(c, signed);
-		setDeviceCookie(c, devices.issue(signed.user.username));
+		setDeviceCookie(c, devices.issue(signed.user));
 		return c.json(accounts.view(signed.user, true));
 	});
 
@@ -293,7 +297,7 @@ export function mountAccounts(
 			),
 		);
 		setSessionCookie(c, signed);
-		setDeviceCookie(c, devices.issue(signed.user.username));
+		setDeviceCookie(c, devices.issue(signed.user));
 		return c.json(accounts.view(signed.user, true), 201);
 	});
 	app.get("/api/invites", (c) => c.json(accounts.invites()));

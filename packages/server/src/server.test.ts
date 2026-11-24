@@ -5,14 +5,13 @@ import { join } from "node:path";
 import {
 	base32Decode,
 	FakeProvider,
-	hashingRunning,
 	LOCAL_USER,
 	type TrainerEvent,
 	type TrainerStatus,
 	type TrainingView,
 	totp,
 } from "@hatchlight/core";
-import { safetensors } from "@hatchlight/core/testing";
+import { FAST_HASHER, safetensors } from "@hatchlight/core/testing";
 import {
 	type Access,
 	type Agents,
@@ -46,6 +45,8 @@ interface CallInit {
 	peer?: string;
 	/** Where the request was sent; nas.example by default. */
 	base?: string;
+	/** Aborts when the browser goes away. */
+	signal?: AbortSignal;
 }
 
 /** A server for nas.example, behind a proxy at 10.0.0.0/8. */
@@ -55,6 +56,7 @@ async function serverApp(
 		env?: Record<string, string>;
 		/** Stands in for the internet, the cloud services included. */
 		fetch?: (url: string, init?: RequestInit) => Promise<Response>;
+		passwordHasher?: typeof FAST_HASHER;
 	} = {},
 ) {
 	const root = await mkdtemp(join(tmpdir(), "hatchlight-server-mode-"));
@@ -69,6 +71,7 @@ async function serverApp(
 		localModels: [],
 		engines: [],
 		server: true,
+		passwordHasher: options.passwordHasher ?? FAST_HASHER,
 		hardware: async () => ({
 			os: "linux",
 			arch: "x64",
@@ -83,7 +86,10 @@ async function serverApp(
 			fetch: async () => new Response("not here", { status: 404 }),
 		},
 	});
+	// Requests still under way finish before the database closes.
+	const inFlight = new Set<Promise<unknown>>();
 	cleanups.push(async () => {
+		await Promise.allSettled([...inFlight]);
 		await runtime.engine.idle();
 		runtime.close();
 		await rm(root, { recursive: true });
@@ -121,10 +127,11 @@ async function serverApp(
 		if (init.who?.cookie)
 			headers.cookie = `hatchlight_session=${init.who.cookie}`;
 		if (init.who?.token) headers.authorization = `Bearer ${init.who.token}`;
-		return app.request(
+		const request = app.request(
 			`${base}${path}`,
 			{
 				method,
+				signal: init.signal,
 				headers: { ...headers, ...init.headers },
 				body:
 					init.body === undefined
@@ -135,6 +142,10 @@ async function serverApp(
 			},
 			{ peer: init.peer ?? "192.168.1.50" },
 		);
+		const pending = Promise.resolve(request);
+		inFlight.add(pending);
+		void pending.finally(() => inFlight.delete(pending));
+		return pending;
 	};
 	const cookieOf = (response: Response): string => {
 		const match = /hatchlight_session=([^;]+)/.exec(
@@ -1065,6 +1076,7 @@ test("a setup cut short before the files moved is finished at the next start", a
 			localModels: [],
 			engines: [],
 			server: true,
+			passwordHasher: FAST_HASHER,
 		});
 	// Before accounts: a picture made on the install.
 	const before = await start();
@@ -1206,22 +1218,40 @@ test("members may add only so many LoRAs; admins are not held to it", async () =
 });
 
 test("password checks from one address run one at a time", async () => {
-	const { call, setupOwner } = await serverApp();
+	const seen = { now: 0, most: 0, calls: 0 };
+	const { call, setupOwner } = await serverApp({
+		passwordHasher: {
+			hash: FAST_HASHER.hash,
+			verify: async (password, hash) => {
+				seen.calls++;
+				seen.now++;
+				seen.most = Math.max(seen.most, seen.now);
+				try {
+					// Long enough that checks let through together would overlap.
+					await Bun.sleep(5);
+					return await FAST_HASHER.verify(password, hash);
+				} finally {
+					seen.now--;
+				}
+			},
+		},
+	});
 	await setupOwner();
-	let most = 0;
-	const watch = setInterval(() => {
-		most = Math.max(most, hashingRunning());
-	}, 1);
+	const login = (peer: string) =>
+		call("/api/login", {
+			method: "POST",
+			body: { username: "owner", password: "not the password" },
+			peer,
+		});
+	await Promise.all(Array.from({ length: 5 }, () => login("192.168.1.50")));
+	expect(seen.calls).toBe(5);
+	expect(seen.most).toBe(1);
+	// Other addresses are not held up by it.
+	seen.most = 0;
 	await Promise.all(
-		Array.from({ length: 5 }, () =>
-			call("/api/login", {
-				method: "POST",
-				body: { username: "owner", password: "not the password" },
-			}),
-		),
+		["192.168.1.61", "192.168.1.62", "192.168.1.63"].map((peer) => login(peer)),
 	);
-	clearInterval(watch);
-	expect(most).toBe(1);
+	expect(seen.most).toBeGreaterThan(1);
 });
 
 test("a browser that signed in before gets past strangers guessing its name", async () => {
@@ -1428,4 +1458,43 @@ test("two-step sign-in moves to another app with the password and both codes", a
 		),
 	).toBe("badTotp");
 	expect((await login(newNext)).status).toBe(200);
+});
+
+test("a sign-in whose browser left while it waited is never checked", async () => {
+	let release: () => void = () => {};
+	const held = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const checked: string[] = [];
+	const { call, setupOwner } = await serverApp({
+		passwordHasher: {
+			hash: FAST_HASHER.hash,
+			verify: async (password, hash) => {
+				checked.push(password);
+				// The first check holds the line until the test lets it go.
+				if (checked.length === 1) await held;
+				return FAST_HASHER.verify(password, hash);
+			},
+		},
+	});
+	await setupOwner();
+	const login = (password: string, signal?: AbortSignal) =>
+		call("/api/login", {
+			method: "POST",
+			body: { username: "owner", password },
+			signal,
+		});
+	const first = login("first password try");
+	await Bun.sleep(20);
+	const gone = new AbortController();
+	const second = login("second password try", gone.signal).then(
+		(response) => response.status,
+		() => "aborted",
+	);
+	await Bun.sleep(20);
+	gone.abort();
+	release();
+	expect((await first).status).toBe(401);
+	await second;
+	expect(checked).toEqual(["first password try"]);
 });

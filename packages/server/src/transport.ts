@@ -195,9 +195,17 @@ function parseCidr(value: string): Cidr {
 	return { bytes, prefix: v4 ? prefix + 96 : prefix };
 }
 
+/** An IPv6 address without the brackets URLs and Host headers put around it. */
+function unbracket(text: string): string {
+	return text.startsWith("[") && text.endsWith("]") ? text.slice(1, -1) : text;
+}
+
 /** Parses an IPv4 or IPv6 address into 16 bytes, or null. */
 export function parseIp(text: string): Uint8Array | null {
-	const address = text.replace(/^\[(.*)\]$/, "$1").replace(/%.*$/, "");
+	// Brackets and a zone ("%eth0") off, by position: no pattern to backtrack.
+	const bare = unbracket(text);
+	const zone = bare.indexOf("%");
+	const address = zone < 0 ? bare : bare.slice(0, zone);
 	const bytes = new Uint8Array(16);
 	if (!address.includes(":")) {
 		const v4 = parseIpv4(address);
@@ -324,7 +332,7 @@ export function requestOrigin(
  * loopback when it listens everywhere, else at the address it listens on.
  */
 export function localUrl(host: string, port: number): string {
-	const bare = host.replace(/^\[(.*)\]$/, "$1");
+	const bare = unbracket(host);
 	if (bare === "0.0.0.0" || bare === "") return `http://127.0.0.1:${port}`;
 	if (bare === "::") return `http://[::1]:${port}`;
 	return bare.includes(":")
@@ -336,6 +344,6 @@ const LOOPBACK = ["127.0.0.0/8", "::1/128"].map((block) => parseCidr(block));
 
 /** Whether an address or host name is this computer's own. */
 export function isLoopback(address: string): boolean {
-	const bare = address.replace(/^\[(.*)\]$/, "$1").toLowerCase();
+	const bare = unbracket(address).toLowerCase();
 	return bare === "localhost" || inBlocks(bare, LOOPBACK);
 }
