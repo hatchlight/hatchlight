@@ -236,7 +236,6 @@ const withoutPictures = (message: ChatMessage): ChatMessage =>
 				content: message.content.filter((part) => part.type === "text"),
 			};
 
-/** An entry without what identifies it, to write it back changed. */
 /** Words too common in model names to say which model a person meant. */
 const COMMON_WORDS = new Set([
 	"base",
@@ -296,6 +295,7 @@ export function keptModels(
 	};
 }
 
+/** An entry without what identifies it, to write it back changed. */
 function bodyOf(entry: AssistantEntry): AssistantEntryBody {
 	const { id, sessionId, createdAt, ...body } = entry;
 	return body;
