@@ -363,13 +363,11 @@ export class AccountService {
 		const step = user.totpSecret
 			? matchTotp(user.totpSecret, code, this.now())
 			: null;
-		if (
-			step === null ||
-			(user.totpLastCounter != null && step <= user.totpLastCounter)
-		) {
+		// Checked and spent in one statement: two sign-ins at once with the
+		// same code cannot both pass.
+		if (step === null || !this.repo.advanceTotpCounter(user.id, step)) {
 			throw new AccessError("The code is not right", "badTotp", status);
 		}
-		this.repo.updateUser(user.id, { totpLastCounter: step });
 		user.totpLastCounter = step;
 	}
 

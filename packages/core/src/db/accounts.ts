@@ -204,6 +204,20 @@ export class SqliteAccounts {
 		})();
 	}
 
+	/**
+	 * Records a two-step code's time step as used, if it is later than the
+	 * last one: false when it is not, as for a code used twice at once.
+	 */
+	advanceTotpCounter(userId: string, step: number): boolean {
+		return (
+			this.sqlite
+				.prepare(
+					"update users set totp_last_counter = ? where id = ? and (totp_last_counter is null or totp_last_counter < ?)",
+				)
+				.run(step, userId, step).changes > 0
+		);
+	}
+
 	/** Ends every API token of a person. */
 	deleteTokensOf(userId: string): void {
 		this.db

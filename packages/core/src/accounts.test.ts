@@ -604,3 +604,23 @@ test("usernames are plain ASCII, 3 to 32 characters, in lower case", async () =>
 	}
 	expect((await join("Ana.Silva")).user.username).toBe("ana.silva");
 });
+
+test("the same two-step code sent twice at once lets only one in", async () => {
+	const { accounts, owner, now, tick } = await withOwner();
+	const { secret } = accounts.startTotp(owner.user.id);
+	const at = () =>
+		totp(base32Decode(secret) as Uint8Array, Math.floor(now() / 1000));
+	await accounts.enableTotp(owner.user.id, {
+		secret,
+		code: at(),
+		password: PASSWORD,
+	});
+	tick(30_000);
+	const code = at();
+	const results = await Promise.allSettled(
+		Array.from({ length: 5 }, () =>
+			accounts.login({ username: "owner", password: PASSWORD, totp: code }),
+		),
+	);
+	expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+});
