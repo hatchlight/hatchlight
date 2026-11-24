@@ -438,15 +438,40 @@ test("a bare process id from before this machine started is taken over", async (
 	await rm(root, { recursive: true });
 });
 
-test("a bare process id since this machine started is not guessed at", async () => {
-	// It may be another container's process 1, or a process that died.
+test("a bare process id since this machine started is taken over once that process is gone", async () => {
+	// Left by an older desktop app that crashed: both its locks name it.
 	const root = await mkdtemp(join(tmpdir(), "hatchlight-lock-"));
 	cleanups.push(() => rm(root, { recursive: true }));
-	for (const pid of [String(process.pid), "2147483646"]) {
+	await Bun.write(join(root, "hatchlight.lock"), "2147483646");
+	await Bun.write(join(root, `${LEGACY_NAME}.lock`), "2147483646");
+	const release = lockDataDir(root, { seesEveryProcess: true });
+	expect(await lockPid(join(root, "hatchlight.lock"))).toBe(process.pid);
+	release();
+});
+
+test("a bare process id is not guessed at where other processes cannot be seen", async () => {
+	// In a container or WSL, the host's processes do not show.
+	const root = await mkdtemp(join(tmpdir(), "hatchlight-lock-"));
+	cleanups.push(() => rm(root, { recursive: true }));
+	await Bun.write(join(root, "hatchlight.lock"), "2147483646");
+	expect(() => lockDataDir(root, { seesEveryProcess: false })).toThrow(
+		`delete ${join(root, "hatchlight.lock")}`,
+	);
+});
+
+test("a bare process id of a running process, or of this one, is not guessed at", async () => {
+	// This process's id may be another container's process 1.
+	const root = await mkdtemp(join(tmpdir(), "hatchlight-lock-"));
+	cleanups.push(() => rm(root, { recursive: true }));
+	const alive = Bun.spawn(["sleep", "30"]);
+	cleanups.push(async () => {
+		alive.kill();
+	});
+	for (const pid of [String(process.pid), String(alive.pid)]) {
 		await Bun.write(join(root, "hatchlight.lock"), pid);
-		await expect(
-			createRuntime({ dataDir: root, providers: [new FakeProvider()] }),
-		).rejects.toThrow(`delete ${join(root, "hatchlight.lock")}`);
+		expect(() => lockDataDir(root, { seesEveryProcess: true })).toThrow(
+			`delete ${join(root, "hatchlight.lock")}`,
+		);
 	}
 });
 
