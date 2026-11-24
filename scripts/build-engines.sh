@@ -2,7 +2,8 @@
 # Builds the Linux engines Hatchlight runs local models with:
 # stable-diffusion.cpp (sd-cli, sd-server) and llama.cpp (llama-server,
 # llama-completion, llama-mtmd-cli), for linux-x64, on the processor (`cpu`)
-# or on NVIDIA cards (`cuda`).
+# or on NVIDIA cards (`cuda`). Hatchlight runs llama.cpp on the processor
+# only, so its cuda build is there for whoever wants one, not published.
 #
 # It runs inside Ubuntu 22.04 so the programs need glibc 2.35 at most:
 # `ubuntu:22.04` for cpu, `nvidia/cuda:12.8.1-devel-ubuntu22.04` for cuda.
@@ -29,7 +30,9 @@
 #   LLAMA_CPP_VERSION   llama.cpp release tag (b12034)
 #   CUDA_ARCHITECTURES  CMAKE_CUDA_ARCHITECTURES for cuda builds
 #   GGML_CUDA_CCCL      CCCL tag llama.cpp fetches for CUDA below 13.5 (v3.4.3)
-#   WORK_DIR            where sources and builds go (a temporary folder)
+#   WORK_DIR            where sources and builds go (a temporary folder);
+#                       kept sources are used again only if at the tag
+#   CMAKE_BUILD_PARALLEL_LEVEL  compilers run at once (all processors)
 #   SOURCE_DATE_EPOCH   timestamp written into the archives (0)
 
 set -euo pipefail
@@ -60,8 +63,20 @@ deps() {
 	apt-get install -y --no-install-recommends \
 		build-essential git ca-certificates python3-pip file binutils
 	# Ubuntu 22.04 has CMake 3.22; a recent one knows the Blackwell
-	# architectures and the CUDA 12.8 toolkit.
-	pip3 install --no-cache-dir "cmake==${CMAKE_VERSION}" "ninja==${NINJA_VERSION}"
+	# architectures and the CUDA 12.8 toolkit. The wheels are pinned by the
+	# sha256 PyPI lists for them (manylinux x86_64).
+	local requirements
+	requirements="$(mktemp)"
+	cat >"$requirements" <<-EOF
+		cmake==${CMAKE_VERSION} \\
+		    --hash=sha256:1c8b05df0602365da91ee6a3336fe57525b137706c4ab5675498f662ae1dbcec \\
+		    --hash=sha256:2297e9591307d9c61e557efe737bcf4d7c13a30f1f860732f684a204fee24dca
+		ninja==${NINJA_VERSION} \\
+		    --hash=sha256:096487995473320de7f65d622c3f1d16c3ad174797602218ca8c967f51ec38a0
+	EOF
+	pip3 install --no-cache-dir --no-deps --only-binary :all: \
+		--require-hashes -r "$requirements"
+	rm -f "$requirements"
 	cmake --version
 }
 
@@ -69,12 +84,24 @@ deps() {
 fetch() {
 	local repo="$1" tag="$2" dir="$3"
 	shift 3
-	# A WORK_DIR kept from an earlier run already has it.
+	# A WORK_DIR kept from an earlier run may have them already: at the tag,
+	# unchanged and with the submodules, or they are fetched again.
 	if [[ -d "$dir/.git" ]]; then
-		echo "Using the sources in $dir"
-		return
+		local head wanted changes submodules
+		head="$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)"
+		wanted="$(git -C "$dir" rev-parse --verify --quiet "refs/tags/$tag^{commit}" || true)"
+		changes="$(git -C "$dir" status --porcelain 2>/dev/null || echo broken)"
+		# A submodule missing, at another commit or in conflict starts with -, + or U.
+		submodules="$(git -C "$dir" submodule status -- "$@" 2>/dev/null || echo -)"
+		if [[ -n "$head" && "$head" == "$wanted" && -z "$changes" &&
+			! "$submodules" =~ (^|$'\n')[-+U] ]]; then
+			echo "Using the sources of $tag in $dir"
+			return
+		fi
+		echo "The sources in $dir are not those of $tag: fetching them again"
+		rm -rf "$dir"
 	fi
-	git clone --quiet --depth 1 --branch "$tag" "$repo" "$dir"
+	git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$tag" "$repo" "$dir"
 	if (($# > 0)); then
 		git -C "$dir" submodule update --quiet --init --depth 1 "$@"
 	fi

@@ -1,8 +1,8 @@
 name: Engines
 
-# Builds the Linux engines (stable-diffusion.cpp and llama.cpp) Hatchlight
-# runs local models with, for linux-x64 on the processor and on NVIDIA cards,
-# with scripts/build-engines.sh. Upstream publishes no Linux build that runs
+# Builds the Linux engines Hatchlight runs local models with, for linux-x64,
+# with scripts/build-engines.sh: stable-diffusion.cpp on the processor and on
+# NVIDIA cards, llama.cpp on the processor only. Upstream publishes no Linux build that runs
 # on current LTS distributions, nor a Linux CUDA one of stable-diffusion.cpp.
 #
 # Builds run in Ubuntu 22.04 containers, so the programs need glibc 2.35 at
@@ -10,7 +10,7 @@ name: Engines
 # libcublasLt) nor the driver: the Docker image that runs them provides them.
 #
 # A pull request that changes this file or the script builds without
-# publishing. Run by hand, it publishes the archives and their .sha256 files
+# publishing. Run by hand on main, it publishes the archives and their .sha256 files
 # as the prerelease engines-<sd.cpp version>-<llama.cpp version>; their sizes
 # and hashes then go into packages/providers/src/engines.ts.
 on:
@@ -38,7 +38,8 @@ permissions:
 
 concurrency:
   group: engines-${{ github.ref }}
-  cancel-in-progress: true
+  # A run that publishes is never cut short by another.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -46,22 +47,33 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        engine: [sd-cpp, llama-cpp]
-        variant: [cpu, cuda]
         include:
-          - variant: cpu
+          - engine: sd-cpp
+            variant: cpu
             image: ubuntu:22.04@sha256:b000e69a50ff940390233025e7a337fb8469b509e2334fa4d018ac30f3e18cdb
-          - variant: cuda
+            jobs: 4
+          # Two compilers at a time: nvcc on the CUTLASS kernels takes
+          # several GB each, and the runner has 16.
+          - engine: sd-cpp
+            variant: cuda
             image: nvidia/cuda:12.8.1-devel-ubuntu22.04@sha256:a99a1860ba8e2916e5c3e73b72ec4c4301653a84586e05bfc9a2aa2d58027e97
+            jobs: 2
+          # llama.cpp runs on the processor only, on purpose: the card stays
+          # for pictures.
+          - engine: llama-cpp
+            variant: cpu
+            image: ubuntu:22.04@sha256:b000e69a50ff940390233025e7a337fb8469b509e2334fa4d018ac30f3e18cdb
+            jobs: 4
     runs-on: ubuntu-latest
     container: ${{ matrix.image }}
-    # CUDA code for several card generations takes a while to compile.
-    timeout-minutes: 300
+    # CUDA code for several card generations takes hours; jobs stop at 360.
+    timeout-minutes: 350
     env:
       SD_CPP_VERSION: ${{ inputs.sd-cpp-version || 'master-1106-532d2c1' }}
       LLAMA_CPP_VERSION: ${{ inputs.llama-cpp-version || 'b12034' }}
       ENGINE: ${{ matrix.engine }}
       VARIANT: ${{ matrix.variant }}
+      CMAKE_BUILD_PARALLEL_LEVEL: ${{ matrix.jobs }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -78,7 +90,8 @@ jobs:
 
   publish:
     needs: build
-    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    # Only from main: a release must come from reviewed code.
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write # creates the release and uploads the archives

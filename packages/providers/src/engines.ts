@@ -56,8 +56,8 @@ const build = (
  *   ], { minNvidiaDriver: "<oldest driver for CUDA 12.8 programs>" }),
  *
  * which makes the build `sd-cpp-linux-x64-cuda` running `sd-cli`; the `cpu`
- * one is `sd-cpp-linux-x64-cpu`, without a driver. llama.cpp's are
- * `llama-cpp-linux-x64-cuda` and `llama-cpp-linux-x64-cpu`, running
+ * one is `sd-cpp-linux-x64-cpu`, without a driver. llama.cpp has only
+ * `llama-cpp-linux-x64-cpu` (it runs on the processor on purpose), running
  * `llama-server`, with `llama-completion` and `llama-mtmd-cli` next to it.
  * Under WSL the Windows builds keep being chosen (see chooseBuild).
  */
