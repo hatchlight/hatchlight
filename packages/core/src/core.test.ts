@@ -760,6 +760,26 @@ describe("job engine", () => {
 		expect(job?.params.translatedPrompt).toBeUndefined();
 	});
 
+	test("a prompt plainly in English does not wait on the translator", async () => {
+		let calls = 0;
+		const app = boot(await tempDir(), new FakeProvider(), 4, {
+			toEnglish: async (prompt) => {
+				calls++;
+				return prompt;
+			},
+		});
+		await app.service.createTurn(LOCAL_USER, {
+			prompt:
+				"A cozy ramen shop on a rainy night, neon reflections on the street",
+			modelIds: ["fake/beta"],
+		});
+		await app.engine.idle();
+		expect(calls).toBe(0);
+		expect(app.provider.submitted.at(-1)?.prompt).toBe(
+			"A cozy ramen shop on a rainy night, neon reflections on the street",
+		);
+	});
+
 	test("reports progress and status changes to listeners", async () => {
 		const app = boot(await tempDir());
 		const seen: string[] = [];

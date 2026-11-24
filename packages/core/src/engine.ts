@@ -15,7 +15,12 @@ import type {
 	ProviderRegistry,
 	ReferenceImage,
 } from "./provider";
-import { cleanTranslation, sameWords, type Translator } from "./translate";
+import {
+	cleanTranslation,
+	plainlyEnglish,
+	sameWords,
+	type Translator,
+} from "./translate";
 import {
 	type EngineEvent,
 	type GenerationParams,
@@ -590,9 +595,11 @@ export class JobEngine {
 		if (job.params.translatedPrompt) {
 			return { ...job.params, prompt: job.params.translatedPrompt };
 		}
+		const { prompt } = job.params;
+		// Asking a model whether English is English costs seconds.
+		if (plainlyEnglish(prompt)) return job.params;
 		const translator = await this.deps.translator?.(job.userId);
 		if (!translator) return job.params;
-		const { prompt } = job.params;
 		this.emit(job.userId, {
 			type: "job.progress",
 			jobId: job.id,
