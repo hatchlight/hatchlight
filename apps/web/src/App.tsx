@@ -8,7 +8,7 @@ import {
 	Settings as SettingsIcon,
 	Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { Logo, Mark } from "@/components/Logo";
 import {
 	AlertDialog,
@@ -47,18 +47,28 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { AccountMenu } from "./Accounts";
-import { Assistant } from "./Assistant";
 import { api } from "./api";
 import { Chat } from "./Chat";
-import { Gallery } from "./Gallery";
 import { useI18n } from "./i18n";
 import { useLiveJobs } from "./live";
-import { Models } from "./Models";
 import { href, navigate, type Route, useRoute } from "./route";
-import { Settings } from "./Settings";
 import { UpdateToast } from "./UpdateToast";
 
 const MAX_REFERENCES = 4;
+
+// Views loaded when first opened, so the app starts with less to read.
+const Assistant = lazy(() =>
+	import("./Assistant").then((m) => ({ default: m.Assistant })),
+);
+const Gallery = lazy(() =>
+	import("./Gallery").then((m) => ({ default: m.Gallery })),
+);
+const Models = lazy(() =>
+	import("./Models").then((m) => ({ default: m.Models })),
+);
+const Settings = lazy(() =>
+	import("./Settings").then((m) => ({ default: m.Settings })),
+);
 
 function sidebarStartsOpen(): boolean {
 	try {
@@ -107,25 +117,29 @@ export function App() {
 					key={scene}
 					className="scene-in flex min-h-0 flex-1 flex-col max-md:pb-[4.25rem]"
 				>
-					{route.view === "chat" && route.talk && (
-						<Assistant
-							key={route.sessionId ?? "new"}
-							sessionId={route.sessionId}
-							addReference={addReference}
-						/>
-					)}
-					{route.view === "chat" && !route.talk && (
-						<Chat
-							key={route.sessionId ?? "new"}
-							sessionId={route.sessionId}
-							references={references}
-							setReferences={setReferences}
-							addReference={addReference}
-						/>
-					)}
-					{route.view === "gallery" && <Gallery addReference={addReference} />}
-					{route.view === "models" && <Models />}
-					{route.view === "settings" && <Settings />}
+					<Suspense fallback={null}>
+						{route.view === "chat" && route.talk && (
+							<Assistant
+								key={route.sessionId ?? "new"}
+								sessionId={route.sessionId}
+								addReference={addReference}
+							/>
+						)}
+						{route.view === "chat" && !route.talk && (
+							<Chat
+								key={route.sessionId ?? "new"}
+								sessionId={route.sessionId}
+								references={references}
+								setReferences={setReferences}
+								addReference={addReference}
+							/>
+						)}
+						{route.view === "gallery" && (
+							<Gallery addReference={addReference} />
+						)}
+						{route.view === "models" && <Models />}
+						{route.view === "settings" && <Settings />}
+					</Suspense>
 				</div>
 				<BottomNav route={route} />
 			</SidebarInset>

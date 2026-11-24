@@ -148,6 +148,7 @@
 	"composer.removeMask": "Unmark the area",
 	"composer.removeReference": "Remove reference",
 	"composer.strength": "Change",
+	"composer.strengthValue": "Changes {amount} of the picture",
 	"composer.styles": "Styles (LoRA)",
 	"composer.suggestion": "Suggested prompt",
 	"composer.suggestionAnother": "Try another",
@@ -158,6 +159,7 @@
 		"one": "{count} model",
 		"other": "{count} models"
 	},
+	"composer.summaryNone": "Choose models",
 	"composer.tooManyReferences": "No selected model accepts this many reference images. Remove some or pick another model.",
 	"composer.uploading": "Uploading…",
 	"composer.video": "Video",
@@ -344,6 +346,7 @@
 	"loras.title": "LoRAs",
 	"loras.trigger": "Trigger word, added to your prompt:",
 	"loras.weightOf": "Strength of {name}",
+	"loras.weightValue": "Applied at {amount}",
 	"loras.worksWith": "For {base}. Works with {models}.",
 	"mask.brush": "Brush",
 	"mask.clear": "Clear",

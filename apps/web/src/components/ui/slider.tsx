@@ -7,13 +7,19 @@ function Slider({
 	value,
 	min = 0,
 	max = 100,
+	getAriaValueText,
 	...props
-}: SliderPrimitive.Root.Props) {
-	const _values = Array.isArray(value)
-		? value
-		: Array.isArray(defaultValue)
-			? defaultValue
-			: [min, max];
+}: SliderPrimitive.Root.Props & {
+	/** What a screen reader says for a value, such as "Changes 40% of the picture". */
+	getAriaValueText?: SliderPrimitive.Thumb.Props["getAriaValueText"];
+}) {
+	// One thumb per value: a single number is one thumb, not a range.
+	const current = value ?? defaultValue;
+	const _values = Array.isArray(current)
+		? current
+		: current == null
+			? [min, max]
+			: [current];
 
 	return (
 		<SliderPrimitive.Root
@@ -41,6 +47,7 @@ function Slider({
 						data-slot="slider-thumb"
 						// biome-ignore lint/suspicious/noArrayIndexKey: one thumb per value, by position
 						key={index}
+						getAriaValueText={getAriaValueText}
 						className="relative block size-3 shrink-0 rounded-full border border-ring bg-white ring-ring/50 transition-[color,box-shadow] select-none after:absolute after:-inset-2 hover:ring-3 focus-visible:ring-3 focus-visible:outline-hidden active:ring-3 disabled:pointer-events-none disabled:opacity-50"
 					/>
 				))}

@@ -148,6 +148,7 @@
 	"composer.removeMask": "Desmarcar a área",
 	"composer.removeReference": "Remover referência",
 	"composer.strength": "Mudar",
+	"composer.strengthValue": "Muda {amount} da imagem",
 	"composer.styles": "Estilos (LoRA)",
 	"composer.suggestion": "Prompt sugerido",
 	"composer.suggestionAnother": "Outra sugestão",
@@ -158,6 +159,7 @@
 		"one": "{count} modelo",
 		"other": "{count} modelos"
 	},
+	"composer.summaryNone": "Escolher modelos",
 	"composer.tooManyReferences": "Nenhum modelo escolhido aceita tantas imagens de referência. Remova algumas ou escolha outro modelo.",
 	"composer.uploading": "Enviando…",
 	"composer.video": "Vídeo",
@@ -344,6 +346,7 @@
 	"loras.title": "LoRAs",
 	"loras.trigger": "Palavra-gatilho, adicionada ao seu prompt:",
 	"loras.weightOf": "Força do {name}",
+	"loras.weightValue": "Aplicado a {amount}",
 	"loras.worksWith": "Para {base}. Funciona com {models}.",
 	"mask.brush": "Pincel",
 	"mask.clear": "Limpar",
