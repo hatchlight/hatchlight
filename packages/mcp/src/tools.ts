@@ -18,6 +18,12 @@ export interface McpOptions {
 	allowPaid: boolean;
 	/** The most this process may spend on paid models, in US dollars. */
 	spendLimitUsd: number | null;
+	/**
+	 * Whether the agent may name files on this computer to read and write
+	 * pictures: yes for an agent the person runs themselves (the default),
+	 * never for one reaching a server over the network.
+	 */
+	files?: boolean;
 	/** How long a generation is waited for before it is left running. */
 	waitMs?: number;
 	pollMs?: number;
@@ -47,7 +53,7 @@ export function createMcpServer(reel: Reel, options: McpOptions): McpServer {
 	const tools = createTools(reel, {
 		allowPaid: options.allowPaid,
 		spend: new SpendGuard(options.spendLimitUsd),
-		files: true,
+		files: options.files ?? true,
 		waitMs: options.waitMs,
 		pollMs: options.pollMs,
 	});
