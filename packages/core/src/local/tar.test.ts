@@ -90,6 +90,66 @@ test("refuses paths and links that would leave the destination", async () => {
 	}
 });
 
+/** A pax record, its length counting its own digits. */
+function paxRecord(key: string, value: string): string {
+	const body = ` ${key}=${value}\n`;
+	let length = body.length + 1;
+	while (`${length}${body}`.length !== length) length++;
+	return `${length}${body}`;
+}
+
+test("what an extended header says applies to the next entry only", async () => {
+	const out = await extract(
+		tarGz([
+			{
+				name: "PaxHeader",
+				type: "x",
+				data: text(paxRecord("path", "first.txt") + paxRecord("size", "3")),
+			},
+			// A GNU long name in between keeps its own size.
+			{ name: "././@LongLink", type: "L", data: text("long-name.txt\0") },
+			{ name: "ignored", data: text("abc") },
+			{ name: "second.txt", data: text("own name") },
+		]),
+	);
+	expect((await readdir(out)).sort()).toEqual(["long-name.txt", "second.txt"]);
+	expect(await Bun.file(join(out, "long-name.txt")).text()).toBe("abc");
+	expect(await Bun.file(join(out, "second.txt")).text()).toBe("own name");
+});
+
+test("refuses sizes that cannot be, and extended headers too large", async () => {
+	for (const size of ["-1", "abc", "1e300", "9007199254740993"]) {
+		await expect(
+			extract(
+				tarGz([
+					{ name: "PaxHeader", type: "x", data: text(paxRecord("size", size)) },
+					{ name: "a.txt", data: text("x") },
+				]),
+			),
+		).rejects.toThrow("damaged");
+	}
+	await expect(
+		extract(
+			tarGz([
+				{
+					name: "PaxHeader",
+					type: "x",
+					data: text(paxRecord("comment", "x".repeat(1024 * 1024))),
+				},
+			]),
+		),
+	).rejects.toThrow("too large");
+});
+
+test("refuses backslashes in names and links", async () => {
+	await expect(
+		extract(tarGz([{ name: "..\\escape.txt", data: text("x") }])),
+	).rejects.toThrow("unsafe path");
+	await expect(
+		extract(tarGz([{ name: "link", type: "2", linkname: "..\\outside" }])),
+	).rejects.toThrow("unsafe link");
+});
+
 test("refuses hard links, devices and other kinds of entries", async () => {
 	for (const type of ["1", "3", "4", "6"]) {
 		await expect(

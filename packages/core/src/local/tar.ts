@@ -6,6 +6,8 @@ import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
 
 const BLOCK = 512;
+/** Extended headers hold a name or two: anything larger is not one. */
+const MAX_EXTENDED = 1024 * 1024;
 
 /** Reads a stream in pieces of exactly the length asked for. */
 class Reader {
@@ -114,7 +116,11 @@ function paxRecords(data: Buffer): Map<string, string> {
 /** Where an entry goes under `dir`, refusing names that would leave it. */
 function target(dir: string, name: string): string {
 	const parts = name.split("/");
-	if (name.startsWith("/") || parts.some((part) => part === "..")) {
+	if (
+		name.startsWith("/") ||
+		name.includes("\\") ||
+		parts.some((part) => part === "..")
+	) {
 		throw new Error(`The archive holds an unsafe path: ${name}`);
 	}
 	const path = join(
@@ -160,11 +166,23 @@ async function extractEntries(reader: Reader, dir: string): Promise<void> {
 		if (!checksumMatches(header)) throw new Error("The archive is damaged");
 
 		const type = String.fromCharCode(header[156] ?? 0);
-		const size = next.size ?? number(header, 124, 12);
+		const extended =
+			type === "x" || type === "g" || type === "L" || type === "K";
+		// What an extended header says applies to the next entry only, never
+		// to another extended header.
+		const size = extended
+			? number(header, 124, 12)
+			: (next.size ?? number(header, 124, 12));
+		if (!Number.isSafeInteger(size) || size < 0) {
+			throw new Error("The archive is damaged");
+		}
 		const padding = (BLOCK - (size % BLOCK)) % BLOCK;
 
 		// Headers that describe the next entry, or the whole archive.
-		if (type === "x" || type === "g" || type === "L" || type === "K") {
+		if (extended) {
+			if (size > MAX_EXTENDED) {
+				throw new Error("The archive holds an extended header too large");
+			}
 			const data = await reader.read(size);
 			await reader.skip(padding);
 			if (type === "x") {
@@ -220,6 +238,7 @@ async function extractEntries(reader: Reader, dir: string): Promise<void> {
 			if (
 				!linkname ||
 				linkname.includes("/") ||
+				linkname.includes("\\") ||
 				linkname === "." ||
 				linkname === ".."
 			) {
