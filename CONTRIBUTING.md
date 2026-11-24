@@ -108,13 +108,13 @@ in a single request, do the call inside `events()` and set `resumable = false`
 (`openai.ts`).
 
 Register it in `packages/providers/src/index.ts`, add the page where people get
-a key to `KEY_PAGES` in `apps/web/src/Welcome.tsx`, and add a test file that
+a key to `KEY_PAGES` in `apps/web/src/Picker.tsx`, and add a test file that
 calls `providerContract(new YourProvider())` and exercises the adapter against
 a scripted `fetch`, as the existing tests do. Tests never call the real API.
 
 ## Add a local model
 
-Local models are listed in `packages/providers/src/local-models.ts`. Each one
+Local models are listed in `packages/providers/src/local-models/`. Each one
 pins a revision of its repository and gives, for every file, its size and
 SHA-256, so downloads can be checked. Give each variant the memory it needs,
 so Hatchlight can tell which ones run on a given computer. Say in the pull
