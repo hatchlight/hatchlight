@@ -5,3 +5,4 @@ dist/
 .env.*
 .omc/
 .DS_Store
+.claude/
