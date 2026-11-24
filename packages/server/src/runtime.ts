@@ -1,6 +1,12 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { hostname as osHostname } from "node:os";
+import { hostname as osHostname, uptime as osUptime } from "node:os";
 import { join, resolve } from "node:path";
 import {
 	AccountService,
@@ -184,7 +190,8 @@ export function lockDataDir(
 	const previous = readLock(path);
 	let replaced: LockOwner | null = null;
 	if (previous && !previous.heartbeat) {
-		if (!isStale(previous, null)) throw inUse(previous);
+		const verdict = oldLockVerdict(path, previous, null);
+		if (!verdict.stale) throw verdict.error;
 		rmSync(path, { force: true });
 		replaced = previous;
 	}
@@ -301,23 +308,56 @@ function readOwner(text: string): LockOwner {
  * same id every time it starts, so a lock left by a crash would otherwise
  * look alive for ever; this process's own locks are in `heldLocks`.
  */
-function isStale(owner: LockOwner, replaced: LockOwner | null): boolean {
-	if (owner.pid === process.pid) return true;
-	// The same machine, started again since.
-	const boot = bootId();
-	if (
-		owner.host === osHostname() &&
-		owner.bootId &&
-		boot &&
-		owner.bootId !== boot
-	) {
-		return true;
-	}
+/**
+ * Whether a lock in the old format (no heartbeat) belongs to a process that
+ * is gone; when it cannot be told, the error says what to do.
+ */
+function oldLockVerdict(
+	path: string,
+	owner: LockOwner,
+	replaced: LockOwner | null,
+): { stale: true } | { stale: false; error: DataDirInUseError } {
 	// The old-style twin of a lock already found stale.
 	if (replaced && owner.host === undefined && owner.pid === replaced.pid) {
-		return true;
+		return { stale: true };
 	}
-	return !isRunning(owner.pid);
+	if (owner.host !== undefined) {
+		if (owner.host !== osHostname()) {
+			return {
+				stale: false,
+				error: new DataDirInUseError(
+					`Another Hatchlight (process ${owner.pid} on ${owner.host}) holds this data directory. Stop that container or server; if it is gone, delete ${path}`,
+				),
+			};
+		}
+		// This machine: its process ids mean something here.
+		const boot = bootId();
+		if (
+			owner.pid === process.pid ||
+			(owner.bootId && boot && owner.bootId !== boot) ||
+			!isRunning(owner.pid)
+		) {
+			return { stale: true };
+		}
+		return { stale: false, error: inUse(owner) };
+	}
+	// A bare process id says nothing of where it ran: only a file from
+	// before this machine started is surely stale.
+	if (writtenBeforeBoot(path)) return { stale: true };
+	return {
+		stale: false,
+		error: new DataDirInUseError(
+			`An older Hatchlight (process ${owner.pid}) holds this data directory. If no other Hatchlight uses it, delete ${path}`,
+		),
+	};
+}
+
+function writtenBeforeBoot(path: string): boolean {
+	try {
+		return statSync(path).mtimeMs < Date.now() - osUptime() * 1000;
+	} catch {
+		return false;
+	}
 }
 
 /**
@@ -343,13 +383,8 @@ function takeLock(
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
 			const owner = readOwner(readFileSync(path, "utf8"));
-			if (!isStale(owner, replaced)) {
-				const where =
-					owner.host && owner.host !== osHostname() ? ` on ${owner.host}` : "";
-				throw new DataDirInUseError(
-					`Hatchlight is already running on this data directory (process ${owner.pid}${where})`,
-				);
-			}
+			const verdict = oldLockVerdict(path, owner, replaced);
+			if (!verdict.stale) throw verdict.error;
 			stale = owner;
 			rmSync(path, { force: true }); // left behind by a process that died
 		}
