@@ -42,6 +42,8 @@ export interface ServerConfig {
 	transport: ServerTransport | null;
 	/** LoRAs each member may add; server mode only. */
 	loraQuota: LoraQuota | null;
+	/** The most a member's pictures may take, in bytes; null for no limit. */
+	assetQuotaBytes: number | null;
 }
 
 /** A setting that cannot be used; the message says which and why. */
@@ -72,7 +74,13 @@ export function serverConfig(
 				`Personal mode listens only on this computer (127.0.0.1, ::1 or localhost), not on ${host}. To reach Hatchlight from other machines, run it with --mode server, which has accounts`,
 			);
 		}
-		return { mode, host, transport: null, loraQuota: null };
+		return {
+			mode,
+			host,
+			transport: null,
+			loraQuota: null,
+			assetQuotaBytes: null,
+		};
 	}
 
 	const publicUrl = appEnv(env, "PUBLIC_URL");
@@ -103,11 +111,17 @@ export function serverConfig(
 				1024 ** 3,
 		),
 	};
+	const assetGb = appEnv(env, "ASSET_GB_PER_PERSON");
+	const assetQuotaBytes =
+		assetGb === undefined
+			? null
+			: Math.floor(count("ASSET_GB_PER_PERSON", 0) * 1024 ** 3);
 	return {
 		mode,
 		host,
 		transport: { publicOrigin, allowedHosts, trustedProxies },
 		loraQuota,
+		assetQuotaBytes,
 	};
 }
 

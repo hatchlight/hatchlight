@@ -57,6 +57,20 @@
 			"when": 1795487073762,
 			"tag": "0007_reset_notices",
 			"breakpoints": true
+		},
+		{
+			"idx": 8,
+			"version": "6",
+			"when": 1795493231268,
+			"tag": "0008_spending_key_source",
+			"breakpoints": true
+		},
+		{
+			"idx": 9,
+			"version": "6",
+			"when": 1795493553370,
+			"tag": "0009_asset_usage",
+			"breakpoints": true
 		}
 	]
 }

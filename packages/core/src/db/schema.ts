@@ -8,6 +8,7 @@ import {
 	uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 import type { ErrorParams } from "../errors";
+import type { KeySource } from "../keys";
 import type {
 	AssetKind,
 	AssistantEntryBody,
@@ -200,6 +201,11 @@ export const spending = sqliteTable(
 		kind: text("kind").$type<SpendingKind>().notNull(),
 		/** The job it paid for, if any; no foreign key, so it outlives the job. */
 		jobId: text("job_id"),
+		/** Whose key paid: monthly limits count the server's only. */
+		keySource: text("key_source")
+			.$type<KeySource>()
+			.notNull()
+			.default("server"),
 		costUsd: real("cost_usd").notNull(),
 		createdAt: integer("created_at").notNull(),
 	},
@@ -236,3 +242,12 @@ export const loraUploads = sqliteTable(
 	},
 	(t) => [index("lora_uploads_user").on(t.userId)],
 );
+
+/**
+ * How much each person's pictures and videos take on disk, kept as they
+ * are added so a quota never needs the disk scanned.
+ */
+export const assetUsage = sqliteTable("asset_usage", {
+	userId: text("user_id").primaryKey(),
+	bytes: integer("bytes").notNull(),
+});

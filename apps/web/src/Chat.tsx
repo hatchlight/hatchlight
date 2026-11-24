@@ -249,6 +249,15 @@ export function JobCard(props: {
 					</div>
 				</div>
 			)}
+			{/* What it made was deleted since: the turn keeps its place. */}
+			{job.status === "succeeded" && job.assets.length === 0 && (
+				<p
+					className="flex w-full items-center justify-center rounded-2xl border border-dashed border-line text-sm text-dim"
+					style={{ aspectRatio: ratio }}
+				>
+					{t("job.deleted")}
+				</p>
+			)}
 			{job.assets.length > 0 && (
 				<div className={several ? "grid grid-cols-2 gap-2.5" : "contents"}>
 					{job.assets.map((asset, position) => {
@@ -384,6 +393,10 @@ function TurnBlock(props: {
 							key={id}
 							src={assetUrl(id)}
 							alt={t("common.reference")}
+							// A reference deleted since leaves an empty frame, not a broken one.
+							onError={(event) => {
+								event.currentTarget.style.visibility = "hidden";
+							}}
 							className="size-12 shrink-0 rounded-[10px] border border-line object-cover"
 						/>
 					))}
@@ -584,7 +597,7 @@ export function Chat({
 							setReferences={setReferences}
 							busy={create.isPending}
 							error={create.error ? i18n.explain(create.error) : null}
-							onSubmit={(draft) => create.mutate(draft)}
+							onSubmit={(draft) => create.mutateAsync(draft)}
 							inspector={{
 								content: (
 									<Inspector
@@ -599,6 +612,10 @@ export function Chat({
 										}}
 										upscale={upscale}
 										talkHref={sessionId ? href.talk(sessionId) : undefined}
+										onDeleted={() => {
+											setInspecting(false);
+											setSelected(null);
+										}}
 									/>
 								),
 								thumb:

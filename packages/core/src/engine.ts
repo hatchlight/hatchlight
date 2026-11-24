@@ -7,7 +7,7 @@ import {
 	ValidationError,
 } from "./errors";
 import { newId } from "./ids";
-import type { KeyStore } from "./keys";
+import type { FoundKey, KeySource, KeyStore } from "./keys";
 import { sniffMime } from "./mime";
 import type {
 	ProviderAdapter,
@@ -45,6 +45,27 @@ function estimateCost(
 	return usdPerOutput == null ? null : usdPerOutput * outputs;
 }
 
+/**
+ * Which waiting job starts next: the oldest job of the person who has
+ * waited longest since one of theirs last started (never counts as
+ * longest). Ties go to the job that came first.
+ */
+function nextInTurn(
+	queue: readonly { userId: string }[],
+	lastStart: ReadonlyMap<string, number>,
+): number {
+	let best = 0;
+	let bestStart = Number.POSITIVE_INFINITY;
+	queue.forEach((job, index) => {
+		const started = lastStart.get(job.userId) ?? 0;
+		if (started < bestStart) {
+			best = index;
+			bestStart = started;
+		}
+	});
+	return best;
+}
+
 /** What the engine needs of a job to queue it. */
 type Queued = Pick<Job, "id" | "userId" | "providerId" | "modelId">;
 
@@ -65,7 +86,7 @@ export interface JobEngineDeps {
 	 * Why a person may not use models that need a key, which spend money, or
 	 * null when they may. Everyone may when absent, as on a personal install.
 	 */
-	paidRefusal?: (userId: string) => PaidRefusal | null;
+	paidRefusal?: (userId: string, source: KeySource) => PaidRefusal | null;
 	/** Jobs running at once per provider. Defaults to 4. */
 	concurrencyPerProvider?: number;
 	/** The wait before the first try again; it doubles each time. */
@@ -148,6 +169,13 @@ export class JobEngine {
 	/** Jobs waiting to run, by line: a provider, or a line of one. */
 	private waiting = new Map<string, Waiting[]>();
 	private active = new Map<string, number>();
+	/**
+	 * When each person's last job started, by line, as a count of starts:
+	 * the line takes turns between people rather than first come, first
+	 * served, so one person's long batch does not hold everyone back.
+	 */
+	private lastStart = new Map<string, Map<string, number>>();
+	private starts = 0;
 	/** Jobs queued or running here, so that none is ever run twice at once. */
 	private owned = new Set<string>();
 	/**
@@ -217,15 +245,21 @@ export class JobEngine {
 	 * person sees why theirs has not started.
 	 */
 	private tellPlaces(line: string): void {
-		const queue = this.waiting.get(line) ?? [];
-		queue.forEach((job, index) => {
+		// The order they will start in, taking turns as `pump` does.
+		const queue = [...(this.waiting.get(line) ?? [])];
+		const last = new Map(this.lastStart.get(line));
+		let turn = this.starts;
+		for (let position = 1; queue.length > 0; position++) {
+			const [job] = queue.splice(nextInTurn(queue, last), 1);
+			if (!job) break;
+			last.set(job.userId, ++turn);
 			this.emit(job.userId, {
 				type: "job.progress",
 				jobId: job.id,
 				stage: "queued",
-				position: index + 1,
+				position,
 			});
-		});
+		}
 	}
 
 	/** The latest picture of a running job, if it shows one, for its owner. */
@@ -301,9 +335,13 @@ export class JobEngine {
 		const adapter = this.deps.registry.adapter(providerId);
 		const limit = Math.min(this.limit, adapter?.maxConcurrency ?? this.limit);
 		let moved = false;
+		const last = this.lastStart.get(line) ?? new Map<string, number>();
+		this.lastStart.set(line, last);
 		while ((this.active.get(line) ?? 0) < limit) {
-			const jobId = queue.shift()?.id;
-			if (!jobId) break;
+			const [next] = queue.splice(nextInTurn(queue, last), 1);
+			const jobId = next?.id;
+			if (!next || !jobId) break;
+			last.set(next.userId, ++this.starts);
 			moved = true;
 			this.active.set(line, (this.active.get(line) ?? 0) + 1);
 			const run = this.run(jobId)
@@ -330,6 +368,8 @@ export class JobEngine {
 		const controller = new AbortController();
 		this.controllers.set(jobId, controller);
 		let providerFailed = false;
+		// Whose key paid, for the ledger.
+		let keySource: KeySource = "server";
 		const { registry, keys } = this.deps;
 		const adapter = registry.adapter(job.providerId);
 		const ctx: UserContext = { userId: job.userId };
@@ -348,13 +388,18 @@ export class JobEngine {
 					{ model: job.modelId },
 				);
 			}
+			// A person's own key first; the server's, or one from the
+			// environment, otherwise.
+			const envKey = adapter.keyEnv ? process.env[adapter.keyEnv] : undefined;
+			const found: FoundKey | undefined =
+				(await keys.find(ctx, adapter.id)) ??
+				(envKey ? { key: envKey, source: "server" } : undefined);
+			keySource = found?.source ?? "server";
 			const refusal = adapter.requiresKey
-				? this.deps.paidRefusal?.(job.userId)
+				? this.deps.paidRefusal?.(job.userId, keySource)
 				: null;
 			if (refusal) throw paidError(refusal);
-			const apiKey =
-				(await keys.get(ctx, adapter.id)) ??
-				(adapter.keyEnv ? process.env[adapter.keyEnv] : undefined);
+			const apiKey = found?.key;
 			if (adapter.requiresKey && !apiKey) {
 				throw new CodedError(
 					`No API key configured for ${adapter.name}`,
@@ -454,6 +499,7 @@ export class JobEngine {
 									id: newId("spd"),
 									userId: job.userId,
 									kind: "generation",
+									keySource,
 									jobId,
 									costUsd,
 									createdAt: Date.now(),

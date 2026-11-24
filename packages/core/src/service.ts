@@ -27,6 +27,11 @@ export interface ReelServiceDeps {
 	registry: ProviderRegistry;
 	keys: KeyStore;
 	engine: JobEngine;
+	/**
+	 * Why a person may not add pictures now (their room is full), or null.
+	 * Checked by everything that makes new ones: turns, retries, uploads.
+	 */
+	storageRefusal?: (userId: string) => Error | null;
 }
 
 const UPLOAD_MIMES = ["image/png", "image/jpeg", "image/webp"];
@@ -118,6 +123,7 @@ export class ReelService {
 
 	async listProviders(ctx: UserContext): Promise<ProviderStatus[]> {
 		const stored = await this.deps.keys.list(ctx);
+		const sources = (await this.deps.keys.sources?.(ctx)) ?? null;
 		return this.deps.registry.listAdapters().map((adapter) => ({
 			id: adapter.id,
 			name: adapter.name,
@@ -125,6 +131,14 @@ export class ReelService {
 			hasKey:
 				stored.includes(adapter.id) ||
 				Boolean(adapter.keyEnv && process.env[adapter.keyEnv]),
+			...(sources && {
+				keys: {
+					personal: sources.personal.includes(adapter.id),
+					server:
+						sources.server.includes(adapter.id) ||
+						Boolean(adapter.keyEnv && process.env[adapter.keyEnv]),
+				},
+			}),
 		}));
 	}
 
@@ -190,10 +204,17 @@ export class ReelService {
 		await this.deps.repo.deleteSession(ctx, id);
 	}
 
+	/** Throws when the person's pictures already take all their room. */
+	private assertRoom(ctx: UserContext): void {
+		const refusal = this.deps.storageRefusal?.(ctx.userId);
+		if (refusal) throw refusal;
+	}
+
 	async createTurn(
 		ctx: UserContext,
 		input: CreateTurnInput,
 	): Promise<{ session: Session; turn: TurnView }> {
+		this.assertRoom(ctx);
 		const { sessionId, modelIds, ...rawParams } = input;
 		const parsed = generationParamsSchema.safeParse(rawParams);
 		if (!parsed.success) {
@@ -296,6 +317,7 @@ export class ReelService {
 
 	/** Runs a job that failed or was canceled again. */
 	async retryJob(ctx: UserContext, jobId: string): Promise<void> {
+		this.assertRoom(ctx);
 		const job = await this.deps.repo.findJob(jobId);
 		if (!job || job.userId !== ctx.userId)
 			throw new NotFoundError("Job not found", "jobNotFound");
@@ -312,7 +334,20 @@ export class ReelService {
 		return preview;
 	}
 
+	/**
+	 * Deletes a picture or video of the person's. Its file goes only when no
+	 * other of theirs shares it, and only then does it free room. Turns and
+	 * jobs that showed it keep their place, without it.
+	 */
+	async deleteAsset(ctx: UserContext, id: string): Promise<void> {
+		const [asset] = await this.deps.repo.getAssets(ctx, [id]);
+		if (!asset) throw new NotFoundError("Asset not found", "assetNotFound");
+		const { sharing } = await this.deps.repo.deleteAsset(ctx, id);
+		if (sharing === 0) await this.deps.assets.remove(ctx, asset.hash);
+	}
+
 	async uploadAsset(ctx: UserContext, data: Uint8Array): Promise<Asset> {
+		this.assertRoom(ctx);
 		// The claimed type is ignored; the bytes decide.
 		const mime = sniffMime(data);
 		if (!mime || !UPLOAD_MIMES.includes(mime)) {

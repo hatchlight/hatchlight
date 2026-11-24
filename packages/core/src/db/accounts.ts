@@ -329,6 +329,7 @@ export class SqliteAccounts {
 				schema.jobs,
 				schema.assets,
 				schema.messages,
+				schema.assetUsage,
 			]) {
 				tx.update(table)
 					.set({ userId: user.id })
@@ -362,7 +363,27 @@ export class SqliteAccounts {
 			.run();
 	}
 
-	/** What a person spent on paid services since `since`, in dollars. */
+	/** Counts a file added to a person's usage, or removed with negative bytes. */
+	addAssetBytes(userId: string, bytes: number): void {
+		this.sqlite
+			.prepare(
+				"insert into asset_usage (user_id, bytes) values (?, max(?, 0)) on conflict(user_id) do update set bytes = max(bytes + ?, 0)",
+			)
+			.run(userId, bytes, bytes);
+	}
+
+	/** What a person's pictures and videos take on disk. */
+	assetBytes(userId: string): number {
+		return (
+			this.db
+				.select({ bytes: schema.assetUsage.bytes })
+				.from(schema.assetUsage)
+				.where(eq(schema.assetUsage.userId, userId))
+				.get()?.bytes ?? 0
+		);
+	}
+
+	/** What a person spent on the server's keys since `since`, in dollars. */
 	spentSince(userId: string, since: number): number {
 		return (
 			this.db
@@ -373,6 +394,8 @@ export class SqliteAccounts {
 				.where(
 					and(
 						eq(schema.spending.userId, userId),
+						// A person's own key is their own money.
+						eq(schema.spending.keySource, "server"),
 						gte(schema.spending.createdAt, since),
 					),
 				)

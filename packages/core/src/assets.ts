@@ -5,16 +5,27 @@ import type { UserContext } from "./types";
 export interface StoredBlob {
 	hash: string;
 	size: number;
+	/** The file was new on disk, so it takes room now. */
+	added?: boolean;
 }
 
 export interface AssetStore {
 	put(ctx: UserContext, data: Uint8Array): Promise<StoredBlob>;
 	get(ctx: UserContext, hash: string): Promise<Blob | null>;
+	/** Deletes a person's file; nothing when it is not there. */
+	remove(ctx: UserContext, hash: string): Promise<void>;
 }
 
 /** Content-addressed files on disk: `<root>/<userId>/<hash[0..2]>/<hash>`. */
 export class FsAssetStore implements AssetStore {
-	constructor(private root: string) {}
+	constructor(
+		private root: string,
+		/**
+		 * Told of each file added (positive bytes) or removed (negative), to
+		 * keep each person's usage counted.
+		 */
+		private onAdded?: (userId: string, bytes: number) => void,
+	) {}
 
 	private path(ctx: UserContext, hash: string): string {
 		if (!/^[a-f0-9]{64}$/.test(hash)) throw new Error("Invalid asset hash");
@@ -25,13 +36,23 @@ export class FsAssetStore implements AssetStore {
 	async put(ctx: UserContext, data: Uint8Array): Promise<StoredBlob> {
 		const hash = new Bun.CryptoHasher("sha256").update(data).digest("hex");
 		const path = this.path(ctx, hash);
-		if (!(await Bun.file(path).exists())) {
-			await mkdir(dirname(path), { recursive: true });
-			const tmp = `${path}.${crypto.randomUUID()}.tmp`;
-			await Bun.write(tmp, data);
-			await rename(tmp, path);
+		if (await Bun.file(path).exists()) {
+			return { hash, size: data.byteLength, added: false };
 		}
-		return { hash, size: data.byteLength };
+		await mkdir(dirname(path), { recursive: true });
+		const tmp = `${path}.${crypto.randomUUID()}.tmp`;
+		await Bun.write(tmp, data);
+		await rename(tmp, path);
+		this.onAdded?.(ctx.userId, data.byteLength);
+		return { hash, size: data.byteLength, added: true };
+	}
+
+	async remove(ctx: UserContext, hash: string): Promise<void> {
+		const file = Bun.file(this.path(ctx, hash));
+		if (!(await file.exists())) return;
+		const bytes = file.size;
+		await rm(this.path(ctx, hash), { force: true });
+		this.onAdded?.(ctx.userId, -bytes);
 	}
 
 	async get(ctx: UserContext, hash: string): Promise<Blob | null> {

@@ -53,6 +53,8 @@ export interface AccountView {
 	 * a link someone else gave.
 	 */
 	resetNotice: { by: string; at: number } | null;
+	/** What their pictures and videos take, and the most they may (null: no limit). */
+	storage: { usedBytes: number; quotaBytes: number | null };
 }
 
 /** A browser someone is signed in on. */
@@ -446,7 +448,10 @@ export interface ProviderStatus {
 	id: string;
 	name: string;
 	requiresKey: boolean;
+	/** A key the person can use now. */
 	hasKey: boolean;
+	/** On a server: whether the person has a key of their own, and the server one. */
+	keys?: { personal: boolean; server: boolean };
 }
 
 export type EngineEvent =

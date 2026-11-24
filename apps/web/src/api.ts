@@ -91,6 +91,15 @@ export interface ServerInfo {
 }
 
 let signedOut: (() => void) | null = null;
+let roomChanged: (() => void) | null = null;
+
+/** Calls `handler` when the server says a person's room is full. */
+export function whenRoomFull(handler: () => void): () => void {
+	roomChanged = handler;
+	return () => {
+		if (roomChanged === handler) roomChanged = null;
+	};
+}
 
 /** Calls `handler` when the server says the session is gone. */
 export function whenSignedOut(handler: () => void): () => void {
@@ -111,6 +120,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 		) {
 			signedOut?.();
 		}
+		// The room is full: the account's usage is out of date.
+		if (body?.code === "storageFull") roomChanged?.();
 		throw new ApiError(
 			body?.error ?? `Request failed (HTTP ${response.status})`,
 			typeof body?.code === "string" ? body.code : undefined,
@@ -134,6 +145,11 @@ export const api = {
 	providers: () => request<ProviderStatus[]>("/api/providers"),
 	setKey: (id: string, key: string) =>
 		request<void>(`/api/providers/${id}/key`, send("PUT", { key })),
+	/** A key of one's own on a server, used before the server's. */
+	setOwnKey: (id: string, key: string) =>
+		request<void>(`/api/account/keys/${id}`, send("PUT", { key })),
+	deleteOwnKey: (id: string) =>
+		request<void>(`/api/account/keys/${id}`, { method: "DELETE" }),
 	deleteKey: (id: string) =>
 		request<void>(`/api/providers/${id}/key`, { method: "DELETE" }),
 	sessions: () => request<Session[]>("/api/sessions"),
@@ -257,6 +273,11 @@ export const api = {
 			headers: { "content-type": file.type },
 			body: file,
 		}),
+	/** Whether keys this person relied on could not be read at start. */
+	keysLost: () => request<{ lost: boolean }>("/api/keys/lost"),
+	dismissKeysLost: () => request<void>("/api/keys/lost", { method: "DELETE" }),
+	deleteAsset: (id: string) =>
+		request<void>(`/api/assets/${id}`, { method: "DELETE" }),
 	localModels: () => request<LocalModelsView>("/api/local-models"),
 	installModel: (id: string, variant?: string) =>
 		request<void>(

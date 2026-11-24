@@ -77,7 +77,8 @@ interface Props {
 	setReferences: Dispatch<SetStateAction<string[]>>;
 	busy: boolean;
 	error: string | null;
-	onSubmit(draft: Draft): void;
+	/** Sends the turn; the prompt is cleared only once it is accepted. */
+	onSubmit(draft: Draft): Promise<unknown>;
 	/** The chosen picture: a column on wide screens, a sheet on narrow ones. */
 	inspector: {
 		content: ReactNode;
@@ -313,8 +314,9 @@ export function Composer(props: Props) {
 	const canSend = prompt.trim() !== "" && selected.length > 0 && !props.busy;
 	const submit = () => {
 		if (!canSend) return;
-		props.onSubmit({
-			prompt: prompt.trim(),
+		const sent = prompt.trim();
+		const accepted = props.onSubmit({
+			prompt: sent,
 			modelIds: selected.map((m) => m.id),
 			aspectRatio: ratio || undefined,
 			count: each,
@@ -325,7 +327,12 @@ export function Composer(props: Props) {
 			maskAssetId: maskId ?? undefined,
 			loras: sentLoras.length > 0 ? sentLoras : undefined,
 		});
-		setPrompt("");
+		// Kept when refused, so nothing typed is lost; cleared once accepted,
+		// unless it was changed meanwhile.
+		void accepted.then(
+			() => setPrompt((current) => (current.trim() === sent ? "" : current)),
+			() => {},
+		);
 		// Whatever was offered was for the prompt just sent.
 		stopImproving();
 		setSuggestion(null);

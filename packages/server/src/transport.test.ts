@@ -19,6 +19,7 @@ test("personal mode is the default and keeps to loopback", () => {
 		host: "127.0.0.1",
 		transport: null,
 		loraQuota: null,
+		assetQuotaBytes: null,
 	});
 	// The network settings mean nothing to a personal install.
 	expect(
@@ -50,6 +51,14 @@ test("server mode listens everywhere and needs its public address", () => {
 	});
 	expect(config.host).toBe("0.0.0.0");
 	expect(config.loraQuota).toEqual({ files: 20, bytes: 10 * 1024 ** 3 });
+	// Pictures have no limit unless one is set.
+	expect(config.assetQuotaBytes).toBeNull();
+	expect(
+		server({
+			HATCHLIGHT_PUBLIC_URL: "https://hatchlight.example.com",
+			HATCHLIGHT_ASSET_GB_PER_PERSON: "2",
+		}).assetQuotaBytes,
+	).toBe(2 * 1024 ** 3);
 	expect(config.transport).toEqual({
 		publicOrigin: "https://hatchlight.example.com",
 		allowedHosts: ["hatchlight.example.com"],

@@ -60,14 +60,25 @@ async function serverApp(
 	} = {},
 ) {
 	const root = await mkdtemp(join(tmpdir(), "hatchlight-server-mode-"));
+	const fake = new FakeProvider();
 	const paid = new FakeProvider("paid");
 	paid.requiresKey = true;
 	// Holds the key the cloud language services use.
 	const openai = new FakeProvider("openai", []);
 	openai.requiresKey = true;
+	const { transport, loraQuota, assetQuotaBytes } = serverConfig(
+		{ mode: "server" },
+		{
+			HATCHLIGHT_PUBLIC_URL: "http://nas.example",
+			HATCHLIGHT_ALLOWED_HOSTS: "192.168.1.20",
+			HATCHLIGHT_TRUSTED_PROXIES: "10.0.0.0/8",
+			...options.env,
+		},
+	);
 	const runtime = await createRuntime({
 		dataDir: root,
-		providers: [new FakeProvider(), paid, openai],
+		providers: [fake, paid, openai],
+		assetQuotaBytes,
 		localModels: [],
 		engines: [],
 		server: true,
@@ -95,15 +106,6 @@ async function serverApp(
 		await rm(root, { recursive: true });
 	});
 	await runtime.start();
-	const { transport, loraQuota } = serverConfig(
-		{ mode: "server" },
-		{
-			HATCHLIGHT_PUBLIC_URL: "http://nas.example",
-			HATCHLIGHT_ALLOWED_HOSTS: "192.168.1.20",
-			HATCHLIGHT_TRUSTED_PROXIES: "10.0.0.0/8",
-			...options.env,
-		},
-	);
 	const app = createApp({
 		...runtime,
 		trainer: options.trainer ?? runtime.trainer,
@@ -189,7 +191,17 @@ async function serverApp(
 	};
 	const userId = (username: string) =>
 		runtime.accounts.findUser(username)?.id as string;
-	return { call, runtime, setupOwner, invite, cookieOf, userId, root };
+	return {
+		call,
+		runtime,
+		setupOwner,
+		invite,
+		cookieOf,
+		userId,
+		root,
+		paid,
+		fake,
+	};
 }
 
 const errorCode = async (response: Response) =>
@@ -1498,4 +1510,294 @@ test("a sign-in whose browser left while it waited is never checked", async () =
 	// Answered quietly: a request that went away is not a server error.
 	expect(await second).not.toBe(500);
 	expect(checked).toEqual(["first password try"]);
+});
+
+test("a person's own key is used before the server's, and is not held to the limit", async () => {
+	const { call, setupOwner, invite, userId, runtime, paid } = await serverApp();
+	const owner = await setupOwner();
+	await call("/api/providers/paid/key", {
+		method: "PUT",
+		who: owner,
+		body: { key: "server-key" },
+	});
+	const member = await invite(owner, { canUsePaid: true, monthlyLimitUsd: 0 });
+	const paidTurn = () =>
+		call("/api/turns", {
+			method: "POST",
+			who: member,
+			body: { prompt: "x", modelIds: ["paid/alpha"] },
+		});
+	// The server's key is past its limit for them.
+	expect(await errorCode(await paidTurn())).toBe("monthlyLimitReached");
+	const set = await call("/api/account/keys/paid", {
+		method: "PUT",
+		who: member,
+		body: { key: "member-key" },
+	});
+	expect(set.status).toBe(204);
+	type Provider = {
+		id: string;
+		hasKey: boolean;
+		keys: { personal: boolean; server: boolean };
+	};
+	const providers = (await (
+		await call("/api/providers", { who: member })
+	).json()) as Provider[];
+	expect(providers.find((p) => p.id === "paid")).toMatchObject({
+		hasKey: true,
+		keys: { personal: true, server: true },
+	});
+	// Their own money: no limit, and their key, not the server's.
+	expect((await paidTurn()).status).toBe(201);
+	await runtime.engine.idle();
+	expect(paid.keysUsed.at(-1)).toBe("member-key");
+	// Written down as theirs, and not counted toward the limit.
+	const id = userId(member.username);
+	expect(runtime.accounts.spentThisMonth(id)).toBe(0);
+	// Others still use the server's key.
+	const other = await invite(owner, { canUsePaid: true });
+	await call("/api/turns", {
+		method: "POST",
+		who: other,
+		body: { prompt: "x", modelIds: ["paid/alpha"] },
+	});
+	await runtime.engine.idle();
+	expect(paid.keysUsed.at(-1)).toBe("server-key");
+	// Never sent back.
+	const text = await (await call("/api/providers", { who: member })).text();
+	expect(text).not.toContain("member-key");
+	expect(text).not.toContain("server-key");
+});
+
+test("only people who may spend can keep keys of their own", async () => {
+	const { call, setupOwner, invite } = await serverApp();
+	const owner = await setupOwner();
+	const member = await invite(owner);
+	const refused = await call("/api/account/keys/paid", {
+		method: "PUT",
+		who: member,
+		body: { key: "k" },
+	});
+	expect(refused.status).toBe(403);
+	expect(await errorCode(refused)).toBe("paidNotAllowed");
+	// Nor set the server's.
+	const server = await call("/api/providers/paid/key", {
+		method: "PUT",
+		who: member,
+		body: { key: "k" },
+	});
+	expect(server.status).toBe(403);
+	// An owner may keep their own too.
+	expect(
+		(
+			await call("/api/account/keys/paid", {
+				method: "PUT",
+				who: owner,
+				body: { key: "owner-own" },
+			})
+		).status,
+	).toBe(204);
+});
+
+test("a member past their room starts no new pictures, but those under way finish", async () => {
+	const { call, setupOwner, invite, runtime } = await serverApp({
+		// About a hundred bytes: one small picture fills it.
+		env: { HATCHLIGHT_ASSET_GB_PER_PERSON: String(100 / 1024 ** 3) },
+	});
+	const owner = await setupOwner();
+	const member = await invite(owner);
+	const turn = (who: Who) =>
+		call("/api/turns", {
+			method: "POST",
+			who,
+			body: { prompt: "x", modelIds: ["fake/alpha"] },
+		});
+	type Me = { storage: { usedBytes: number; quotaBytes: number | null } };
+	const me = async (who: Who) =>
+		((await (await call("/api/account", { who })).json()) as Me).storage;
+	expect(await me(member)).toEqual({ usedBytes: 0, quotaBytes: 100 });
+	// The first one goes past the room, and still finishes.
+	expect((await turn(member)).status).toBe(201);
+	await runtime.engine.idle();
+	const gallery = (await (
+		await call("/api/gallery", { who: member })
+	).json()) as unknown[];
+	expect(gallery).toHaveLength(1);
+	const used = (await me(member)).usedBytes;
+	expect(used).toBeGreaterThan(100);
+	// Now new pictures, and uploads, wait for room.
+	const refused = await turn(member);
+	expect(refused.status).toBe(403);
+	expect(await errorCode(refused)).toBe("storageFull");
+	const upload = await call("/api/assets", {
+		method: "POST",
+		who: member,
+		body: PNG,
+		headers: { "content-type": "image/png" },
+	});
+	expect(await errorCode(upload)).toBe("storageFull");
+	// Owners and admins have no such limit.
+	expect((await turn(owner)).status).toBe(201);
+	expect((await me(owner)).quotaBytes).toBeNull();
+});
+
+test("a job tried again is a new picture, held to the room left", async () => {
+	const { call, setupOwner, invite, runtime, fake } = await serverApp({
+		env: { HATCHLIGHT_ASSET_GB_PER_PERSON: String(100 / 1024 ** 3) },
+	});
+	const owner = await setupOwner();
+	const member = await invite(owner);
+	const turn = async () => {
+		const response = await call("/api/turns", {
+			method: "POST",
+			who: member,
+			body: { prompt: "x", modelIds: ["fake/alpha"] },
+		});
+		return ((await response.json()) as { turn: { jobs: { id: string }[] } })
+			.turn.jobs[0]?.id as string;
+	};
+	// A job stopped before it made anything, kept for later.
+	let release: () => void = () => {};
+	fake.gate = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const kept = await turn();
+	await Bun.sleep(20);
+	await call(`/api/jobs/${kept}/cancel`, { method: "POST", who: member });
+	release();
+	fake.gate = null;
+	await runtime.engine.idle();
+	// The room fills.
+	await turn();
+	await runtime.engine.idle();
+	const retried = await call(`/api/jobs/${kept}/retry`, {
+		method: "POST",
+		who: member,
+	});
+	expect(retried.status).toBe(403);
+	expect(await errorCode(retried)).toBe("storageFull");
+});
+
+test("uploads take turns, and one that would not fit is refused before it is read", async () => {
+	const { call, setupOwner, invite } = await serverApp({
+		env: { HATCHLIGHT_ASSET_GB_PER_PERSON: String(100 / 1024 ** 3) },
+	});
+	const owner = await setupOwner();
+	const member = await invite(owner);
+	const upload = (body: Uint8Array | ReadableStream, headers = {}) =>
+		call("/api/assets", {
+			method: "POST",
+			who: member,
+			body,
+			headers: { "content-type": "image/png", ...headers },
+		});
+	// Says it brings more than the room left: refused before it is read.
+	let pulled = 0;
+	const declared = new ReadableStream<Uint8Array>({
+		pull(controller) {
+			pulled++;
+			if (pulled > 20) controller.close();
+			else controller.enqueue(new Uint8Array(10).fill(1));
+		},
+	});
+	const big = await upload(declared, { "content-length": "200" });
+	expect(await errorCode(big)).toBe("storageFull");
+	expect(pulled).toBeLessThan(5);
+	// One at a time: a second while the first is still coming is refused.
+	let finish: () => void = () => {};
+	const held = new Promise<void>((resolve) => {
+		finish = resolve;
+	});
+	const slow = new ReadableStream<Uint8Array>({
+		async start(controller) {
+			controller.enqueue(PNG.slice(0, 4));
+			await held;
+			controller.enqueue(PNG.slice(4));
+			controller.close();
+		},
+	});
+	const first = upload(slow);
+	await Bun.sleep(30);
+	const second = await upload(PNG);
+	expect(second.status).toBe(409);
+	expect(await errorCode(second)).toBe("uploadBusy");
+	finish();
+	expect((await first).status).toBe(201);
+	expect((await upload(PNG)).status).toBe(201);
+});
+
+test("deleting pictures frees room once no picture of theirs shares the file", async () => {
+	const { call, setupOwner, invite, runtime, root, userId } = await serverApp({
+		env: { HATCHLIGHT_ASSET_GB_PER_PERSON: String(100 / 1024 ** 3) },
+	});
+	const owner = await setupOwner();
+	const member = await invite(owner);
+	const other = await invite(owner);
+	const used = () =>
+		runtime.accounts.view(
+			runtime.accounts.getUser(userId(member.username)) as never,
+		).storage.usedBytes;
+	const upload = async () =>
+		(await (
+			await call("/api/assets", {
+				method: "POST",
+				who: member,
+				body: PNG,
+				headers: { "content-type": "image/png" },
+			})
+		).json()) as { id: string; hash: string };
+	// The same picture twice: two in the gallery, one file on disk.
+	const first = await upload();
+	const second = await upload();
+	expect(used()).toBe(PNG.byteLength);
+	const file = join(
+		root,
+		"assets",
+		userId(member.username),
+		first.hash.slice(0, 2),
+		first.hash,
+	);
+	const remove = (id: string, who: Who) =>
+		call(`/api/assets/${id}`, { method: "DELETE", who });
+	// Nobody else's to delete.
+	expect((await remove(first.id, other)).status).toBe(404);
+	expect((await remove(first.id, member)).status).toBe(204);
+	expect((await call(`/api/assets/${first.id}`, { who: member })).status).toBe(
+		404,
+	);
+	// The other one still shows, so the file stays and still counts.
+	expect((await call(`/api/assets/${second.id}`, { who: member })).status).toBe(
+		200,
+	);
+	expect(await Bun.file(file).exists()).toBe(true);
+	expect(used()).toBe(PNG.byteLength);
+	expect((await remove(second.id, member)).status).toBe(204);
+	expect(await Bun.file(file).exists()).toBe(false);
+	expect(used()).toBe(0);
+
+	// A picture a turn made: the turn keeps its place without it.
+	const turn = await call("/api/turns", {
+		method: "POST",
+		who: member,
+		body: { prompt: "x", modelIds: ["fake/alpha"] },
+	});
+	const { session } = (await turn.json()) as { session: { id: string } };
+	await runtime.engine.idle();
+	type Detail = {
+		turns: { jobs: { status: string; assets: { id: string }[] }[] }[];
+	};
+	const detail = async () =>
+		(await (
+			await call(`/api/sessions/${session.id}`, { who: member })
+		).json()) as Detail;
+	const made = (await detail()).turns[0]?.jobs[0]?.assets[0]?.id as string;
+	expect((await remove(made, member)).status).toBe(204);
+	const after = await detail();
+	expect(after.turns[0]?.jobs[0]).toMatchObject({
+		status: "succeeded",
+		assets: [],
+	});
+	expect(await (await call("/api/gallery", { who: member })).json()).toEqual(
+		[],
+	);
 });

@@ -134,12 +134,21 @@ function fakeProgram(
 		finish = resolve;
 	});
 	let killed = false;
+	let stopped = () => {};
 	return {
 		output: (async function* () {
 			for (const line of lines) {
 				if (killed) break;
 				if (line === "WAIT") {
 					await new Promise((resolve) => setTimeout(resolve, 60));
+					continue;
+				}
+				// Goes no further until it is stopped, however slow the test.
+				if (line === "HOLD") {
+					await new Promise<void>((resolve) => {
+						stopped = resolve;
+						if (killed) resolve();
+					});
 					continue;
 				}
 				yield line;
@@ -151,6 +160,7 @@ function fakeProgram(
 		kill: () => {
 			killed = true;
 			finish(137);
+			stopped();
 		},
 	};
 }
@@ -427,15 +437,17 @@ const loraFile = (which = "final") =>
 
 /**
  * The scripts at work: a sample and a saved LoRA every 200 of 800 steps,
- * then the last one, unless they are stopped first.
+ * then the last one, unless they are stopped first. With `pause`, they
+ * hold after step 400 until stopped.
  */
 function trainingWithSamples(args: string[], pause = false) {
 	const out = args[args.indexOf("--output_dir") + 1] as string;
 	const lines: string[] = [];
 	for (const step of [200, 201, 400, 401, 600, 601, 800]) {
 		lines.push(`steps: ${step / 8}%| | ${step}/800 [01:00<01:00, 1.3it/s]`);
-		if (pause && step === 401)
-			lines.push("WAIT", "WAIT", "WAIT", "WAIT", "WAIT", "WAIT");
+		// Held past step 400 until stopped: a fixed pause could end before
+		// a slow test sees that step saved, and it would wait for it forever.
+		if (pause && step === 401) lines.push("HOLD");
 	}
 	let written = 0;
 	const program = fakeProgram(lines, 0, async () => {

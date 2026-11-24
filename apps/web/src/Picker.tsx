@@ -579,9 +579,12 @@ function Card(props: {
 			: null;
 	// Videos rarely show writing, so they get no text row.
 	const media = entry.kind === "cloud" ? entry.family.media : entry.model.media;
+	const can = useCan();
 	const needsKey =
 		(entry.kind === "cloud" && !entry.family.ready) ||
 		(entry.kind === "other" && !entry.ready);
+	// What stops it is the account, not a key.
+	const notAllowed = needsKey && !can.paid;
 
 	return (
 		<article
@@ -625,9 +628,11 @@ function Card(props: {
 						{(level || !needsKey) && <span aria-hidden="true">● </span>}
 						{level
 							? fitLabel(t, level)
-							: needsKey
-								? t("picker.needsKey")
-								: t("picker.ready")}
+							: notAllowed
+								? t("picker.noPaid")
+								: needsKey
+									? t("picker.needsKey")
+									: t("picker.ready")}
 					</span>
 				</div>
 				<div className="min-w-0">
@@ -828,7 +833,12 @@ function KeyForm(props: { routes: ModelSpec[]; providers: ProviderStatus[] }) {
 	const field = useId();
 	const provider = options.find((p) => p.id === chosen) ?? options[0];
 	const save = useMutation({
-		mutationFn: () => api.setKey(provider?.id ?? chosen, key.trim()),
+		// On a server, a key typed here is the person's own; owners set the
+		// server's in Settings.
+		mutationFn: () =>
+			can.server
+				? api.setOwnKey(provider?.id ?? chosen, key.trim())
+				: api.setKey(provider?.id ?? chosen, key.trim()),
 		onSuccess: () => {
 			setKey("");
 			return client.invalidateQueries({ queryKey: ["providers"] });
@@ -836,8 +846,9 @@ function KeyForm(props: { routes: ModelSpec[]; providers: ProviderStatus[] }) {
 	});
 	if (!provider) return null;
 	// A server's keys are its owner's to add.
-	if (!can.owner) {
-		return <p className="text-sm text-dim">{t("settings.providersServer")}</p>;
+	// Paid models are not for this account: no key would change that.
+	if (!can.paid) {
+		return <p className="text-sm text-dim">{t("picker.noPaid")}</p>;
 	}
 
 	return (
@@ -888,7 +899,11 @@ function KeyForm(props: { routes: ModelSpec[]; providers: ProviderStatus[] }) {
 				</div>
 			</div>
 			<p className="flex flex-wrap justify-between gap-2 text-xs text-dim">
-				<span>{t("picker.keyNote", { provider: provider.name })}</span>
+				<span>
+					{can.server
+						? t("picker.keyNoteServer", { provider: provider.name })
+						: t("picker.keyNote", { provider: provider.name })}
+				</span>
 				{KEY_PAGES[provider.id] && (
 					<a
 						href={KEY_PAGES[provider.id]}
@@ -918,6 +933,7 @@ export function Picker(props: {
 	ready(modelId: string, name: string): ReactNode;
 }) {
 	const { t } = useI18n();
+	const { server, paid: mayPay } = useCan();
 	const models = useQuery({ queryKey: ["models"], queryFn: api.models });
 	const providers = useQuery({
 		queryKey: ["providers"],
@@ -1076,8 +1092,10 @@ export function Picker(props: {
 					},
 					{
 						entries: cloudEntries,
-						title: t("picker.cloudTitle"),
-						body: t("picker.cloudBody"),
+						title: server
+							? t("picker.cloudTitleServer")
+							: t("picker.cloudTitle"),
+						body: server ? t("picker.cloudBodyServer") : t("picker.cloudBody"),
 					},
 					{
 						entries: otherEntries,
@@ -1130,7 +1148,8 @@ export function Picker(props: {
 					<p className="font-display text-lg font-bold tracking-tight">
 						{readyId
 							? t("picker.readyWith", { model: entryName(current) })
-							: current.kind === "local"
+							: // Not allowed paid models, a key is not what it needs.
+								current.kind === "local" || !mayPay
 								? entryName(current)
 								: t("picker.keyFor", { model: entryName(current) })}
 					</p>

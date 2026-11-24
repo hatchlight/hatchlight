@@ -53,6 +53,8 @@ export interface Repository {
 	listTurns(ctx: UserContext, sessionId: string): Promise<TurnView[]>;
 	createAsset(asset: Asset): Promise<void>;
 	getAssets(ctx: UserContext, ids: string[]): Promise<Asset[]>;
+	/** Deletes a person's asset; says how many of theirs still share its file. */
+	deleteAsset(ctx: UserContext, id: string): Promise<{ sharing: number }>;
 	listGallery(ctx: UserContext, query: GalleryQuery): Promise<GalleryItem[]>;
 
 	addEntry(entry: AssistantEntry, userId: string): Promise<void>;
@@ -260,6 +262,31 @@ export class SqliteRepository implements Repository {
 				),
 			)
 			.all();
+	}
+
+	async deleteAsset(ctx: UserContext, id: string) {
+		return this.db.transaction((tx) => {
+			const asset = tx
+				.select()
+				.from(schema.assets)
+				.where(
+					and(eq(schema.assets.id, id), eq(schema.assets.userId, ctx.userId)),
+				)
+				.get();
+			if (!asset) return { sharing: 0 };
+			tx.delete(schema.assets).where(eq(schema.assets.id, id)).run();
+			const left = tx
+				.select({ n: sql<number>`count(*)` })
+				.from(schema.assets)
+				.where(
+					and(
+						eq(schema.assets.userId, ctx.userId),
+						eq(schema.assets.hash, asset.hash),
+					),
+				)
+				.get();
+			return { sharing: left?.n ?? 0 };
+		});
 	}
 
 	async listGallery(ctx: UserContext, q: GalleryQuery) {

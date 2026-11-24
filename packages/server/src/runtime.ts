@@ -19,10 +19,13 @@ import {
 	FakeProvider,
 	FileKeyStore,
 	FileSettingsStore,
+	type FoundKey,
 	FsAssetStore,
 	type Hardware,
 	improvePrompt,
 	JobEngine,
+	type KeySource,
+	keysSecret,
 	type LanguageModel,
 	LOCAL_USER,
 	type LocalEngineSpec,
@@ -49,6 +52,7 @@ import {
 	type TrainerOptions,
 	type Translator,
 	tryFileLock,
+	type UnreadableKeys,
 	type UserContext,
 	ValidationError,
 	writerChoice,
@@ -70,8 +74,16 @@ export interface Runtime {
 	accounts: AccountService;
 	/** Signs device cookies; servers only. */
 	deviceKey?: Uint8Array;
+	/**
+	 * Whether keys the person relied on were set aside at start, because the
+	 * secret could not open them: theirs, or for an owner the server's. Until
+	 * they say they saw it.
+	 */
+	keysLost(user: { userId: string; owner: boolean }): boolean;
+	/** The person saw that their keys were lost. */
+	dismissKeysLost(userId: string): void;
 	/** Why a person may not spend on paid models now; servers only. */
-	paidRefusal?: (userId: string) => PaidRefusal | null;
+	paidRefusal?: (userId: string, source: KeySource) => PaidRefusal | null;
 	engine: JobEngine;
 	models: LocalModelStore;
 	/** Trains LoRAs on this computer. */
@@ -443,6 +455,8 @@ export interface RuntimeOptions {
 	 * those allowed may spend them.
 	 */
 	server?: boolean;
+	/** The most a member's pictures and videos may take on a server; unset, no limit. */
+	assetQuotaBytes?: number | null;
 	/** How passwords are hashed; argon2id with its default cost unless a test says. */
 	passwordHasher?: PasswordHasher;
 	/** Stand-ins for the trainer's downloads and programs, in tests. */
@@ -520,13 +534,43 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		databaseFile(options.dataDir),
 		options.migrationsDir,
 	);
-	const assets = new FsAssetStore(join(options.dataDir, "assets"));
-	const fileKeys = new FileKeyStore(join(options.dataDir, "auth.json"));
+	const accountsRepo = repo.accounts();
+	// Each new file is counted as it is written, for storage quotas.
+	const assets = new FsAssetStore(
+		join(options.dataDir, "assets"),
+		(userId, bytes) => accountsRepo.addAssetBytes(userId, bytes),
+	);
+	// Keys are encrypted at rest; those saved before are encrypted now.
+	// Keys the secret cannot open are set aside, never lost, and the app
+	// starts without them.
+	let unreadableKeys: UnreadableKeys | null = null;
+	const fileKeys = await (async () => {
+		try {
+			const store = new FileKeyStore(
+				join(options.dataDir, "auth.json"),
+				keysSecret(options.dataDir),
+			);
+			unreadableKeys = await store.prepare();
+			return store;
+		} catch (error) {
+			repo.close();
+			unlock();
+			throw error;
+		}
+	})();
+	if (unreadableKeys) {
+		console.warn(
+			`The saved API keys could not be read with this secret, so Hatchlight starts without them. They are kept in ${(unreadableKeys as UnreadableKeys).file}: to use them again, stop Hatchlight, put back the secret they were saved with (HATCHLIGHT_SECRET_FILE, or secret.key in the data directory) and move that file back to auth.json. Otherwise, enter the keys again.`,
+		);
+	}
+	/** People told their keys were lost, who need not be told again. */
+	const toldOfKeys = new Set<string>();
 	const settings = new FileSettingsStore(
 		join(options.dataDir, "settings.json"),
 	);
-	const accounts = new AccountService(repo.accounts(), {
+	const accounts = new AccountService(accountsRepo, {
 		hasher: options.passwordHasher,
+		assetQuotaBytes: options.server ? options.assetQuotaBytes : null,
 		// What the install had becomes the first owner's; its keys, the server's.
 		adoptLocal: async (ownerId) => {
 			await settings.moveUser(LOCAL_USER.userId, ownerId);
@@ -536,20 +580,28 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	});
 	// A setup cut short by a crash is finished now.
 	if (options.server) await accounts.resumeAdoption();
-	// On a server, spending is for those allowed, up to their monthly limit.
-	const paidRefusal = (userId: string): PaidRefusal | null => {
+	// On a server, spending is for those allowed; on the server's keys, up
+	// to their monthly limit. Their own keys are their own money.
+	const paidRefusal = (
+		userId: string,
+		source: KeySource,
+	): PaidRefusal | null => {
 		const user = accounts.getUser(userId);
 		if (!user || user.disabledAt != null || !mayUsePaid(user)) {
 			return "paidNotAllowed";
 		}
-		return user.monthlyLimitUsd != null &&
+		return source === "server" &&
+			user.monthlyLimitUsd != null &&
 			accounts.spentThisMonth(userId) >= user.monthlyLimitUsd
 			? "monthlyLimitReached"
 			: null;
 	};
 	const refusePaid = options.server ? paidRefusal : undefined;
-	const mayPay = (userId: string) => !refusePaid?.(userId);
-	const keys = options.server ? new SharedKeyStore(fileKeys, mayPay) : fileKeys;
+	const allowedToPay = (userId: string) =>
+		refusePaid?.(userId, "personal") !== "paidNotAllowed";
+	const keys = options.server
+		? new SharedKeyStore(fileKeys, allowedToPay)
+		: fileKeys;
 	// Puts prompts into English for the models that read only English, once
 	// its model is installed.
 	const translatorModel = catalog.find((m) =>
@@ -578,30 +630,43 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	models.onLetGo(() => translator.stopAndWait());
 	// One per service and key, so the jobs of a turn share a translation.
 	const clouds = new Map<string, CloudTranslator>();
-	const keyFor = async (ctx: UserContext, service: CloudTranslatorId) => {
+	/**
+	 * The key a person's calls to a language service use, and whose it is:
+	 * their own, or the server's (one from the environment is the server's
+	 * too) while their monthly limit allows.
+	 */
+	const keyFor = async (
+		ctx: UserContext,
+		service: CloudTranslatorId,
+	): Promise<FoundKey | undefined> => {
 		const adapter = registry.adapter(service);
-		// A key from the environment is the server's too.
-		if (!mayPay(ctx.userId)) return undefined;
-		return (
-			(await keys.get(ctx, service)) ??
-			(adapter?.keyEnv ? process.env[adapter.keyEnv] : undefined)
-		);
+		const envKey = adapter?.keyEnv ? process.env[adapter.keyEnv] : undefined;
+		const found: FoundKey | undefined =
+			(await keys.find(ctx, service)) ??
+			(envKey ? { key: envKey, source: "server" } : undefined);
+		if (!found || refusePaid?.(ctx.userId, found.source)) return undefined;
+		return found;
 	};
 	/**
-	 * On a server, a call to a language service with the server's key is
-	 * checked against the person's limit first, and counted after. The
-	 * services do not all report usage, so each call counts as a
-	 * conservative estimate of what one costs.
+	 * On a server, a call to a language service is checked against what the
+	 * person may spend first, and counted after. The services do not all
+	 * report usage, so each call counts as a conservative estimate of what
+	 * one costs.
 	 */
-	const metered = async <T>(userId: string, call: () => Promise<T>) => {
+	const metered = async <T>(
+		userId: string,
+		source: KeySource,
+		call: () => Promise<T>,
+	) => {
 		if (!refusePaid) return call();
-		const refusal = refusePaid(userId);
+		const refusal = refusePaid(userId, source);
 		if (refusal) throw paidError(refusal);
 		const result = await call();
 		await repo.addSpending({
 			id: newId("spd"),
 			userId,
 			kind: "language",
+			keySource: source,
 			jobId: null,
 			costUsd: LANGUAGE_CALL_USD,
 			createdAt: Date.now(),
@@ -612,20 +677,22 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		ctx: UserContext,
 		service: CloudTranslatorId,
 	): Promise<(Translator & LanguageModel) | null> => {
-		const key = await keyFor(ctx, service);
-		if (!key) return null;
-		const id = `${service}:${key}`;
+		const found = await keyFor(ctx, service);
+		if (!found) return null;
+		const id = `${service}:${found.key}`;
 		let cloud = clouds.get(id);
 		if (!cloud) {
-			cloud = new CloudTranslator(service, key, options.fetch);
+			cloud = new CloudTranslator(service, found.key, options.fetch);
 			clouds.set(id, cloud);
 		}
 		const model = cloud;
 		return {
 			toEnglish: (prompt, signal) =>
-				metered(ctx.userId, () => model.toEnglish(prompt, signal)),
+				metered(ctx.userId, found.source, () =>
+					model.toEnglish(prompt, signal),
+				),
 			reply: (instructions, text, signal, replyOptions) =>
-				metered(ctx.userId, () =>
+				metered(ctx.userId, found.source, () =>
 					model.reply(instructions, text, signal, replyOptions),
 				),
 		};
@@ -667,19 +734,19 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		const choice = await brainChoice(ctx);
 		if (choice === "local") return translator;
 		if (!choice) return null;
-		const key = await keyFor(ctx, choice);
-		if (!key) return null;
-		const id = `${choice}:${key}`;
+		const found = await keyFor(ctx, choice);
+		if (!found) return null;
+		const id = `${choice}:${found.key}`;
 		let brain = brains.get(id);
 		if (!brain) {
-			brain = new CloudChatModel(choice, key, options.fetch);
+			brain = new CloudChatModel(choice, found.key, options.fetch);
 			brains.set(id, brain);
 		}
 		const model = brain;
 		return {
 			vision: model.vision,
 			chat: (instructions, messages, tools, signal) =>
-				metered(ctx.userId, () =>
+				metered(ctx.userId, found.source, () =>
 					model.chat(instructions, messages, tools, signal),
 				),
 		};
@@ -692,7 +759,17 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		paidRefusal: refusePaid,
 		translator: translatorFor,
 	});
-	const service = new ReelService({ repo, assets, registry, keys, engine });
+	const service = new ReelService({
+		repo,
+		assets,
+		registry,
+		keys,
+		engine,
+		// On a server, a member whose room is full adds no new pictures.
+		storageRefusal: options.server
+			? (userId) => accounts.storageRefusal(userId)
+			: undefined,
+	});
 	// Looks at pictures for an assistant whose brain cannot, once installed.
 	const eyesModel = catalog.find((m) =>
 		m.tasks.includes("picture-description"),
@@ -721,6 +798,17 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 			? deviceKey(join(options.dataDir, "device.key"))
 			: undefined,
 		paidRefusal: refusePaid,
+		keysLost: ({ userId, owner }) => {
+			const lost = unreadableKeys as UnreadableKeys | null;
+			if (!lost || toldOfKeys.has(userId)) return false;
+			return (
+				lost.owners.includes(userId) ||
+				(owner && lost.owners.includes(SERVER_KEYS.userId))
+			);
+		},
+		dismissKeysLost: (userId) => {
+			toldOfKeys.add(userId);
+		},
 		engine,
 		models,
 		trainer,
@@ -752,6 +840,8 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		moveModels: (path) => models.relocate(path),
 		start: () => engine.start(),
 		close: () => {
+			// The assistant's work stops before the database it writes to closes.
+			assistant.close();
 			// Downloads stop with the process; what they fetched is resumed later.
 			trainer.cancelTraining();
 			trainer.cancelInstall();

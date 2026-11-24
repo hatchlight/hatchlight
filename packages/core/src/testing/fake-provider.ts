@@ -54,6 +54,8 @@ export class FakeProvider implements ProviderAdapter<FakeHandle> {
 	name: string;
 	requiresKey = false;
 	resumable = false;
+	/** Jobs it runs at once; unset, as many as the engine allows. */
+	maxConcurrency?: number;
 	/** When set, jobs wait on this before finishing. */
 	gate: Promise<void> | null = null;
 	/** When set, jobs fail with this message. */
@@ -94,7 +96,14 @@ export class FakeProvider implements ProviderAdapter<FakeHandle> {
 		}));
 	}
 
-	async submit(request: ProviderRequest): Promise<FakeHandle> {
+	/** The key each job was sent with. */
+	keysUsed: (string | undefined)[] = [];
+
+	async submit(
+		request: ProviderRequest,
+		ctx?: ProviderContext,
+	): Promise<FakeHandle> {
+		this.keysUsed.push(ctx?.apiKey);
 		const handle = {
 			model: request.model.id,
 			prompt: request.params.prompt,

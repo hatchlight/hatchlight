@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, rm, stat, utimes } from "node:fs/promises";
+import { mkdtemp, readdir, rename, rm, stat, utimes } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -1066,4 +1066,54 @@ test("the assistant answers in a session, and asks before paying", async () => {
 		).status,
 	).toBe(404);
 	expect((await call("/api/sessions/ses_none/assistant")).status).toBe(404);
+});
+
+test("keys saved before encryption are encrypted on start; keys a new secret cannot open are set aside", async () => {
+	const root = await mkdtemp(join(tmpdir(), "hatchlight-secret-"));
+	cleanups.push(() => rm(root, { recursive: true }));
+	const auth = join(root, "auth.json");
+	await Bun.write(auth, JSON.stringify({ local: { fake: "sk-from-before" } }));
+	const start = () =>
+		createRuntime({ dataDir: root, providers: [new FakeProvider()] });
+	const first = await start();
+	expect(await Bun.file(auth).text()).not.toContain("sk-from-before");
+	first.close();
+
+	// The secret is lost, or another one is in place: it still starts.
+	const sealed = await Bun.file(auth).text();
+	const secret = await Bun.file(join(root, "secret.key")).bytes();
+	await Bun.write(
+		join(root, "secret.key"),
+		crypto.getRandomValues(new Uint8Array(32)),
+	);
+	const second = await start();
+	const app = createApp(second);
+	expect(
+		await (await app.request("http://localhost/api/keys/lost")).json(),
+	).toEqual({
+		lost: true,
+	});
+	// The keys are kept aside, untouched; nothing is deleted.
+	const aside = (await readdir(root)).find((name) =>
+		name.startsWith("auth.unreadable-"),
+	) as string;
+	expect(await Bun.file(join(root, aside)).text()).toBe(sealed);
+	expect(await Bun.file(auth).exists()).toBe(false);
+	// Seen once, not told again.
+	await app.request("http://localhost/api/keys/lost", { method: "DELETE" });
+	expect(
+		await (await app.request("http://localhost/api/keys/lost")).json(),
+	).toEqual({
+		lost: false,
+	});
+	second.close();
+
+	// The old secret and file put back: the keys are there again.
+	await Bun.write(join(root, "secret.key"), secret);
+	await rename(join(root, aside), auth);
+	const third = await start();
+	expect(await third.service.listProviders({ userId: "local" })).toContainEqual(
+		expect.objectContaining({ id: "fake", hasKey: true }),
+	);
+	third.close();
 });
