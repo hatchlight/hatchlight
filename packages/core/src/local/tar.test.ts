@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
-import { extractTarGz } from "./tar";
+import { createTarGz, extractTarGz, listTarGz } from "./tar";
 import { tarGz } from "./testing";
 
 const dirs: string[] = [];
@@ -205,4 +205,51 @@ test("extracts what GNU tar writes, links included", async () => {
 	expect(await Bun.file(join(out, "sd-cli")).text()).toBe(
 		"#!/bin/sh\necho run",
 	);
+});
+
+test("writes archives it and GNU tar read back, long names included", async () => {
+	const dir = await tempDir();
+	const long = `${"folder/".repeat(20)}picture.png`;
+	await mkdir(join(dir, "in"), { recursive: true });
+	await Bun.write(join(dir, "in", "a.txt"), "first");
+	await Bun.write(join(dir, "in", "empty"), "");
+	await Bun.write(join(dir, "in", "big"), "x".repeat(70_000));
+	const archive = join(dir, "out.tar.gz");
+	await createTarGz(
+		archive,
+		[
+			{ name: "a.txt", source: join(dir, "in", "a.txt") },
+			{ name: "empty", source: join(dir, "in", "empty") },
+			{ name: long, source: join(dir, "in", "big") },
+		],
+		{ mode: 0o600 },
+	);
+	expect((await stat(archive)).mode & 0o777).toBe(0o600);
+	expect(await listTarGz(archive)).toEqual([
+		{ name: "a.txt", type: "file", size: 5 },
+		{ name: "empty", type: "file", size: 0 },
+		{ name: long, type: "file", size: 70_000 },
+	]);
+	const out = join(dir, "out");
+	await extractTarGz(archive, out);
+	expect(await Bun.file(join(out, long)).size).toBe(70_000);
+	const tar = Bun.spawnSync(["tar", "-tzf", archive]);
+	expect(tar.stdout.toString().trim().split("\n")).toEqual([
+		"a.txt",
+		"empty",
+		long,
+	]);
+});
+
+test("listing refuses what extracting would", async () => {
+	await expect(
+		listTarGz(
+			await (async () => {
+				const dir = await tempDir();
+				const path = join(dir, "a.tar.gz");
+				await Bun.write(path, tarGz([{ name: "../x", data: text("x") }]));
+				return path;
+			})(),
+		),
+	).rejects.toThrow("unsafe path");
 });

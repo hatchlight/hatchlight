@@ -1,9 +1,9 @@
 import { createReadStream, createWriteStream } from "node:fs";
-import { chmod, mkdir, rename, rm, symlink } from "node:fs/promises";
-import { dirname, join, sep } from "node:path";
+import { chmod, mkdir, rename, rm, stat, symlink } from "node:fs/promises";
+import { dirname, join, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { createGunzip } from "node:zlib";
+import { createGunzip, createGzip } from "node:zlib";
 
 const BLOCK = 512;
 /** Extended headers hold a name or two: anything larger is not one. */
@@ -144,19 +144,51 @@ export async function extractTarGz(
 	dir: string,
 ): Promise<void> {
 	await mkdir(dir, { recursive: true });
+	await readTarGz(archive, dir);
+}
+
+/** One entry of a tar archive, as listed. */
+export interface TarEntry {
+	name: string;
+	type: "file" | "directory" | "link";
+	size: number;
+}
+
+/**
+ * The entries of a gzip-compressed tar archive, without extracting it. It
+ * refuses what extracting would refuse.
+ */
+export async function listTarGz(archive: string): Promise<TarEntry[]> {
+	return readTarGz(archive, null);
+}
+
+async function readTarGz(
+	archive: string,
+	dir: string | null,
+): Promise<TarEntry[]> {
+	const entries: TarEntry[] = [];
 	await pipeline(
 		createReadStream(archive),
 		createGunzip(),
 		async (source: AsyncIterable<Buffer>) => {
 			const reader = new Reader(source);
-			await extractEntries(reader, dir);
+			await extractEntries(reader, dir, entries);
 			// Tools pad the archive past its end: read it to the last byte.
 			await reader.drain();
 		},
 	);
+	return entries;
 }
 
-async function extractEntries(reader: Reader, dir: string): Promise<void> {
+/** Where names are checked when listing: no file is written there. */
+const NOWHERE = resolve("/nowhere");
+
+/** Extracts into `dir`, or only lists into `entries` when it is null. */
+async function extractEntries(
+	reader: Reader,
+	dir: string | null,
+	entries: TarEntry[],
+): Promise<void> {
 	/** What a pax or GNU header said about the entry after it. */
 	let next: { path?: string; linkpath?: string; size?: number } = {};
 	for (;;) {
@@ -211,15 +243,43 @@ async function extractEntries(reader: Reader, dir: string): Promise<void> {
 			(prefix ? `${prefix}/${text(header, 0, 100)}` : text(header, 0, 100));
 		const linkname = next.linkpath ?? text(header, 157, 100);
 		next = {};
-		const path = target(dir, name);
-		if (path === dir && type !== "5") {
+		const root = dir ?? NOWHERE;
+		const path = target(root, name);
+		if (path === root && type !== "5") {
 			throw new Error(`The archive holds an unsafe path: ${name}`);
+		}
+		const unsafeLink =
+			!linkname ||
+			linkname.includes("/") ||
+			linkname.includes("\\") ||
+			linkname === "." ||
+			linkname === "..";
+		const isFile = type === "0" || type === "\0" || type === "7";
+		if (type === "2" && unsafeLink) {
+			throw new Error(`The archive holds an unsafe link: ${name}`);
+		}
+		if (type !== "5" && type !== "2" && !isFile) {
+			throw new Error(`${name} is a kind of file that is not supported`);
+		}
+		if (path !== root) {
+			entries.push({
+				name: path
+					.slice(root.length + 1)
+					.split(sep)
+					.join("/"),
+				type: type === "5" ? "directory" : type === "2" ? "link" : "file",
+				size: isFile ? size : 0,
+			});
+		}
+		if (dir === null) {
+			await reader.skip(size + padding);
+			continue;
 		}
 
 		if (type === "5") {
 			await mkdir(path, { recursive: true });
 			await reader.skip(size + padding);
-		} else if (type === "0" || type === "\0" || type === "7") {
+		} else if (isFile) {
 			await mkdir(dirname(path), { recursive: true });
 			const tmp = `${path}.${crypto.randomUUID()}.tmp`;
 			try {
@@ -234,22 +294,108 @@ async function extractEntries(reader: Reader, dir: string): Promise<void> {
 			await reader.skip(padding);
 			await chmod(tmp, number(header, 100, 8) & 0o755);
 			await rename(tmp, path);
-		} else if (type === "2") {
-			if (
-				!linkname ||
-				linkname.includes("/") ||
-				linkname.includes("\\") ||
-				linkname === "." ||
-				linkname === ".."
-			) {
-				throw new Error(`The archive holds an unsafe link: ${name}`);
-			}
+		} else {
 			await mkdir(dirname(path), { recursive: true });
 			await rm(path, { force: true });
 			await symlink(linkname, path);
 			await reader.skip(size + padding);
-		} else {
-			throw new Error(`${name} is a kind of file that is not supported`);
 		}
+	}
+}
+
+/** A header block for `name`, a regular file of `size` bytes. */
+function fileHeader(name: string, size: number, mode: number, type = "0") {
+	const header = Buffer.alloc(BLOCK);
+	const field = (value: string, start: number, length: number) => {
+		header.write(value, start, length, "utf8");
+	};
+	const octal = (value: number, start: number, length: number) =>
+		field(`${value.toString(8).padStart(length - 1, "0")}\0`, start, length);
+	field(name, 0, 100);
+	octal(mode, 100, 8);
+	octal(0, 108, 8);
+	octal(0, 116, 8);
+	octal(size, 124, 12);
+	octal(Math.floor(Date.now() / 1000), 136, 12);
+	field(type, 156, 1);
+	field("ustar\0", 257, 6);
+	field("00", 263, 2);
+	header.fill(0x20, 148, 156);
+	let sum = 0;
+	for (const byte of header) sum += byte;
+	octal(sum, 148, 7);
+	return header;
+}
+
+const padding = (size: number) =>
+	Buffer.alloc((BLOCK - (size % BLOCK)) % BLOCK);
+
+/** A pax header naming the next entry, for names a ustar header cannot hold. */
+function longName(name: string): Buffer[] {
+	const body = ` path=${name}\n`;
+	let length = Buffer.byteLength(body) + 1;
+	while (Buffer.byteLength(`${length}${body}`) !== length) length++;
+	const record = Buffer.from(`${length}${body}`);
+	return [
+		fileHeader("PaxHeader", record.length, 0o644, "x"),
+		record,
+		padding(record.length),
+	];
+}
+
+/** A file to put in an archive: its name there, and where it is now. */
+export interface TarSource {
+	name: string;
+	source: string;
+}
+
+/**
+ * Writes `files` into a gzip-compressed tar archive at `archive`, streaming
+ * each one. The archive appears whole or not at all. A file that changes
+ * size while it is read is refused rather than stored cut short.
+ */
+export async function createTarGz(
+	archive: string,
+	files: TarSource[],
+	options: { mode?: number } = {},
+): Promise<void> {
+	async function* blocks(): AsyncGenerator<Buffer> {
+		for (const file of files) {
+			const info = await stat(file.source);
+			const name = file.name.replaceAll("\\", "/");
+			if (Buffer.byteLength(name) > 100) yield* longName(name);
+			yield fileHeader(
+				Buffer.byteLength(name) > 100 ? name.slice(-100) : name,
+				info.size,
+				info.mode & 0o755,
+			);
+			let read = 0;
+			if (info.size > 0) {
+				for await (const chunk of createReadStream(file.source, {
+					start: 0,
+					end: info.size - 1,
+				})) {
+					read += (chunk as Buffer).length;
+					yield chunk as Buffer;
+				}
+			}
+			if (read !== info.size) {
+				throw new Error(`${file.source} changed while it was being saved`);
+			}
+			yield padding(info.size);
+		}
+		yield Buffer.alloc(BLOCK * 2);
+	}
+	const tmp = `${archive}.${crypto.randomUUID()}.tmp`;
+	try {
+		await pipeline(
+			Readable.from(blocks()),
+			createGzip(),
+			createWriteStream(tmp, { mode: options.mode ?? 0o644 }),
+		);
+		await rename(tmp, archive);
+	} catch (error) {
+		await rm(tmp, { force: true });
+		throw error;
 	}
 }
