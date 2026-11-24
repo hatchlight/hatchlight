@@ -6,6 +6,9 @@
 @import "@fontsource/inter-tight/400.css";
 @import "@fontsource/inter-tight/500.css";
 @import "@fontsource/inter-tight/600.css";
+/* Toasts' styles, served with the app: a server's policy blocks the
+   styles sonner would otherwise insert itself. */
+@import "sonner/dist/styles.css";
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";

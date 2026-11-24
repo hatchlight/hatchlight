@@ -105,7 +105,11 @@ export function App() {
 			: route.view;
 
 	return (
-		<SidebarProvider defaultOpen={sidebarStartsOpen()} className="h-full">
+		// Fits the space it is given: a server's notices may sit above it.
+		<SidebarProvider
+			defaultOpen={sidebarStartsOpen()}
+			className="h-full min-h-0"
+		>
 			<UpdateToast />
 			<KeysLostToast />
 			<AppSidebar route={route} />
