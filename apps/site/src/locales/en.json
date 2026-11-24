@@ -56,7 +56,7 @@
 	"server.access.title": "Reach it from anywhere",
 	"server.accounts.body": "Each person signs in and sees only their own pictures. You decide who may train LoRAs and who may spend on paid models, up to a monthly limit.",
 	"server.accounts.title": "Accounts, kept apart",
-	"server.agents": "Coming next: connecting AI agents to a shared server.",
+	"server.agents.html": "AI agents such as Claude Code connect over MCP, with an API token you make in Settings and limit to what they may do. <a href=\"https://github.com/hatchlight/hatchlight/blob/main/docs/self-hosting.md#agents\" target=\"_blank\" rel=\"noopener\">The guide</a> has the details.",
 	"server.guide": "Read the self-hosting guide",
 	"server.kicker": "For your household or team",
 	"server.needs.body": "Linux or Windows with Docker, an NVIDIA card with driver 570 or newer, and the NVIDIA Container Toolkit. Without a card, models run on the processor, more slowly.",

@@ -741,6 +741,11 @@ h2 {
 	line-height: 1.55;
 }
 
+.needs a {
+	color: var(--fg);
+	text-underline-offset: 3px;
+}
+
 .needs b {
 	color: var(--fg);
 	font-weight: 600;
