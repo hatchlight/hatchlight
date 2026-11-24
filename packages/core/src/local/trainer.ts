@@ -206,11 +206,31 @@ function seconds(text: string): number | null {
 	return parts.reduce((total, n) => total * 60 + n, 0);
 }
 
+/**
+ * Finds the counts after the first "steps:" by trying each "|" in turn, so a
+ * long line costs one pass instead of one pass per "steps:" it holds.
+ */
+function stepsBar(line: string): RegExpExecArray | null {
+	const start = line.indexOf("steps:");
+	if (start < 0) return null;
+	const counts = /\s*(\d+)\/(\d+)\s*\[[\d:]+<([\d:?]+)/y;
+	for (
+		let bar = line.indexOf("|", start);
+		bar >= 0;
+		bar = line.indexOf("|", bar + 1)
+	) {
+		counts.lastIndex = bar + 1;
+		const match = counts.exec(line);
+		if (match) return match;
+	}
+	return null;
+}
+
 /** Reads "steps:  10%|█  | 80/800 [01:00<09:00, 1.33it/s, …]". */
 export function trainingProgress(
 	line: string,
 ): { step: number; steps: number; secondsLeft: number | null } | null {
-	const match = line.match(/steps:.*?\|\s*(\d+)\/(\d+)\s*\[[\d:]+<([\d:?]+)/);
+	const match = stepsBar(line);
 	if (!match) return null;
 	const steps = Number(match[2]);
 	if (!(steps > 0)) return null;

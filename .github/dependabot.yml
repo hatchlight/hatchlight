@@ -25,6 +25,11 @@ updates:
     groups:
       bun:
         update-types: [minor, patch]
+    ignore:
+      # Version 6 needs a newer Vite than the 6.x line the apps use;
+      # move both together.
+      - dependency-name: "@vitejs/plugin-react"
+        update-types: [version-update:semver-major]
     labels: [dependencies]
 
   - package-ecosystem: cargo
