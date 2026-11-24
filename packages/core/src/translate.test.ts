@@ -1,5 +1,28 @@
 import { describe, expect, test } from "bun:test";
-import { cleanTranslation, sameWords } from "./translate";
+import { cleanTranslation, plainlyEnglish, sameWords } from "./translate";
+
+describe("a prompt plainly in English", () => {
+	test("is told apart from one the translator must read", () => {
+		for (const english of [
+			"A cozy ramen shop on a rainy night, neon reflections on the street",
+			"a red fox curled up in the snow",
+			"portrait of an old fisherman, 85mm",
+		]) {
+			expect(plainlyEnglish(english)).toBe(true);
+		}
+		for (const other of [
+			"uma raposa vermelha na neve",
+			"um gato preto com chapeu",
+			"café à noite",
+			"un zorro rojo en la nieve con luz de la manana",
+			"ein roter Fuchs im Schnee",
+			"cyberpunk city, neon, rain",
+			"",
+		]) {
+			expect(plainlyEnglish(other)).toBe(false);
+		}
+	});
+});
 
 describe("a translation that says the same as its prompt", () => {
 	test("differs only in case, spaces or punctuation", () => {

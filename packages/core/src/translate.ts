@@ -36,6 +36,95 @@ export function sameWords(a: string, b: string): boolean {
 	return words(a) === words(b);
 }
 
+/** Small words that only English uses among the languages people write prompts in. */
+const ENGLISH_WORDS = new Set([
+	"the",
+	"of",
+	"with",
+	"and",
+	"an",
+	"from",
+	"is",
+	"are",
+	"by",
+	"at",
+	"to",
+	"for",
+	"under",
+	"over",
+	"into",
+	"through",
+	"its",
+	"their",
+	"wearing",
+	"holding",
+]);
+
+/**
+ * Small words of other languages that a prompt written without accents
+ * still has: Portuguese, Spanish, French, German and Italian.
+ */
+const OTHER_WORDS = new Set([
+	"um",
+	"uma",
+	"com",
+	"em",
+	"na",
+	"nas",
+	"nos",
+	"da",
+	"das",
+	"dos",
+	"de",
+	"para",
+	"por",
+	"pela",
+	"pelo",
+	"e",
+	"el",
+	"los",
+	"las",
+	"del",
+	"con",
+	"una",
+	"y",
+	"le",
+	"les",
+	"des",
+	"du",
+	"une",
+	"et",
+	"avec",
+	"sur",
+	"dans",
+	"der",
+	"und",
+	"mit",
+	"ein",
+	"eine",
+	"im",
+	"auf",
+	"il",
+	"della",
+	"uno",
+	"nel",
+]);
+
+/**
+ * Whether a prompt is plainly in English already, so it needs no translator:
+ * no letters outside English, and English's small words but no other
+ * language's. When unsure it says no, and the translator decides.
+ */
+export function plainlyEnglish(prompt: string): boolean {
+	// Printable ASCII and spaces only: an accent says another language.
+	if (/[^ -~\s]/.test(prompt)) return false;
+	const words = prompt.toLowerCase().match(/[a-z]+/g) ?? [];
+	return (
+		words.some((word) => ENGLISH_WORDS.has(word)) &&
+		!words.some((word) => OTHER_WORDS.has(word))
+	);
+}
+
 /**
  * The reply without its <think>…</think> blocks. Scanned by hand, where a
  * regular expression would take quadratic time on many unclosed <think>.
