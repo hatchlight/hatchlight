@@ -45,7 +45,9 @@ async function dataDir() {
 	const repo = new SqliteRepository(join(dir, "hatchlight.sqlite"));
 	await writeFile(join(dir, "settings.json"), '{"theme":"dark"}');
 	await writeFile(join(dir, "auth.json"), '{"fal":"secret"}');
-	await writeFile(join(dir, "secret.key"), "a secret");
+	await writeFile(join(dir, "secret.key"), "a secret of 16 bytes or more", {
+		mode: 0o600,
+	});
 	await writeFile(join(dir, "assets", "user-1", "picture.png"), "png bytes");
 	await writeFile(join(dir, "hatchlight.lock"), "{}");
 	return { dir, repo };
@@ -103,6 +105,8 @@ test("a backup taken while the database is open restores into an empty folder", 
 	expect(await Bun.file(join(target, "auth.json")).text()).toBe(
 		'{"fal":"secret"}',
 	);
+	// The server refuses a secret others can read: it stays private.
+	expect((await stat(join(target, "secret.key"))).mode & 0o777).toBe(0o600);
 });
 
 test("restoring moves what was there aside, the old database name included", async () => {

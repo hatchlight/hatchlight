@@ -232,13 +232,23 @@ cosign verify ghcr.io/hatchlight/hatchlight:latest \
 
 ## The secret for API keys
 
-Saved API keys are encrypted with a 32-byte secret. The first start makes one
-in `/data/secret.key`, readable by the server only. Without that secret, the
-saved keys cannot be read: the server says so at start and leaves them as
-they are, and they have to be entered again.
+Saved API keys are encrypted (AES-256-GCM) with a key derived from a secret.
+The first start makes a random one in `/data/secret.key`, readable by the
+server's user only. Without that secret the saved keys cannot be read: the
+server says so at start, sets `auth.json` aside untouched as
+`auth.unreadable-<time>.json`, and starts without them. To recover them, stop
+the server, put the right secret back, and rename that file to `auth.json`;
+otherwise enter the keys again.
 
 To keep the secret apart from the data, as a Docker secret, point
-`HATCHLIGHT_SECRET_FILE` at a file:
+`HATCHLIGHT_SECRET_FILE` at a file of at least 16 bytes, better 32 random
+ones:
+
+```sh
+openssl rand -base64 48 > hatchlight-secret.txt
+chmod 600 hatchlight-secret.txt
+sudo chown 1000:1000 hatchlight-secret.txt # PUID:PGID
+```
 
 ```yaml
 services:
@@ -249,11 +259,13 @@ services:
       - hatchlight_secret
 secrets:
   hatchlight_secret:
-    file: ./hatchlight-secret.txt # e.g. made with: openssl rand -base64 48
+    file: ./hatchlight-secret.txt
 ```
 
-Back that file up too: `hatchlight backup` saves `secret.key` from the data
-directory, not a file kept elsewhere.
+The server refuses a secret file that other users can read, so it must be
+`chmod 600` and owned by `PUID:PGID`. Back that file up too: `hatchlight
+backup` saves `secret.key` from the data directory, not a file kept
+elsewhere, and says so when `HATCHLIGHT_SECRET_FILE` is set.
 
 <a id="nas-platforms"></a>
 
@@ -304,6 +316,11 @@ then. The log says which engine it skipped and why.
 **Permission denied on `/data` or `/models`.** Set `PUID` and `PGID` to the
 owner of those folders on the host (`id <user>`). On a network share that
 does not allow changing owners, make them writable by that user.
+
+**"secret.key can be read by other users".** The server refuses a secret
+others can read. Run `chmod 600` on it; on a network share that forces open
+permissions, keep `/data` on a local disk or use `HATCHLIGHT_SECRET_FILE` on
+one that does not.
 
 **"Hatchlight is already running on this data directory".** Another container
 uses the same `/data`. Stop it; if it crashed, the folder is free again after
