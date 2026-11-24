@@ -99,8 +99,9 @@ reader. More languages are welcome: see [Translate](CONTRIBUTING.md#translate).
 | Linux                | Yes     | Not yet: cloud models only for now                   |
 | macOS, Intel         | Yes     | Not yet: cloud models only for now                   |
 
-Linux builds of the engines are in progress. Under WSL on Windows, the Windows
-engines run, so models on your computer work there.
+Linux builds of the engines are in progress
+([#36](https://github.com/hatchlight/hatchlight/issues/36)). Under WSL on
+Windows, the Windows engines run, so models on your computer work there.
 
 Some parts need more:
 
@@ -251,4 +252,4 @@ security problem, see [SECURITY.md](SECURITY.md).
 ## License
 
 [MIT](LICENSE). The models and engines the app downloads keep their own
-licenses.
+licenses: see [THIRD_PARTY.md](THIRD_PARTY.md).
