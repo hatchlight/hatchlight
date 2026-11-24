@@ -262,6 +262,8 @@ export const api = {
 			headers: { "content-type": file.type },
 			body: file,
 		}),
+	deleteAsset: (id: string) =>
+		request<void>(`/api/assets/${id}`, { method: "DELETE" }),
 	localModels: () => request<LocalModelsView>("/api/local-models"),
 	installModel: (id: string, variant?: string) =>
 		request<void>(

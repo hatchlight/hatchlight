@@ -614,6 +614,10 @@ export function createApp(options: AppOptions): Hono {
 			return c.json(await service.uploadAsset(user(c), data), 201);
 		},
 	);
+	app.delete("/api/assets/:id", async (c) => {
+		await service.deleteAsset(user(c), c.req.param("id"));
+		return c.body(null, 204);
+	});
 	app.get("/api/assets/:id", async (c) => {
 		const { asset, blob } = await service.getAssetFile(
 			user(c),

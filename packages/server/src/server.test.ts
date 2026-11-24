@@ -1725,3 +1725,79 @@ test("uploads take turns, and one that would not fit is refused before it is rea
 	expect((await first).status).toBe(201);
 	expect((await upload(PNG)).status).toBe(201);
 });
+
+test("deleting pictures frees room once no picture of theirs shares the file", async () => {
+	const { call, setupOwner, invite, runtime, root, userId } = await serverApp({
+		env: { HATCHLIGHT_ASSET_GB_PER_PERSON: String(100 / 1024 ** 3) },
+	});
+	const owner = await setupOwner();
+	const member = await invite(owner);
+	const other = await invite(owner);
+	const used = () =>
+		runtime.accounts.view(
+			runtime.accounts.getUser(userId(member.username)) as never,
+		).storage.usedBytes;
+	const upload = async () =>
+		(await (
+			await call("/api/assets", {
+				method: "POST",
+				who: member,
+				body: PNG,
+				headers: { "content-type": "image/png" },
+			})
+		).json()) as { id: string; hash: string };
+	// The same picture twice: two in the gallery, one file on disk.
+	const first = await upload();
+	const second = await upload();
+	expect(used()).toBe(PNG.byteLength);
+	const file = join(
+		root,
+		"assets",
+		userId(member.username),
+		first.hash.slice(0, 2),
+		first.hash,
+	);
+	const remove = (id: string, who: Who) =>
+		call(`/api/assets/${id}`, { method: "DELETE", who });
+	// Nobody else's to delete.
+	expect((await remove(first.id, other)).status).toBe(404);
+	expect((await remove(first.id, member)).status).toBe(204);
+	expect((await call(`/api/assets/${first.id}`, { who: member })).status).toBe(
+		404,
+	);
+	// The other one still shows, so the file stays and still counts.
+	expect((await call(`/api/assets/${second.id}`, { who: member })).status).toBe(
+		200,
+	);
+	expect(await Bun.file(file).exists()).toBe(true);
+	expect(used()).toBe(PNG.byteLength);
+	expect((await remove(second.id, member)).status).toBe(204);
+	expect(await Bun.file(file).exists()).toBe(false);
+	expect(used()).toBe(0);
+
+	// A picture a turn made: the turn keeps its place without it.
+	const turn = await call("/api/turns", {
+		method: "POST",
+		who: member,
+		body: { prompt: "x", modelIds: ["fake/alpha"] },
+	});
+	const { session } = (await turn.json()) as { session: { id: string } };
+	await runtime.engine.idle();
+	type Detail = {
+		turns: { jobs: { status: string; assets: { id: string }[] }[] }[];
+	};
+	const detail = async () =>
+		(await (
+			await call(`/api/sessions/${session.id}`, { who: member })
+		).json()) as Detail;
+	const made = (await detail()).turns[0]?.jobs[0]?.assets[0]?.id as string;
+	expect((await remove(made, member)).status).toBe(204);
+	const after = await detail();
+	expect(after.turns[0]?.jobs[0]).toMatchObject({
+		status: "succeeded",
+		assets: [],
+	});
+	expect(await (await call("/api/gallery", { who: member })).json()).toEqual(
+		[],
+	);
+});

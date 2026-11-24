@@ -334,6 +334,18 @@ export class ReelService {
 		return preview;
 	}
 
+	/**
+	 * Deletes a picture or video of the person's. Its file goes only when no
+	 * other of theirs shares it, and only then does it free room. Turns and
+	 * jobs that showed it keep their place, without it.
+	 */
+	async deleteAsset(ctx: UserContext, id: string): Promise<void> {
+		const [asset] = await this.deps.repo.getAssets(ctx, [id]);
+		if (!asset) throw new NotFoundError("Asset not found", "assetNotFound");
+		const { sharing } = await this.deps.repo.deleteAsset(ctx, id);
+		if (sharing === 0) await this.deps.assets.remove(ctx, asset.hash);
+	}
+
 	async uploadAsset(ctx: UserContext, data: Uint8Array): Promise<Asset> {
 		this.assertRoom(ctx);
 		// The claimed type is ignored; the bytes decide.

@@ -363,13 +363,13 @@ export class SqliteAccounts {
 			.run();
 	}
 
-	/** Counts a new file of a person's in their usage. */
+	/** Counts a file added to a person's usage, or removed with negative bytes. */
 	addAssetBytes(userId: string, bytes: number): void {
 		this.sqlite
 			.prepare(
-				"insert into asset_usage (user_id, bytes) values (?, ?) on conflict(user_id) do update set bytes = bytes + excluded.bytes",
+				"insert into asset_usage (user_id, bytes) values (?, max(?, 0)) on conflict(user_id) do update set bytes = max(bytes + ?, 0)",
 			)
-			.run(userId, bytes);
+			.run(userId, bytes, bytes);
 	}
 
 	/** What a person's pictures and videos take on disk. */

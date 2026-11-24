@@ -1,5 +1,17 @@
 import type { GenerationParams } from "@hatchlight/core/types";
-import { DownloadIcon, XIcon } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { DownloadIcon, Trash2Icon, XIcon } from "lucide-react";
+import { useState } from "react";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
 	Dialog,
@@ -7,7 +19,8 @@ import {
 	DialogContent,
 	DialogTitle,
 } from "@/components/ui/dialog";
-import { assetUrl } from "./api";
+import { cn } from "@/lib/utils";
+import { api, assetUrl } from "./api";
 import { usd } from "./format";
 import { type I18n, useI18n } from "./i18n";
 
@@ -49,6 +62,71 @@ interface Props {
 	item: LightboxItem;
 	onClose(): void;
 	onUseAsReference(assetId: string): void;
+}
+
+/**
+ * Deletes a picture or video, after asking: it leaves the gallery, and the
+ * turn that made it keeps its place without it.
+ */
+export function DeleteAsset({
+	assetId,
+	onDeleted,
+	className,
+}: {
+	assetId: string;
+	onDeleted(): void;
+	className?: string;
+}) {
+	const { t, explain } = useI18n();
+	const client = useQueryClient();
+	const [asking, setAsking] = useState(false);
+	const remove = useMutation({
+		mutationFn: () => api.deleteAsset(assetId),
+		onSuccess: () => {
+			void client.invalidateQueries({ queryKey: ["gallery"] });
+			void client.invalidateQueries({ queryKey: ["session"] });
+			void client.invalidateQueries({ queryKey: ["account"] });
+			onDeleted();
+		},
+	});
+	return (
+		<>
+			<Button
+				variant="outline"
+				disabled={remove.isPending}
+				onClick={() => setAsking(true)}
+				className={cn("text-dim hover:text-danger", className)}
+			>
+				<Trash2Icon aria-hidden="true" />
+				{t("asset.delete")}
+			</Button>
+			{remove.error && (
+				<p className="text-sm text-danger">{explain(remove.error)}</p>
+			)}
+			<AlertDialog open={asking} onOpenChange={setAsking}>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>{t("asset.deleteTitle")}</AlertDialogTitle>
+						<AlertDialogDescription>
+							{t("asset.deleteBody")}
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel>{t("nav.cancel")}</AlertDialogCancel>
+						<AlertDialogAction
+							variant="destructive"
+							onClick={() => {
+								setAsking(false);
+								remove.mutate();
+							}}
+						>
+							{t("asset.delete")}
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
+		</>
+	);
 }
 
 export function Lightbox({ item, onClose, onUseAsReference }: Props) {
@@ -130,6 +208,7 @@ export function Lightbox({ item, onClose, onUseAsReference }: Props) {
 							<DownloadIcon aria-hidden="true" />
 							{t("lightbox.download")}
 						</a>
+						<DeleteAsset assetId={item.assetId} onDeleted={onClose} />
 					</div>
 				</div>
 			</DialogContent>

@@ -59,6 +59,7 @@ export const ROUTE_ACCESS: Readonly<Record<string, Access>> = {
 	"POST /api/jobs/:id/retry": "member",
 	"POST /api/assets": "member",
 	"GET /api/assets/:id": "member",
+	"DELETE /api/assets/:id": "member",
 	"GET /api/gallery": "member",
 	"POST /api/prompts/improve": "member",
 	"GET /api/assistant": "member",

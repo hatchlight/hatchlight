@@ -7,7 +7,7 @@ import {
 } from "@/components/ui/collapsible";
 import { assetUrl } from "./api";
 import { useI18n } from "./i18n";
-import { itemFacts, type LightboxItem } from "./Lightbox";
+import { DeleteAsset, itemFacts, type LightboxItem } from "./Lightbox";
 
 interface Props {
 	item: LightboxItem | null;
@@ -17,6 +17,8 @@ interface Props {
 	upscale?: { factor: number; busy: boolean; run(assetId: string): void };
 	/** Goes to the conversation about this session, when there is one. */
 	talkHref?: string;
+	/** After the picture was deleted. */
+	onDeleted(): void;
 }
 
 /** The picture chosen in the advanced view: what it is, and what to do next. */
@@ -26,6 +28,7 @@ export function Inspector({
 	onUseAsReference,
 	upscale,
 	talkHref,
+	onDeleted,
 }: Props) {
 	const i18n = useI18n();
 	const { t } = i18n;
@@ -106,6 +109,11 @@ export function Inspector({
 						{t("inspector.talk")}
 					</Button>
 				)}
+				<DeleteAsset
+					assetId={item.assetId}
+					onDeleted={onDeleted}
+					className="h-[42px]"
+				/>
 			</div>
 			{item.prompt && (
 				<Collapsible className="text-xs leading-relaxed text-dim">

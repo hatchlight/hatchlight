@@ -12,13 +12,18 @@ export interface StoredBlob {
 export interface AssetStore {
 	put(ctx: UserContext, data: Uint8Array): Promise<StoredBlob>;
 	get(ctx: UserContext, hash: string): Promise<Blob | null>;
+	/** Deletes a person's file; nothing when it is not there. */
+	remove(ctx: UserContext, hash: string): Promise<void>;
 }
 
 /** Content-addressed files on disk: `<root>/<userId>/<hash[0..2]>/<hash>`. */
 export class FsAssetStore implements AssetStore {
 	constructor(
 		private root: string,
-		/** Told of each new file, to keep each person's usage counted. */
+		/**
+		 * Told of each file added (positive bytes) or removed (negative), to
+		 * keep each person's usage counted.
+		 */
 		private onAdded?: (userId: string, bytes: number) => void,
 	) {}
 
@@ -40,6 +45,14 @@ export class FsAssetStore implements AssetStore {
 		await rename(tmp, path);
 		this.onAdded?.(ctx.userId, data.byteLength);
 		return { hash, size: data.byteLength, added: true };
+	}
+
+	async remove(ctx: UserContext, hash: string): Promise<void> {
+		const file = Bun.file(this.path(ctx, hash));
+		if (!(await file.exists())) return;
+		const bytes = file.size;
+		await rm(this.path(ctx, hash), { force: true });
+		this.onAdded?.(ctx.userId, -bytes);
 	}
 
 	async get(ctx: UserContext, hash: string): Promise<Blob | null> {
