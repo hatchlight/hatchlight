@@ -4,7 +4,22 @@ import type {
 	TurnView,
 } from "@hatchlight/core/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { ArrowUp, Square } from "lucide-react";
+import { type ReactNode, useId, useState } from "react";
+import {
+	ChatContainerContent,
+	ChatContainerRoot,
+} from "@/components/chat/chat-container";
+import { Message, MessageContent } from "@/components/chat/message";
+import {
+	PromptInput,
+	PromptInputActions,
+	PromptInputTextarea,
+} from "@/components/chat/prompt-input";
+import { ScrollButton } from "@/components/chat/scroll-button";
+import { Mark } from "@/components/Logo";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { type AssistantBrain, api, type SessionDetail } from "./api";
 import { JobCard } from "./Chat";
 import { usd } from "./format";
@@ -28,6 +43,29 @@ function brainName(i18n: I18n, brain: AssistantBrain): string {
 	return brain ? i18n.t("assistant.brainCloud", { service: names[brain] }) : "";
 }
 
+/**
+ * A line from the assistant's side of the conversation. Replies carry the
+ * mark beside them; what follows a reply lines up with its text.
+ */
+function AssistantRow(props: { mark?: boolean; children: ReactNode }) {
+	return (
+		<Message className="rise-in gap-3.5">
+			<div
+				aria-hidden="true"
+				className={cn(
+					"grid size-8 shrink-0 place-items-center rounded-[10px] max-md:hidden",
+					props.mark && "border border-line bg-panel",
+				)}
+			>
+				{props.mark && <Mark crack="var(--panel)" className="h-[18px]" />}
+			</div>
+			<div className="flex min-w-0 flex-1 flex-col gap-3.5">
+				{props.children}
+			</div>
+		</Message>
+	);
+}
+
 /** The pictures a tool call made, as the session has them. */
 function TurnResults(props: {
 	turn: TurnView;
@@ -38,7 +76,10 @@ function TurnResults(props: {
 	const { turn } = props;
 	return (
 		<div
-			className={`grid gap-3 ${turn.jobs.length > 1 ? "sm:grid-cols-2" : "max-w-md"}`}
+			className={cn(
+				"grid gap-3.5",
+				turn.jobs.length > 1 ? "grid-cols-2" : "max-w-xl",
+			)}
 		>
 			{turn.jobs.map((job, index) => (
 				<JobCard
@@ -80,27 +121,27 @@ function Confirm(props: {
 		);
 	}
 	return (
-		<div className="rise-in max-w-xl rounded-lg border border-accent/50 bg-panel p-4">
-			<p className="text-sm leading-relaxed">
+		<div className="flex max-w-xl flex-col gap-3 rounded-[18px] border border-line-strong bg-panel p-4">
+			<p className="leading-relaxed">
 				{t("assistant.confirm", { models, cost })}
 			</p>
-			<div className="mt-3 flex flex-wrap gap-2">
-				<button
-					type="button"
+			<div className="grid grid-cols-2 gap-2">
+				<Button
+					variant="aurora"
 					disabled={props.busy}
 					onClick={() => props.onAnswer(true)}
-					className="aurora rounded-full px-4 py-1.5 text-sm font-semibold text-black disabled:opacity-50"
+					className="h-11"
 				>
 					{t("assistant.pay", { cost })}
-				</button>
-				<button
-					type="button"
+				</Button>
+				<Button
+					variant="outline"
 					disabled={props.busy}
 					onClick={() => props.onAnswer(false)}
-					className="rounded-full border border-line-strong px-4 py-1.5 text-sm text-dim hover:text-ink disabled:opacity-50"
+					className="h-11"
 				>
 					{t("assistant.freeOnly")}
-				</button>
+				</Button>
 			</div>
 		</div>
 	);
@@ -122,18 +163,22 @@ function Entry(props: {
 	const { message } = entry;
 	if (entry.error) {
 		return (
-			<p className="rise-in text-sm leading-relaxed text-danger">
-				{i18n.explain(entry.error)}
-			</p>
+			<AssistantRow>
+				<p className="text-sm leading-relaxed text-danger">
+					{i18n.explain(entry.error)}
+				</p>
+			</AssistantRow>
 		);
 	}
 	if (entry.note) {
 		return (
-			<p className="rise-in font-mono text-xs text-dim">
-				{entry.note === "stopped"
-					? t("assistant.stopped")
-					: t("assistant.tooManySteps")}
-			</p>
+			<AssistantRow>
+				<p className="font-mono text-xs text-dim">
+					{entry.note === "stopped"
+						? t("assistant.stopped")
+						: t("assistant.tooManySteps")}
+				</p>
+			</AssistantRow>
 		);
 	}
 	if (message.role === "user") {
@@ -141,47 +186,53 @@ function Entry(props: {
 			.map((part) => (part.type === "text" ? part.text : ""))
 			.join("\n");
 		return (
-			<p className="rise-in ml-auto max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-line px-4 py-2.5 leading-relaxed">
-				{text}
-			</p>
+			<Message className="rise-in justify-end">
+				<p className="max-w-[82%] whitespace-pre-wrap break-words rounded-[18px] rounded-br-md border border-line bg-panel-2 px-4 py-2.5 leading-relaxed md:max-w-[70%] md:rounded-[20px] md:rounded-br-md md:px-[18px] md:py-3">
+					{text}
+				</p>
+			</Message>
 		);
 	}
 	if (message.role === "assistant") {
 		if (!message.text) return null;
 		return (
-			<p className="rise-in max-w-2xl whitespace-pre-wrap leading-relaxed">
-				{message.text}
-			</p>
+			<AssistantRow mark>
+				<MessageContent className="pt-1 text-[#e4e4e7]">
+					{message.text}
+				</MessageContent>
+			</AssistantRow>
 		);
 	}
+	const turn = entry.turnId ? props.turns.get(entry.turnId) : undefined;
 	if (entry.confirm) {
 		return (
-			<div className="flex flex-col gap-3">
+			<AssistantRow>
 				<Confirm
 					entry={entry}
 					busy={props.answering}
 					onAnswer={(approve) => props.onAnswer(entry, approve)}
 				/>
-				{entry.turnId && props.turns.get(entry.turnId) && (
+				{turn && (
 					<TurnResults
-						turn={props.turns.get(entry.turnId) as TurnView}
+						turn={turn}
 						models={props.models}
 						onOpen={props.onOpen}
 						onUseAsReference={props.onUseAsReference}
 					/>
 				)}
-			</div>
+			</AssistantRow>
 		);
 	}
-	const turn = entry.turnId ? props.turns.get(entry.turnId) : undefined;
 	if (!turn) return null;
 	return (
-		<TurnResults
-			turn={turn}
-			models={props.models}
-			onOpen={props.onOpen}
-			onUseAsReference={props.onUseAsReference}
-		/>
+		<AssistantRow>
+			<TurnResults
+				turn={turn}
+				models={props.models}
+				onOpen={props.onOpen}
+				onUseAsReference={props.onUseAsReference}
+			/>
+		</AssistantRow>
 	);
 }
 
@@ -190,9 +241,9 @@ export function Assistant({ sessionId, addReference }: Props) {
 	const i18n = useI18n();
 	const { t } = i18n;
 	const client = useQueryClient();
+	const inputId = useId();
 	const [text, setText] = useState("");
 	const [open, setOpen] = useState<LightboxItem | null>(null);
-	const end = useRef<HTMLDivElement>(null);
 	const brain = useQuery({
 		queryKey: ["assistant-brain"],
 		queryFn: api.assistant,
@@ -234,11 +285,6 @@ export function Assistant({ sessionId, addReference }: Props) {
 
 	const entries = view.data?.entries ?? [];
 	const busy = view.data?.busy ?? false;
-	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll as the conversation grows
-	useEffect(() => {
-		end.current?.scrollIntoView({ block: "end" });
-	}, [entries.length, busy]);
-
 	const byModel = new Map(models.data?.map((m) => [m.id, m]));
 	const turns = new Map(
 		(session.data as SessionDetail | undefined)?.turns.map((turn) => [
@@ -254,36 +300,28 @@ export function Assistant({ sessionId, addReference }: Props) {
 			: undefined;
 	const thinking = busy && !working;
 	const nothing = brain.data && brain.data.brain == null;
+	const brainLabel = brainName(i18n, brain.data?.brain ?? null);
 	const submit = () => {
 		const words = text.trim();
 		if (!words || busy || sendMessage.isPending) return;
 		sendMessage.mutate(words);
 	};
-	const onKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-		if (
-			event.key === "Enter" &&
-			!event.shiftKey &&
-			!event.nativeEvent.isComposing
-		) {
-			event.preventDefault();
-			submit();
-		}
-	};
 	const loadError = view.error ?? session.error;
 
 	return (
-		<>
-			<div className="min-h-0 flex-1 overflow-y-auto">
-				<div className="mx-auto flex max-w-3xl flex-col gap-5 p-6">
+		<div className="flex min-h-0 flex-1 flex-col bg-[radial-gradient(60%_40%_at_70%_-10%,rgb(255_61_139/0.10),transparent_70%)]">
+			<ChatContainerRoot className="relative min-h-0 flex-1 overflow-hidden">
+				<ChatContainerContent className="mx-auto max-w-[780px] gap-[18px] px-4 py-5 md:gap-7 md:px-10 md:py-9">
 					{!sessionId && (
-						<div className="rise-in py-12">
-							<p className="font-mono text-[11px] uppercase tracking-[0.18em] text-accent">
+						<div className="rise-in flex flex-col items-start gap-4 py-10 md:py-16">
+							<Mark className="h-12" />
+							<p className="font-mono text-[11px] tracking-[0.18em] text-dim uppercase">
 								{t("assistant.eyebrow")}
 							</p>
-							<h1 className="mt-3 font-display text-5xl leading-[0.95] font-extrabold tracking-tight">
+							<h1 className="font-display text-[44px] leading-[0.95] font-extrabold tracking-[-0.03em] text-balance md:text-6xl">
 								{t("assistant.heading")}
 							</h1>
-							<p className="mt-4 max-w-xl leading-relaxed text-dim">
+							<p className="max-w-xl text-[17px] leading-relaxed text-soft">
 								{t("assistant.intro")}
 							</p>
 						</div>
@@ -307,37 +345,49 @@ export function Assistant({ sessionId, addReference }: Props) {
 						/>
 					))}
 					{working && (
-						<TurnResults
-							turn={working}
-							models={byModel}
-							onOpen={setOpen}
-							onUseAsReference={addReference}
-						/>
+						<AssistantRow>
+							<TurnResults
+								turn={working}
+								models={byModel}
+								onOpen={setOpen}
+								onUseAsReference={addReference}
+							/>
+						</AssistantRow>
 					)}
 					{thinking && (
-						<p
-							className="flex items-center gap-2 text-sm text-dim"
-							aria-live="polite"
-						>
-							<i
-								aria-hidden="true"
-								className="breathe size-2 rounded-full bg-accent shadow-[0_0_10px_var(--accent)]"
-							/>
-							{t("assistant.thinking")}
-						</p>
+						<AssistantRow>
+							<p
+								className="flex items-center gap-2.5 pt-1.5 text-sm text-dim"
+								aria-live="polite"
+							>
+								<i
+									aria-hidden="true"
+									className="breathe size-2 rounded-full bg-orange shadow-[0_0_12px_var(--orange)]"
+								/>
+								{t("assistant.thinking")}
+							</p>
+						</AssistantRow>
 					)}
 					{answer.error && (
 						<p className="text-sm text-danger">{i18n.explain(answer.error)}</p>
 					)}
-					<div ref={end} />
+				</ChatContainerContent>
+				<div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
+					<ScrollButton
+						aria-label={t("assistant.latest")}
+						className="pointer-events-auto border-line-strong bg-panel-2 shadow-lg dark:bg-panel-2"
+					/>
 				</div>
-			</div>
-			<div className="border-t border-line bg-panel p-4">
-				<div className="mx-auto max-w-3xl">
+			</ChatContainerRoot>
+			<div className="shrink-0 px-3 pt-2 pb-2.5 md:px-10 md:pt-4 md:pb-6">
+				<div className="mx-auto flex max-w-[780px] flex-col gap-2.5">
 					{nothing ? (
-						<p className="text-sm leading-relaxed text-dim">
+						<p className="rounded-[18px] border border-line bg-panel p-4 text-sm leading-relaxed text-soft">
 							{t("assistant.noBrain")}{" "}
-							<a href={href.settings} className="text-ink underline">
+							<a
+								href={href.settings}
+								className="rounded-sm text-gold underline decoration-gold/40 underline-offset-2 outline-none hover:decoration-gold focus-visible:ring-3 focus-visible:ring-ring/50"
+							>
 								{t("nav.settings")}
 							</a>
 						</p>
@@ -347,56 +397,77 @@ export function Assistant({ sessionId, addReference }: Props) {
 								event.preventDefault();
 								submit();
 							}}
-							className="flex items-end gap-2"
 						>
-							<label className="min-w-0 flex-1">
-								<span className="sr-only">{t("assistant.message")}</span>
-								<textarea
-									value={text}
-									onChange={(event) => setText(event.target.value)}
-									onKeyDown={onKey}
-									rows={2}
+							<PromptInput
+								value={text}
+								onValueChange={setText}
+								onSubmit={submit}
+								isLoading={busy}
+								className="flex flex-col gap-2.5 pl-4 shadow-[0_20px_60px_rgb(0_0_0/0.5)] md:pl-[18px]"
+							>
+								<label htmlFor={inputId} className="sr-only">
+									{t("assistant.message")}
+								</label>
+								<PromptInputTextarea
+									id={inputId}
 									maxLength={4000}
 									placeholder={t("assistant.placeholder")}
-									className="w-full resize-none rounded-lg border border-line-strong bg-bg px-3 py-2 leading-relaxed outline-none focus:border-accent"
 								/>
-							</label>
-							{busy ? (
-								<button
-									type="button"
-									onClick={() => stop.mutate()}
-									disabled={stop.isPending}
-									className="rounded-full border border-line-strong px-4 py-2 text-sm text-ink hover:border-ink"
-								>
-									{t("assistant.stop")}
-								</button>
-							) : (
-								<button
-									type="submit"
-									disabled={!text.trim() || sendMessage.isPending}
-									className="aurora rounded-full px-5 py-2 text-sm font-semibold text-black disabled:opacity-40"
-								>
-									{t("assistant.send")}
-								</button>
-							)}
+								<PromptInputActions className="justify-between gap-3">
+									{brainLabel ? (
+										<span className="inline-flex h-[30px] min-w-0 items-center gap-2 rounded-full bg-panel-2 px-3 font-mono text-xs text-[#a1a1aa]">
+											<i
+												aria-hidden="true"
+												className="size-1.5 shrink-0 rounded-full bg-good"
+											/>
+											<span className="truncate">{brainLabel}</span>
+										</span>
+									) : (
+										<span />
+									)}
+									{busy ? (
+										<Button
+											type="button"
+											variant="outline"
+											onClick={(event) => {
+												event.stopPropagation();
+												stop.mutate();
+											}}
+											disabled={stop.isPending}
+											className="h-10 gap-2"
+										>
+											<Square className="size-3.5 fill-current" />
+											{t("assistant.stop")}
+										</Button>
+									) : (
+										<Button
+											type="submit"
+											variant="aurora"
+											size="icon"
+											aria-label={t("assistant.send")}
+											disabled={!text.trim() || sendMessage.isPending}
+											onClick={(event) => event.stopPropagation()}
+										>
+											<ArrowUp className="size-[18px]" strokeWidth={2.4} />
+										</Button>
+									)}
+								</PromptInputActions>
+							</PromptInput>
 						</form>
 					)}
 					{sendMessage.error && (
-						<p className="mt-2 text-sm text-danger">
+						<p className="text-sm text-danger">
 							{i18n.explain(sendMessage.error)}
 						</p>
 					)}
-					<div className="mt-2 flex flex-wrap justify-between gap-2 font-mono text-[11px] text-dim">
-						<span>{brainName(i18n, brain.data?.brain ?? null)}</span>
-						{view.data && (
-							<span>
-								{t("assistant.spent", {
-									spent: usd(i18n, view.data.spentUsd),
-									limit: usd(i18n, view.data.limitUsd),
-								})}
-							</span>
-						)}
-					</div>
+					{view.data && (
+						<p className="text-center font-mono text-xs text-dim">
+							{t("assistant.spent", {
+								spent: usd(i18n, view.data.spentUsd),
+								limit: usd(i18n, view.data.limitUsd),
+							})}
+						</p>
+					)}
 				</div>
 			</div>
 			{open && (
@@ -409,6 +480,6 @@ export function Assistant({ sessionId, addReference }: Props) {
 					}}
 				/>
 			)}
-		</>
+		</div>
 	);
 }

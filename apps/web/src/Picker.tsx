@@ -9,13 +9,26 @@ import type {
 } from "@hatchlight/core/types";
 import { develop, latent, loadImage } from "@hatchlight/motion";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { XIcon } from "lucide-react";
 import {
 	type CSSProperties,
 	type ReactNode,
 	useEffect,
+	useId,
 	useRef,
 	useState,
 } from "react";
+import { Button } from "@/components/ui/button";
+import {
+	Dialog,
+	DialogClose,
+	DialogContent,
+	DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useCan } from "./Accounts";
 import { api, demoUrl } from "./api";
 import { FRAME_MS, reduceMotion } from "./Develop";
@@ -67,6 +80,13 @@ const FIT_STYLE: Record<FitLevel, { text: string; bg: string; bar: string }> = {
 	slow: { text: "text-warn", bg: "bg-warn/12", bar: "bg-warn" },
 	none: { text: "text-danger", bg: "bg-danger/12", bar: "bg-danger" },
 };
+
+/** One side of a segmented switch: the one chosen is lit. */
+const SEGMENT =
+	"h-10 rounded-[10px] px-4 text-dim hover:bg-transparent aria-pressed:bg-ink aria-pressed:font-semibold aria-pressed:text-bg";
+/** A small choice among a few, as a pill. */
+const PILL =
+	"h-10 rounded-full border border-line-strong px-3.5 text-[13px] text-dim aria-pressed:border-transparent aria-pressed:bg-ink aria-pressed:text-bg";
 
 const sampleUrl = (profile?: ModelProfile) =>
 	profile?.sample ? `/samples/${profile.sample}` : null;
@@ -374,25 +394,19 @@ function Hero(props: {
 						{local && !local.ready && !can.admin ? (
 							<p className="text-sm text-dim">{t("models.askAdmin")}</p>
 						) : (
-							<button
-								type="button"
+							<Button
+								variant="aurora"
+								size="lg"
 								onClick={() => props.pick && props.onChoose(props.pick)}
-								className="cta rounded-xl px-5 py-2.5 font-display font-bold"
 							>
 								{local && !local.ready
-									? t("picker.downloadUse", {
-											size: i18n.bytes(local.size),
-										})
+									? t("picker.downloadUse", { size: i18n.bytes(local.size) })
 									: t("picker.useThis")}
-							</button>
+							</Button>
 						)}
-						<button
-							type="button"
-							onClick={props.onSeeAll}
-							className="rounded-xl border border-line-strong px-4 py-2.5 text-sm font-medium hover:border-dim"
-						>
+						<Button variant="outline" size="lg" onClick={props.onSeeAll}>
 							{t("picker.seeAll")}
-						</button>
+						</Button>
 					</div>
 				</div>
 			)}
@@ -484,27 +498,29 @@ function CompareStrip({ entries }: { entries: Entry[] }) {
 					{t("picker.compareTitle")}
 				</h3>
 				<p className="rounded-lg border border-line bg-panel px-3 py-2 font-mono text-[13px] leading-relaxed">
-					<span className="text-accent">› </span>
+					<span className="text-pink">› </span>
 					{t("picker.comparePrompt")}
 				</p>
 			</div>
 			<div className="grid gap-3 sm:grid-cols-[1.4fr_1fr]">
-				<div className="relative aspect-square overflow-hidden rounded-2xl border border-line bg-panel">
-					<canvas
-						ref={canvas}
-						width={640}
-						height={640}
-						className="absolute inset-0 h-full w-full"
-					/>
-					<div className="absolute bottom-3 left-3 flex flex-wrap gap-1.5 text-xs">
-						<span className="rounded-full border border-white/10 bg-bg/70 px-2.5 py-1 font-medium backdrop-blur">
+				<figure className="flex flex-col gap-2">
+					<div className="relative aspect-square overflow-hidden rounded-2xl border border-line bg-panel">
+						<canvas
+							ref={canvas}
+							width={640}
+							height={640}
+							className="absolute inset-0 h-full w-full"
+						/>
+					</div>
+					<figcaption className="flex justify-between gap-2 px-0.5 font-mono text-xs text-dim">
+						<span className="font-sans font-medium text-ink">
 							{entryName(entry)}
 						</span>
-						<span className="rounded-full border border-white/10 bg-bg/70 px-2.5 py-1 font-mono backdrop-blur">
+						<span>
 							{entry.kind === "local" ? t("picker.free") : t("picker.cloud")}
 						</span>
-					</div>
-				</div>
+					</figcaption>
+				</figure>
 				<div className="flex flex-col gap-1.5">
 					{entries.map((other, index) => (
 						<button
@@ -589,25 +605,31 @@ function Card(props: {
 					delay={500 + props.index * 160}
 					seed={entry.key}
 				/>
-				{props.best && (
-					<span className="aurora absolute top-2.5 left-2.5 rounded-full px-2.5 py-0.5 text-xs font-semibold">
-						{t("picker.best")}
-					</span>
-				)}
-				<span
-					className={`absolute bottom-2.5 left-2.5 rounded-full border border-white/10 bg-bg/75 px-2 py-0.5 text-[11px] backdrop-blur ${
-						level ? FIT_STYLE[level].text : needsKey ? "text-ink" : "text-good"
-					}`}
-				>
-					{(level || !needsKey) && <span aria-hidden="true">● </span>}
-					{level
-						? fitLabel(t, level)
-						: needsKey
-							? t("picker.needsKey")
-							: t("picker.ready")}
-				</span>
 			</div>
 			<div className="flex flex-1 flex-col gap-2.5 p-4">
+				<div className="flex flex-wrap items-center gap-1.5">
+					{props.best && (
+						<span className="aurora rounded-full px-2.5 py-0.5 text-xs font-semibold">
+							{t("picker.best")}
+						</span>
+					)}
+					<span
+						className={`rounded-full px-2 py-0.5 text-[11px] ${
+							level
+								? `${FIT_STYLE[level].bg} ${FIT_STYLE[level].text}`
+								: needsKey
+									? "bg-white/6 text-ink"
+									: "bg-good/12 text-good"
+						}`}
+					>
+						{(level || !needsKey) && <span aria-hidden="true">● </span>}
+						{level
+							? fitLabel(t, level)
+							: needsKey
+								? t("picker.needsKey")
+								: t("picker.ready")}
+					</span>
+				</div>
 				<div className="min-w-0">
 					<h4 className="font-display text-lg leading-tight font-bold tracking-tight">
 						{entryName(entry)}
@@ -705,8 +727,8 @@ function Download(props: { model: LocalModelStatus; autoStart: boolean }) {
 	const started =
 		state !== "available" || install.isPending || install.isSuccess;
 	const { mutate } = install;
-	// Chosen from "Download and use": start without a second click.
 	const can = useCan();
+	// Chosen from "Download and use": start without a second click.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: only when the drawer opens
 	useEffect(() => {
 		if (can.admin && props.autoStart && model.state === "available") mutate();
@@ -738,7 +760,7 @@ function Download(props: { model: LocalModelStatus; autoStart: boolean }) {
 								? "border-line text-dim"
 								: index < position
 									? "border-good/40 text-good"
-									: "border-accent text-ink shadow-[0_0_0_3px_rgb(255_61_139/0.15)]"
+									: "border-pink text-ink shadow-[0_0_0_3px_rgb(255_61_139/0.15)]"
 						}`}
 					>
 						{label}
@@ -747,14 +769,11 @@ function Download(props: { model: LocalModelStatus; autoStart: boolean }) {
 			</ol>
 			{started ? (
 				<>
-					<div className="h-2.5 overflow-hidden rounded-full border border-line bg-panel-2">
-						<i
-							className="flow block h-full rounded-full transition-[width] duration-300"
-							style={{
-								width: `${total ? Math.round((received / total) * 100) : 0}%`,
-							}}
-						/>
-					</div>
+					<Progress
+						value={total ? Math.round((received / total) * 100) : 0}
+						aria-label={t("picker.stepDownload")}
+						className="*:data-[slot=progress-track]:h-2.5 *:data-[slot=progress-track]:bg-panel-2 **:data-[slot=progress-indicator]:rounded-full **:data-[slot=progress-indicator]:bg-linear-to-r **:data-[slot=progress-indicator]:from-pink **:data-[slot=progress-indicator]:via-orange **:data-[slot=progress-indicator]:to-gold"
+					/>
 					<p
 						className="flex flex-wrap justify-between gap-2 font-mono text-xs text-dim tabular-nums"
 						aria-live="polite"
@@ -780,13 +799,14 @@ function Download(props: { model: LocalModelStatus; autoStart: boolean }) {
 					</p>
 				</>
 			) : can.admin ? (
-				<button
-					type="button"
+				<Button
+					variant="aurora"
+					size="lg"
 					onClick={() => install.mutate()}
-					className="cta self-start rounded-xl px-5 py-2.5 font-display font-bold"
+					className="self-start"
 				>
 					{t("picker.download", { size: i18n.bytes(model.size) })}
-				</button>
+				</Button>
 			) : (
 				<p className="text-sm text-dim">{t("models.askAdmin")}</p>
 			)}
@@ -805,6 +825,7 @@ function KeyForm(props: { routes: ModelSpec[]; providers: ProviderStatus[] }) {
 	);
 	const [chosen, setChosen] = useState(options[0]?.id ?? "");
 	const [key, setKey] = useState("");
+	const field = useId();
 	const provider = options.find((p) => p.id === chosen) ?? options[0];
 	const save = useMutation({
 		mutationFn: () => api.setKey(provider?.id ?? chosen, key.trim()),
@@ -828,42 +849,43 @@ function KeyForm(props: { routes: ModelSpec[]; providers: ProviderStatus[] }) {
 			}}
 		>
 			{options.length > 1 && (
-				<fieldset className="flex flex-wrap gap-1.5">
-					<legend className="sr-only">{t("picker.service")}</legend>
-					{options.map((option) => (
-						<button
-							key={option.id}
-							type="button"
-							aria-pressed={option.id === provider.id}
-							onClick={() => setChosen(option.id)}
-							className={`rounded-full border px-3 py-1 text-xs transition-colors ${
-								option.id === provider.id
-									? "border-transparent bg-ink text-bg"
-									: "border-line-strong text-dim hover:text-ink"
-							}`}
-						>
-							{option.name}
-						</button>
-					))}
-				</fieldset>
-			)}
-			<div className="flex flex-wrap gap-2">
-				<input
-					type="password"
-					value={key}
-					onChange={(event) => setKey(event.target.value)}
-					placeholder={t("settings.pasteKey")}
-					aria-label={t("settings.keyLabel", { provider: provider.name })}
-					autoComplete="off"
-					className="min-w-0 flex-[1_1_14rem] rounded-xl border border-line-strong bg-bg px-3 py-2.5 font-mono text-sm"
-				/>
-				<button
-					type="submit"
-					disabled={!key.trim() || save.isPending}
-					className="cta rounded-xl px-5 py-2.5 font-display font-bold"
+				<ToggleGroup
+					aria-label={t("picker.service")}
+					value={[provider.id]}
+					onValueChange={([id]) => id && setChosen(id)}
+					className="flex-wrap"
 				>
-					{t("picker.saveKey")}
-				</button>
+					{options.map((option) => (
+						<ToggleGroupItem key={option.id} value={option.id} className={PILL}>
+							{option.name}
+						</ToggleGroupItem>
+					))}
+				</ToggleGroup>
+			)}
+			<div className="flex flex-col gap-2">
+				<Label htmlFor={field} className="text-dim">
+					{t("settings.keyLabel", { provider: provider.name })}
+				</Label>
+				<div className="flex flex-wrap gap-2">
+					<Input
+						id={field}
+						type="password"
+						value={key}
+						onChange={(event) => setKey(event.target.value)}
+						placeholder={t("settings.pasteKey")}
+						autoComplete="off"
+						className="h-11 min-w-0 flex-[1_1_14rem] rounded-xl bg-bg font-mono"
+					/>
+					<Button
+						type="submit"
+						variant="aurora"
+						size="lg"
+						disabled={!key.trim() || save.isPending}
+						className="h-11"
+					>
+						{t("picker.saveKey")}
+					</Button>
+				</div>
 			</div>
 			<p className="flex flex-wrap justify-between gap-2 text-xs text-dim">
 				<span>{t("picker.keyNote", { provider: provider.name })}</span>
@@ -872,7 +894,7 @@ function KeyForm(props: { routes: ModelSpec[]; providers: ProviderStatus[] }) {
 						href={KEY_PAGES[provider.id]}
 						target="_blank"
 						rel="noreferrer"
-						className="underline decoration-line-strong underline-offset-4 hover:text-accent"
+						className="underline decoration-line-strong underline-offset-4 hover:text-pink"
 					>
 						{t("picker.whereKey", { provider: provider.name })}
 					</a>
@@ -1005,23 +1027,23 @@ export function Picker(props: {
 
 	return (
 		<div className="flex flex-col gap-8">
-			<fieldset className="flex self-start rounded-full border border-line bg-panel p-1">
-				<legend className="sr-only">{t("picker.media")}</legend>
+			<ToggleGroup
+				aria-label={t("picker.media")}
+				value={[props.media]}
+				onValueChange={([kind]) => {
+					if (kind !== "image" && kind !== "video") return;
+					props.setMedia(kind);
+					setChosen(null);
+				}}
+				spacing={1}
+				className="self-start rounded-xl border border-line bg-panel p-1"
+			>
 				{(["image", "video"] as const).map((kind) => (
-					<button
-						key={kind}
-						type="button"
-						aria-pressed={props.media === kind}
-						onClick={() => {
-							props.setMedia(kind);
-							setChosen(null);
-						}}
-						className="rounded-full px-4 py-1.5 text-sm font-medium text-dim transition-colors aria-pressed:bg-ink aria-pressed:text-bg"
-					>
+					<ToggleGroupItem key={kind} value={kind} className={SEGMENT}>
 						{kind === "image" ? t("picker.image") : t("picker.video")}
-					</button>
+					</ToggleGroupItem>
 				))}
-			</fieldset>
+			</ToggleGroup>
 
 			{local.isPending ? (
 				<div
@@ -1086,13 +1108,13 @@ export function Picker(props: {
 									))}
 								</div>
 								{group.entries === localEntries && hiddenLocal > 0 && (
-									<button
-										type="button"
+									<Button
+										variant="ghost"
 										onClick={() => setAllLocal(true)}
-										className="mt-3 text-sm text-dim underline hover:text-ink"
+										className="mt-3 text-dim"
 									>
 										{t("picker.showTooBig", { count: hiddenLocal })}
-									</button>
+									</Button>
 								)}
 							</section>
 						),
@@ -1142,48 +1164,40 @@ export function PickerDialog(props: {
 	onClose(): void;
 }) {
 	const { t } = useI18n();
-	const dialog = useRef<HTMLDialogElement>(null);
 	const [media, setMedia] = useState(props.media);
-	useEffect(() => {
-		dialog.current?.showModal();
-	}, []);
 
 	return (
-		// biome-ignore lint/a11y/useKeyWithClickEvents: clicking the backdrop closes; Esc already does so natively
-		<dialog
-			ref={dialog}
-			onClose={props.onClose}
-			onClick={(event) => event.target === dialog.current && props.onClose()}
-			aria-label={t("composer.chooseModel")}
-			className="m-auto max-h-[92vh] w-[min(68rem,94vw)] overflow-y-auto rounded-2xl border border-line-strong bg-bg p-0 text-ink"
-		>
-			<div className="flex flex-col gap-6 p-6">
-				<div className="flex items-center justify-between gap-4">
-					<h2 className="font-display text-3xl font-extrabold tracking-tight">
-						{t("composer.chooseModel")}
-					</h2>
-					<button
-						type="button"
-						onClick={props.onClose}
-						className="rounded-full px-3 py-1 text-sm text-dim hover:text-ink"
-					>
-						{t("common.close")}
-					</button>
+		<Dialog open onOpenChange={(open) => !open && props.onClose()}>
+			<DialogContent
+				showCloseButton={false}
+				className="block max-h-[92dvh] w-[min(68rem,calc(100%-2rem))] max-w-none overflow-y-auto rounded-2xl bg-bg p-0 ring-line-strong sm:max-w-none"
+			>
+				<div className="flex flex-col gap-6 p-5 sm:p-8">
+					<div className="flex items-center justify-between gap-4">
+						<DialogTitle className="font-display text-3xl leading-tight font-extrabold tracking-tight">
+							{t("composer.chooseModel")}
+						</DialogTitle>
+						<DialogClose render={<Button variant="ghost" size="icon" />}>
+							<XIcon />
+							<span className="sr-only">{t("common.close")}</span>
+						</DialogClose>
+					</div>
+					<Picker
+						media={media}
+						setMedia={setMedia}
+						ready={(modelId) => (
+							<Button
+								variant="aurora"
+								size="lg"
+								onClick={() => props.onUse(modelId, media)}
+								className="self-start"
+							>
+								{t("picker.useThis")}
+							</Button>
+						)}
+					/>
 				</div>
-				<Picker
-					media={media}
-					setMedia={setMedia}
-					ready={(modelId) => (
-						<button
-							type="button"
-							onClick={() => props.onUse(modelId, media)}
-							className="cta self-start rounded-xl px-5 py-2.5 font-display font-bold"
-						>
-							{t("picker.useThis")}
-						</button>
-					)}
-				/>
-			</div>
-		</dialog>
+			</DialogContent>
+		</Dialog>
 	);
 }

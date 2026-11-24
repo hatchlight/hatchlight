@@ -54,7 +54,7 @@ const reload = () => {
 const input =
 	"w-full rounded-md border border-line bg-bg px-3 py-2 text-sm focus:border-dim focus:outline-none";
 const primary =
-	"rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-ink disabled:opacity-40";
+	"rounded-md bg-pink px-4 py-2 text-sm font-medium text-on-aurora disabled:opacity-40";
 const secondary =
 	"rounded-md border border-line px-3 py-2 text-sm text-dim hover:border-dim hover:text-ink disabled:opacity-40";
 
@@ -762,7 +762,7 @@ function TwoStep({ enabled }: { enabled: boolean }) {
 			<p className="text-sm">{t("account.twoStepAdd")}</p>
 			<a
 				href={start.data.uri}
-				className="break-all font-mono text-xs text-accent underline"
+				className="break-all font-mono text-xs text-pink underline"
 			>
 				{start.data.uri}
 			</a>
@@ -779,7 +779,7 @@ function TwoStep({ enabled }: { enabled: boolean }) {
 			<div className="flex items-baseline justify-between gap-4">
 				<h3 className="font-medium">{t("account.twoStep")}</h3>
 				<span
-					className={`font-mono text-xs ${enabled ? "text-accent" : "text-dim"}`}
+					className={`font-mono text-xs ${enabled ? "text-pink" : "text-dim"}`}
 				>
 					{enabled ? t("account.twoStepOn") : t("account.twoStepOff")}
 				</span>

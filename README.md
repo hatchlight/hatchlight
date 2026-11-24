@@ -1,8 +1,23 @@
-# Hatchlight
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/logo-dark.svg">
+    <img src=".github/assets/logo-light.svg" alt="Hatchlight" width="360">
+  </picture>
+</p>
 
-[![CI](https://github.com/hatchlight/hatchlight/actions/workflows/ci.yml/badge.svg)](https://github.com/hatchlight/hatchlight/actions/workflows/ci.yml)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/hatchlight/hatchlight/badge)](https://scorecard.dev/viewer/?uri=github.com/hatchlight/hatchlight)
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/16935/badge)](https://www.bestpractices.dev/projects/16935)
+<p align="center">
+  <a href="https://github.com/hatchlight/hatchlight/releases/latest"><strong>Download</strong></a> ·
+  <a href="https://hatchlight.app">Website</a> ·
+  <a href="CONTRIBUTING.md">Contribute</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/hatchlight/hatchlight/actions/workflows/ci.yml"><img src="https://github.com/hatchlight/hatchlight/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/hatchlight/hatchlight"><img src="https://api.scorecard.dev/projects/github.com/hatchlight/hatchlight/badge" alt="OpenSSF Scorecard"></a>
+  <a href="https://www.bestpractices.dev/projects/16935"><img src="https://www.bestpractices.dev/projects/16935/badge" alt="OpenSSF Best Practices"></a>
+</p>
+
+![Hatchlight: a chat with the assistant, showing three takes of a fox in the snow from three models on this computer](.github/assets/chat.webp)
 
 Make pictures and videos with many AI models, side by side. Run them on your
 own graphics card for free, or use the services you already pay for with your
@@ -61,11 +76,19 @@ keeps to a spend limit. Write in your own language: each model gets the prompt
 in the words it understands, and **Improve prompt** turns a short idea into a
 detailed one.
 
+![The Advanced view: next-prompt settings on the left, results per model in the middle, the chosen picture on the right](.github/assets/advanced.webp)
+
 **A gallery.** Every result is saved on your computer with the prompt and
 settings that made it, and you can search it.
 
-The interface speaks English and Brazilian Portuguese. More languages are
-welcome: see [Translate](CONTRIBUTING.md#translate).
+<p align="center">
+  <img src=".github/assets/gallery.webp" alt="The gallery: every picture made, in a grid" width="68%">
+  <img src=".github/assets/phone.webp" alt="Hatchlight on a phone: the chat with a bottom bar" width="28%">
+</p>
+
+The interface speaks English and Brazilian Portuguese, works on phones and
+tablets as well as desktops, and can be used with the keyboard and a screen
+reader. More languages are welcome: see [Translate](CONTRIBUTING.md#translate).
 
 ## Where it runs
 
@@ -208,6 +231,14 @@ Each model has its own license, set by its authors. The Models screen shows
 whether commercial use is allowed; SDXL Turbo, for example, is free for
 commercial use only under a yearly revenue limit. Check the license before you
 sell what you make.
+
+## Built with
+
+The interface is React with [shadcn/ui](https://ui.shadcn.com) on
+[Base UI](https://base-ui.com) for accessible components,
+[prompt-kit](https://www.prompt-kit.com) for the chat, and Tailwind CSS. The
+server and the command line run on [Bun](https://bun.sh); the desktop app is
+[Tauri](https://tauri.app).
 
 ## Contribute
 

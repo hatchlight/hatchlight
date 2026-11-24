@@ -133,21 +133,11 @@ main,
 	text-decoration: none;
 }
 
-.logo i {
-	position: relative;
-	width: 18px;
-	height: 18px;
-	border-radius: 50%;
-	background: var(--aurora);
-	box-shadow: 0 0 18px rgb(255 61 139 / 0.5);
-}
-
-.logo i::after {
-	content: "";
-	position: absolute;
-	inset: 5px;
-	border-radius: 50%;
-	background: var(--bg);
+.logo .mark {
+	width: auto;
+	height: 26px;
+	flex: none;
+	filter: drop-shadow(0 0 14px rgb(255 61 139 / 0.4));
 }
 
 .nav-links {

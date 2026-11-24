@@ -7,13 +7,47 @@ import {
 } from "@hatchlight/core/types";
 import { useMutation } from "@tanstack/react-query";
 import {
+	Loader2,
+	Plus,
+	SlidersHorizontal,
+	Sparkles,
+	Square,
+	X,
+} from "lucide-react";
+import {
 	type Dispatch,
 	type ReactNode,
 	type SetStateAction,
 	useEffect,
+	useId,
 	useRef,
 	useState,
+	useSyncExternalStore,
 } from "react";
+import {
+	PromptInput,
+	PromptInputActions,
+	PromptInputTextarea,
+} from "@/components/chat/prompt-input";
+import { Button } from "@/components/ui/button";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
+import {
+	Sheet,
+	SheetContent,
+	SheetHeader,
+	SheetTitle,
+} from "@/components/ui/sheet";
+import { Slider } from "@/components/ui/slider";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Toggle } from "@/components/ui/toggle";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { cn } from "@/lib/utils";
 import { Adjust } from "./Adjust";
 import { api, assetUrl } from "./api";
 import { Extend } from "./Extend";
@@ -44,11 +78,25 @@ interface Props {
 	busy: boolean;
 	error: string | null;
 	onSubmit(draft: Draft): void;
-	/** Shown under the prompt: the session's results. */
+	/** The chosen picture: a column on wide screens, a sheet on narrow ones. */
+	inspector: {
+		content: ReactNode;
+		/** A small copy of the chosen picture, for the button that opens it. */
+		thumb?: string;
+		open: boolean;
+		onOpenChange(open: boolean): void;
+	};
+	/** Shown above the prompt: the session's results. */
 	children?: ReactNode;
 }
 
 const STORAGE_KEY = "hatchlight.models";
+/** From this width the settings and the inspector sit beside the turns. */
+const WIDE = "(min-width: 1024px)";
+/** The ratio item that leaves the shape to each model. */
+const DEFAULT_RATIO = "default";
+/** The length item that leaves each model at its shortest. */
+const SHORTEST = "shortest";
 
 /** Makes `ids` the models the composer starts with next time. */
 export function rememberModels(ids: string[]): void {
@@ -68,9 +116,32 @@ function savedModels(): string[] {
 	}
 }
 
+function useWide(): boolean {
+	return useSyncExternalStore(
+		(change) => {
+			const query = window.matchMedia(WIDE);
+			query.addEventListener("change", change);
+			return () => query.removeEventListener("change", change);
+		},
+		() => window.matchMedia(WIDE).matches,
+	);
+}
+
+const LABEL = "font-mono text-[11px] tracking-[0.14em] text-dim uppercase";
+
 export function Composer(props: Props) {
-	const { models, providers, references, setReferences } = props;
+	const { models, providers, references, setReferences, inspector } = props;
 	const { t, explain, number, language } = useI18n();
+	const ids = {
+		prompt: useId(),
+		ratio: useId(),
+		count: useId(),
+		strength: useId(),
+		length: useId(),
+	};
+	const wide = useWide();
+	// On narrow screens the settings open in a sheet.
+	const [setting, setSetting] = useState(false);
 	const [prompt, setPrompt] = useState("");
 	const [chosen, setChosen] = useState<string[]>(savedModels);
 	const [aspectRatio, setAspectRatio] = useState("");
@@ -168,6 +239,10 @@ export function Composer(props: Props) {
 		redrawing && selected.every((m) => m.capabilities.strength != null)
 			? []
 			: offeredRatios;
+	const ratio = ratios.includes(aspectRatio) ? aspectRatio : "";
+	const each = Math.min(count, maxCount);
+	const length =
+		seconds != null && durations.includes(seconds) ? seconds : null;
 
 	// Without storage, the selection lasts for this visit only.
 	useEffect(() => rememberModels(chosen), [chosen]);
@@ -241,11 +316,10 @@ export function Composer(props: Props) {
 		props.onSubmit({
 			prompt: prompt.trim(),
 			modelIds: selected.map((m) => m.id),
-			aspectRatio: ratios.includes(aspectRatio) ? aspectRatio : undefined,
-			count: Math.min(count, maxCount),
+			aspectRatio: ratio || undefined,
+			count: each,
 			// Unset, each model uses its shortest length.
-			durationSeconds:
-				seconds != null && durations.includes(seconds) ? seconds : undefined,
+			durationSeconds: length ?? undefined,
 			// Unmoved, each model redraws by its own.
 			strength: redrawing && moved != null ? moved : undefined,
 			maskAssetId: maskId ?? undefined,
@@ -258,6 +332,9 @@ export function Composer(props: Props) {
 		setImproveError(null);
 	};
 
+	// A window of its own replaces the settings sheet, so the two never stack.
+	const leaveSheet = () => setSetting(false);
+
 	// Chosen models that have a key but are ruled out by the reference images.
 	const overReferenceLimit =
 		selected.length === 0 &&
@@ -267,369 +344,506 @@ export function Composer(props: Props) {
 		(upload.error ? explain(upload.error) : null) ??
 		(improveError ? explain(improveError) : null) ??
 		(overReferenceLimit ? t("composer.tooManyReferences") : null);
-	const control = "rounded-md border border-line bg-bg px-2 py-1.5 text-sm";
+	const total = selected.length * each;
+	// The settings in a few words, for the button that opens them on phones.
+	const summary = [
+		t("composer.summaryModels", { count: selected.length }),
+		ratio,
+		maxCount > 1 && t("composer.summaryEach", { count: each }),
+	]
+		.filter(Boolean)
+		.join(" · ");
+	const hasLoras =
+		known.data?.some((lora) => loraBases.includes(lora.base)) ?? false;
+
+	const settings = (
+		<div className="flex flex-col gap-[22px]">
+			{models.some((m) => m.media === "video") && (
+				<Tabs value={media} onValueChange={(value) => setMedia(value as Media)}>
+					<TabsList aria-label={t("composer.output")} className="w-full">
+						<TabsTrigger value="image">{t("composer.images")}</TabsTrigger>
+						<TabsTrigger value="video">{t("composer.video")}</TabsTrigger>
+					</TabsList>
+				</Tabs>
+			)}
+			<fieldset className="flex min-w-0 flex-col gap-1.5">
+				<legend className={cn(LABEL, "mb-2.5")}>{t("composer.models")}</legend>
+				{offered
+					.filter((m) => ready.has(m.providerId) || chosen.includes(m.id))
+					.map((model) => {
+						const reason = blocked(model);
+						const on = chosen.includes(model.id) && !reason;
+						return (
+							<Toggle
+								key={model.id}
+								variant="outline"
+								pressed={on}
+								disabled={reason !== null}
+								title={reason ?? model.id}
+								onPressedChange={(pressed) =>
+									setChosen(
+										pressed
+											? [...chosen, model.id]
+											: chosen.filter((id) => id !== model.id),
+									)
+								}
+								className="h-auto min-h-11 w-full justify-start gap-2.5 rounded-xl border-line bg-panel px-3 py-2 text-left font-normal hover:bg-panel-2 aria-pressed:border-orange aria-pressed:bg-panel"
+							>
+								<i
+									aria-hidden="true"
+									className={cn(
+										"size-2 shrink-0 rounded-full",
+										ready.has(model.providerId) ? "bg-good" : "bg-dim",
+									)}
+								/>
+								<span className="min-w-0 flex-1 truncate">{model.name}</span>
+								<span className="shrink-0 font-mono text-[11px] text-dim">
+									{model.providerId}
+								</span>
+							</Toggle>
+						);
+					})}
+				<Button
+					variant="outline"
+					onClick={() => {
+						leaveSheet();
+						setPicking(true);
+					}}
+					className="h-11 justify-start gap-2 rounded-xl border-dashed text-dim hover:text-ink dark:bg-transparent"
+				>
+					<Plus />
+					{t("composer.chooseModel")}
+				</Button>
+			</fieldset>
+
+			{ratios.length > 0 && (
+				<div className="flex flex-col gap-2.5">
+					<span id={ids.ratio} className={LABEL}>
+						{t("composer.ratio")}
+					</span>
+					<ToggleGroup
+						aria-labelledby={ids.ratio}
+						value={[ratio || DEFAULT_RATIO]}
+						onValueChange={(values) => {
+							const [value = DEFAULT_RATIO] = values;
+							setAspectRatio(value === DEFAULT_RATIO ? "" : value);
+						}}
+						className="grid w-full grid-cols-4 gap-1.5"
+					>
+						{[DEFAULT_RATIO, ...ratios].map((value) => (
+							<ToggleGroupItem
+								key={value}
+								value={value}
+								variant="outline"
+								className="h-[52px] min-w-0 rounded-[10px] border-line bg-panel px-1 font-mono text-xs text-soft aria-pressed:border-ink aria-pressed:bg-panel-2 aria-pressed:text-ink"
+							>
+								{value === DEFAULT_RATIO ? t("composer.ratioDefault") : value}
+							</ToggleGroupItem>
+						))}
+					</ToggleGroup>
+				</div>
+			)}
+
+			{maxCount > 1 && (
+				<div className="flex flex-col gap-3">
+					<div className="flex items-baseline justify-between">
+						<span id={ids.count} className={LABEL}>
+							{media === "video"
+								? t("composer.videoCount")
+								: t("composer.imageCount")}
+						</span>
+						<span className="font-mono text-[13px]">{number(each)}</span>
+					</div>
+					<Slider
+						aria-labelledby={ids.count}
+						min={1}
+						max={maxCount}
+						step={1}
+						value={[each]}
+						onValueChange={(value) =>
+							setCount(typeof value === "number" ? value : (value[0] ?? 1))
+						}
+						locale={language}
+						className="py-2"
+					/>
+				</div>
+			)}
+
+			{durations.length > 0 && (
+				<div className="flex flex-col gap-2.5">
+					<span id={ids.length} className={LABEL}>
+						{t("composer.length")}
+					</span>
+					<Select
+						value={length == null ? SHORTEST : String(length)}
+						onValueChange={(value) =>
+							setSeconds(value && value !== SHORTEST ? Number(value) : null)
+						}
+						items={[
+							{ value: SHORTEST, label: t("composer.lengthShortest") },
+							...durations.map((d) => ({
+								value: String(d),
+								label: t("format.seconds", { seconds: d }),
+							})),
+						]}
+					>
+						<SelectTrigger
+							aria-labelledby={ids.length}
+							className="h-10 w-full rounded-xl bg-panel data-[size=default]:h-10"
+						>
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value={SHORTEST}>
+								{t("composer.lengthShortest")}
+							</SelectItem>
+							{durations.map((d) => (
+								<SelectItem key={d} value={String(d)}>
+									{t("format.seconds", { seconds: d })}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+				</div>
+			)}
+
+			{redrawing && strength != null && (
+				<div className="flex flex-col gap-3">
+					<div className="flex items-baseline justify-between">
+						<span id={ids.strength} className={LABEL}>
+							{t("composer.strength")}
+						</span>
+						<span className="font-mono text-[13px]">
+							{number(strength, { style: "percent" })}
+						</span>
+					</div>
+					<Slider
+						aria-labelledby={ids.strength}
+						min={0.1}
+						max={1}
+						step={0.05}
+						value={[strength]}
+						onValueChange={(value) =>
+							setStrength(
+								typeof value === "number" ? value : (value[0] ?? strength),
+							)
+						}
+						format={{ style: "percent" }}
+						locale={language}
+						className="py-2"
+					/>
+				</div>
+			)}
+
+			<div className="flex flex-col gap-2.5">
+				<span className={LABEL}>{t("composer.referenceImages")}</span>
+				<ul
+					className="flex flex-wrap gap-2"
+					aria-label={t("composer.referenceImages")}
+				>
+					{references.map((id) => (
+						<li key={id} className="relative">
+							<button
+								type="button"
+								onClick={() => {
+									leaveSheet();
+									setAdjusting(id);
+								}}
+								aria-label={t("composer.adjust")}
+								title={t("composer.adjust")}
+								className="block rounded-[10px] outline-none focus-visible:ring-3 focus-visible:ring-ring/60"
+							>
+								<img
+									src={assetUrl(id)}
+									alt={t("common.reference")}
+									className="size-14 rounded-[10px] object-cover transition-opacity hover:opacity-80"
+								/>
+							</button>
+							{id === only && marked && (
+								// The marked area, as it was painted.
+								<img
+									src={marked.marks}
+									alt=""
+									className="pointer-events-none absolute inset-0 size-14 rounded-[10px] object-cover opacity-55"
+								/>
+							)}
+							<button
+								type="button"
+								aria-label={t("composer.removeReference")}
+								onClick={() =>
+									setReferences(references.filter((r) => r !== id))
+								}
+								className="absolute -top-1.5 -right-1.5 grid size-6 place-items-center rounded-full border border-line-strong bg-panel-2 text-soft outline-none after:absolute after:-inset-2 hover:text-ink focus-visible:ring-3 focus-visible:ring-ring/60"
+							>
+								<X className="size-3.5" />
+							</button>
+						</li>
+					))}
+					<li>
+						<button
+							type="button"
+							onClick={() => fileInput.current?.click()}
+							disabled={upload.isPending}
+							aria-label={
+								upload.isPending
+									? t("composer.uploading")
+									: t("composer.addReference")
+							}
+							title={t("composer.addReference")}
+							className="grid size-14 place-items-center rounded-[10px] border border-dashed border-line-strong text-dim outline-none transition-colors hover:border-dim hover:text-ink focus-visible:ring-3 focus-visible:ring-ring/60 disabled:opacity-60"
+						>
+							{upload.isPending ? (
+								<Loader2 className="size-[18px] animate-spin" />
+							) : (
+								<Plus className="size-[18px]" />
+							)}
+						</button>
+					</li>
+				</ul>
+				{only != null && canMask && (
+					<div className="flex flex-wrap gap-1.5">
+						<Button
+							variant="outline"
+							onClick={() => {
+								leaveSheet();
+								setPainting(true);
+							}}
+						>
+							{maskId ? t("composer.editArea") : t("composer.markArea")}
+						</Button>
+						<Button
+							variant="outline"
+							onClick={() => {
+								leaveSheet();
+								setExtending(true);
+							}}
+						>
+							{t("composer.extend")}
+						</Button>
+						{maskId && (
+							<Button
+								variant="ghost"
+								onClick={() => setMask(null)}
+								className="text-dim"
+							>
+								{t("composer.removeMask")}
+							</Button>
+						)}
+					</div>
+				)}
+				<input
+					ref={fileInput}
+					type="file"
+					accept="image/png,image/jpeg,image/webp"
+					hidden
+					onChange={(event) => {
+						const file = event.target.files?.[0];
+						if (file) upload.mutate(file);
+						event.target.value = "";
+					}}
+				/>
+			</div>
+
+			{hasLoras && (
+				<div className="flex flex-col gap-2.5">
+					<span className={LABEL}>{t("composer.styles")}</span>
+					<LoraPicker bases={loraBases} value={loras} onChange={setLoras} />
+				</div>
+			)}
+		</div>
+	);
 
 	return (
 		<>
-			<aside
-				aria-label={t("composer.parameters")}
-				className="flex min-h-0 flex-col gap-5 overflow-y-auto border-line bg-panel p-4 lg:border-r"
-			>
-				{models.some((m) => m.media === "video") && (
-					<div
-						className="flex gap-1"
-						role="tablist"
-						aria-label={t("composer.output")}
-					>
-						{(["image", "video"] as const).map((kind) => (
-							<button
-								key={kind}
-								type="button"
-								role="tab"
-								aria-selected={media === kind}
-								onClick={() => setMedia(kind)}
-								className={`rounded-md px-3 py-1 text-sm ${
-									media === kind
-										? "bg-line text-ink"
-										: "text-dim hover:text-ink"
-								}`}
-							>
-								{kind === "image" ? t("composer.images") : t("composer.video")}
-							</button>
-						))}
-					</div>
-				)}
-				<fieldset className="flex flex-wrap items-center gap-1.5">
-					<legend className="mb-2 font-mono text-[11px] uppercase tracking-wider text-dim">
-						{t("composer.models")}
-					</legend>
-
-					{offered
-						.filter((m) => ready.has(m.providerId) || chosen.includes(m.id))
-						.map((model) => {
-							const reason = blocked(model);
-							const on = chosen.includes(model.id) && !reason;
-							return (
-								<button
-									key={model.id}
-									type="button"
-									aria-pressed={on}
-									disabled={reason !== null}
-									title={reason ?? model.id}
-									onClick={() =>
-										setChosen(
-											on
-												? chosen.filter((id) => id !== model.id)
-												: [...chosen, model.id],
-										)
-									}
-									className={`rounded-full border px-3 py-1 text-sm transition-colors disabled:opacity-40 ${
-										on
-											? "aurora border-transparent shadow-[0_0_14px_rgb(255_61_139/0.35)]"
-											: "border-line text-dim hover:border-dim hover:text-ink"
-									}`}
-								>
-									<span className="opacity-60">{model.providerId} · </span>
-									{model.name}
-								</button>
-							);
-						})}
-					<button
-						type="button"
-						onClick={() => setPicking(true)}
-						className="rounded-full border border-dashed border-line-strong px-3 py-1 text-sm text-dim transition-colors hover:border-accent hover:text-ink"
-					>
-						+ {t("composer.chooseModel")}
-					</button>
-				</fieldset>
-
-				<div className="flex flex-col gap-2.5">
-					<label className="flex items-center justify-between gap-2 text-sm text-dim">
-						{t("composer.ratio")}
-						<select
-							value={ratios.includes(aspectRatio) ? aspectRatio : ""}
-							onChange={(event) => setAspectRatio(event.target.value)}
-							disabled={ratios.length === 0}
-							className={control}
-						>
-							<option value="">{t("composer.ratioDefault")}</option>
-							{ratios.map((ratio) => (
-								<option key={ratio}>{ratio}</option>
-							))}
-						</select>
-					</label>
-					<LoraPicker bases={loraBases} value={loras} onChange={setLoras} />
-					{redrawing && strength != null && (
-						<label className="flex items-center justify-between gap-2 text-sm text-dim">
-							{t("composer.strength")}
-							<input
-								type="range"
-								min={0.1}
-								max={1}
-								step={0.05}
-								value={strength}
-								onChange={(event) => setStrength(Number(event.target.value))}
-								aria-valuetext={t("composer.strengthValue", {
-									amount: number(strength, { style: "percent" }),
-								})}
-								className="w-28 accent-accent"
-							/>
-							<span className="w-10 font-mono text-xs">
-								{number(strength, { style: "percent" })}
-							</span>
-						</label>
-					)}
-					{durations.length > 0 && (
-						<label className="flex items-center justify-between gap-2 text-sm text-dim">
-							{t("composer.length")}
-							<select
-								value={
-									seconds != null && durations.includes(seconds) ? seconds : ""
-								}
-								onChange={(event) =>
-									setSeconds(
-										event.target.value ? Number(event.target.value) : null,
-									)
-								}
-								className={control}
-							>
-								<option value="">{t("composer.lengthShortest")}</option>
-								{durations.map((d) => (
-									<option key={d} value={d}>
-										{t("format.seconds", { seconds: d })}
-									</option>
-								))}
-							</select>
-						</label>
-					)}
-					<label
-						className="flex items-center justify-between gap-2 text-sm text-dim"
-						hidden={maxCount === 1 && media === "video"}
-					>
-						{media === "video"
-							? t("composer.videoCount")
-							: t("composer.imageCount")}
-						<select
-							value={Math.min(count, maxCount)}
-							onChange={(event) => setCount(Number(event.target.value))}
-							className={control}
-						>
-							{Array.from({ length: maxCount }, (_, i) => i + 1).map((n) => (
-								<option key={n}>{n}</option>
-							))}
-						</select>
-					</label>
-					<input
-						ref={fileInput}
-						type="file"
-						accept="image/png,image/jpeg,image/webp"
-						hidden
-						onChange={(event) => {
-							const file = event.target.files?.[0];
-							if (file) upload.mutate(file);
-							event.target.value = "";
-						}}
-					/>
-				</div>
-				<div className="flex flex-col gap-2">
-					<span className="font-mono text-[11px] uppercase tracking-wider text-dim">
-						{t("common.reference")}
-					</span>
-					{references.length > 0 && (
-						<ul
-							className="flex flex-wrap gap-2"
-							aria-label={t("composer.referenceImages")}
-						>
-							{references.map((id) => (
-								<li key={id} className="relative">
-									<button
-										type="button"
-										onClick={() => setAdjusting(id)}
-										aria-label={t("composer.adjust")}
-										title={t("composer.adjust")}
-										className="block rounded-md"
-									>
-										<img
-											src={assetUrl(id)}
-											alt={t("common.reference")}
-											className="size-16 rounded-md border border-line object-cover transition-opacity hover:opacity-80"
-										/>
-									</button>
-									{id === only && marked && (
-										// The marked area, as it was painted.
-										<img
-											src={marked.marks}
-											alt=""
-											className="pointer-events-none absolute inset-0 size-16 rounded-md object-cover opacity-55"
-										/>
-									)}
-									<button
-										type="button"
-										aria-label={t("composer.removeReference")}
-										onClick={() =>
-											setReferences(references.filter((r) => r !== id))
-										}
-										className="absolute -right-1.5 -top-1.5 size-5 rounded-full border border-line bg-panel text-xs leading-none"
-									>
-										×
-									</button>
-								</li>
-							))}
-							{only != null && canMask && (
-								<li className="flex flex-col items-start justify-center gap-1 text-sm">
-									<div className="flex gap-1.5">
-										<button
-											type="button"
-											onClick={() => setPainting(true)}
-											className="rounded-md border border-line px-2.5 py-1 text-dim hover:border-dim hover:text-ink"
-										>
-											{maskId ? t("composer.editArea") : t("composer.markArea")}
-										</button>
-										<button
-											type="button"
-											onClick={() => setExtending(true)}
-											className="rounded-md border border-line px-2.5 py-1 text-dim hover:border-dim hover:text-ink"
-										>
-											{t("composer.extend")}
-										</button>
-									</div>
-									{maskId && (
-										<button
-											type="button"
-											onClick={() => setMask(null)}
-											className="px-1 text-xs text-dim underline hover:text-ink"
-										>
-											{t("composer.removeMask")}
-										</button>
-									)}
-								</li>
-							)}
-						</ul>
-					)}
-
-					<button
-						type="button"
-						onClick={() => fileInput.current?.click()}
-						disabled={upload.isPending}
-						className={`${control} text-dim hover:text-ink`}
-					>
-						{upload.isPending
-							? t("composer.uploading")
-							: t("composer.addReference")}
-					</button>
-				</div>
-			</aside>
+			{wide && (
+				<aside
+					aria-label={t("composer.parameters")}
+					className="min-h-0 overflow-y-auto border-r border-[#1a1a1e] px-5 py-6"
+				>
+					{settings}
+				</aside>
+			)}
 			<section
 				aria-label={t("composer.promptAndResults")}
-				className="flex min-h-0 flex-col overflow-y-auto"
+				className="flex min-h-0 min-w-0 flex-col"
 			>
-				<div className="flex flex-col gap-3 border-b border-line p-4">
+				<div className="min-h-0 flex-1 overflow-y-auto">{props.children}</div>
+				<div className="flex shrink-0 flex-col gap-2.5 px-3 pt-2.5 pb-3 max-lg:border-t max-lg:border-[#1a1a1e] max-lg:bg-[#0c0c0f] lg:px-7 lg:pt-2 lg:pb-6">
+					{!wide && (
+						<div className="flex gap-2 overflow-x-auto">
+							<Button
+								variant="outline"
+								onClick={() => setSetting(true)}
+								className="h-10 shrink-0 gap-2 rounded-full border-[#2c2c32] bg-panel px-3.5 dark:bg-panel"
+							>
+								<SlidersHorizontal />
+								{summary}
+							</Button>
+							<Button
+								variant="outline"
+								onClick={() => inspector.onOpenChange(true)}
+								className="h-10 shrink-0 gap-2 rounded-full border-[#2c2c32] bg-panel px-3.5 dark:bg-panel"
+							>
+								{inspector.thumb && (
+									<img
+										src={inspector.thumb}
+										alt=""
+										className="size-5 rounded-md object-cover"
+									/>
+								)}
+								{t("inspector.chip")}
+							</Button>
+						</div>
+					)}
 					{suggestion != null && (
 						<section
 							aria-label={t("composer.suggestion")}
-							className="rounded-md border border-line bg-bg px-3 py-2"
+							className="rise-in rounded-2xl border border-line bg-panel p-4"
 						>
-							<h3 className="font-mono text-xs uppercase tracking-wide text-dim">
-								{t("composer.suggestion")}
-							</h3>
-							<p className="mt-1 leading-relaxed">{suggestion}</p>
-							<div className="mt-2 flex flex-wrap gap-1.5 text-sm">
-								<button
-									type="button"
+							<h3 className={LABEL}>{t("composer.suggestion")}</h3>
+							<p className="mt-1.5 leading-relaxed">{suggestion}</p>
+							<div className="mt-3 flex flex-wrap gap-1.5">
+								<Button
 									onClick={() => {
 										setPrompt(suggestion);
 										setSuggestion(null);
 									}}
-									className="aurora rounded-md px-3 py-1"
 								>
 									{t("composer.suggestionUse")}
-								</button>
-								<button
-									type="button"
+								</Button>
+								<Button
+									variant="outline"
 									onClick={improve}
 									disabled={improving != null}
-									className="rounded-md border border-line px-3 py-1 text-dim hover:border-dim hover:text-ink disabled:opacity-40"
 								>
 									{t("composer.suggestionAnother")}
-								</button>
-								<button
-									type="button"
+								</Button>
+								<Button
+									variant="ghost"
 									onClick={() => setSuggestion(null)}
-									className="rounded-md px-3 py-1 text-dim hover:text-ink"
+									className="text-dim"
 								>
 									{t("composer.suggestionDiscard")}
-								</button>
+								</Button>
 							</div>
 						</section>
 					)}
-
-					<textarea
+					<p role="alert" className="text-sm text-danger empty:hidden">
+						{error}
+					</p>
+					<PromptInput
 						value={prompt}
-						onChange={(event) => {
-							setPrompt(event.target.value);
+						onValueChange={(value) => {
+							setPrompt(value);
 							setImproveError(null);
 						}}
-						onKeyDown={(event) => {
-							if (
-								event.key === "Enter" &&
-								!event.shiftKey &&
-								!event.nativeEvent.isComposing
-							) {
-								event.preventDefault();
-								submit();
+						onSubmit={submit}
+						className="flex flex-col gap-1.5 rounded-[20px] bg-panel pl-4 lg:pl-[18px]"
+					>
+						<label htmlFor={ids.prompt} className="sr-only">
+							{t("composer.prompt")}
+						</label>
+						<PromptInputTextarea
+							id={ids.prompt}
+							placeholder={
+								references.length > 0
+									? media === "video"
+										? t("composer.placeholder.motion")
+										: t("composer.placeholder.change")
+									: media === "video"
+										? t("composer.placeholder.video")
+										: t("composer.placeholder.image")
 							}
-						}}
-						rows={2}
-						placeholder={
-							references.length > 0
-								? media === "video"
-									? t("composer.placeholder.motion")
-									: t("composer.placeholder.change")
-								: media === "video"
-									? t("composer.placeholder.video")
-									: t("composer.placeholder.image")
-						}
-						aria-label={t("composer.prompt")}
-						className="w-full resize-none rounded-md border border-line bg-bg px-3 py-2 leading-relaxed"
-					/>
-
-					<div className="flex flex-wrap items-center gap-2">
-						{improving ? (
-							<button
-								type="button"
-								onClick={stopImproving}
-								className={`${control} text-dim hover:text-ink`}
+						/>
+						<PromptInputActions className="justify-between gap-2">
+							{improving ? (
+								<Button
+									variant="ghost"
+									onClick={(event) => {
+										event.stopPropagation();
+										stopImproving();
+									}}
+									className="-ml-2 gap-2 text-dim"
+								>
+									<Square className="size-3 fill-current" />
+									<span className="animate-pulse">
+										{t("composer.improving")}
+									</span>
+									<span className="sr-only">{t("composer.improveStop")}</span>
+								</Button>
+							) : (
+								<Button
+									variant="ghost"
+									onClick={(event) => {
+										event.stopPropagation();
+										void improve();
+									}}
+									disabled={prompt.trim() === ""}
+									className="-ml-2 gap-2 text-dim"
+								>
+									<Sparkles />
+									{t("composer.improve")}
+								</Button>
+							)}
+							<Button
+								variant="aurora"
+								onClick={(event) => {
+									event.stopPropagation();
+									submit();
+								}}
+								disabled={!canSend}
+								className="h-11 px-5 text-[15px]"
 							>
-								<span className="animate-pulse">{t("composer.improving")}</span>{" "}
-								· {t("composer.improveStop")}
-							</button>
-						) : (
-							<button
-								type="button"
-								onClick={improve}
-								disabled={prompt.trim() === ""}
-								className={`${control} text-dim hover:text-ink disabled:opacity-40`}
-							>
-								✦ {t("composer.improve")}
-							</button>
-						)}
-						<span className="ml-auto text-sm text-danger" role="alert">
-							{error}
-						</span>
-						<button
-							type="button"
-							onClick={submit}
-							disabled={!canSend}
-							className="cta rounded-lg px-5 py-2 font-display text-base font-bold"
-						>
-							{selected.length > 1
-								? t("composer.compare", { count: selected.length })
-								: t("composer.generate")}
-						</button>
-					</div>
+								{total > 0
+									? t("composer.make", { count: total })
+									: t("composer.generate")}
+							</Button>
+						</PromptInputActions>
+					</PromptInput>
 				</div>
-				{props.children}
 			</section>
+			{wide && (
+				<aside
+					aria-label={t("inspector.label")}
+					className="min-h-0 overflow-y-auto border-l border-[#1a1a1e] bg-[#0c0c0f] px-5 py-6"
+				>
+					{inspector.content}
+				</aside>
+			)}
+			{!wide && (
+				<>
+					<Sheet open={setting} onOpenChange={setSetting}>
+						<SheetContent
+							side="bottom"
+							className="max-h-[85dvh] gap-0 rounded-t-3xl border-line bg-rail"
+						>
+							<SheetHeader className="px-5 pt-5 pb-3">
+								<SheetTitle className="font-display text-xl font-bold">
+									{t("composer.parameters")}
+								</SheetTitle>
+							</SheetHeader>
+							<div className="min-h-0 overflow-y-auto px-5 pb-8">
+								{settings}
+							</div>
+						</SheetContent>
+					</Sheet>
+					<Sheet open={inspector.open} onOpenChange={inspector.onOpenChange}>
+						<SheetContent
+							side="bottom"
+							className="max-h-[85dvh] gap-0 rounded-t-3xl border-line bg-rail"
+						>
+							<SheetHeader className="px-5 pt-5 pb-3">
+								<SheetTitle className="font-display text-xl font-bold">
+									{t("inspector.label")}
+								</SheetTitle>
+							</SheetHeader>
+							<div className="min-h-0 overflow-y-auto px-5 pb-8">
+								{inspector.content}
+							</div>
+						</SheetContent>
+					</Sheet>
+				</>
+			)}
 			{adjusting != null && (
 				<Adjust
 					src={assetUrl(adjusting)}

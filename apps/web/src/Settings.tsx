@@ -6,11 +6,43 @@ import type {
 	TranslateWith,
 } from "@hatchlight/core/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useId, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
 import { AccountSettings, UsersSettings, useCan } from "./Accounts";
 import { type AgentPolicy, api, useServerMode } from "./api";
 import { useI18n } from "./i18n";
 import { useModelProgress } from "./live";
+import { PageHeader } from "./Models";
+import { Bar, LABEL, SECTION } from "./Training";
+
+/** A panel inside a section: one provider, one model, one agent. */
+const PANEL = "rounded-xl border border-line bg-bg/60 p-4";
+
+/** The top of a section: its label and what it is for. */
+function SectionHeader({ title, intro }: { title: string; intro?: string }) {
+	return (
+		<CardHeader className="flex flex-col gap-2">
+			<h2 className={LABEL}>{title}</h2>
+			{intro && (
+				<p className="max-w-2xl text-sm leading-relaxed text-dim">{intro}</p>
+			)}
+		</CardHeader>
+	);
+}
 
 function ProviderRow({
 	provider,
@@ -39,11 +71,11 @@ function ProviderRow({
 	const error = save.error ?? remove.error;
 
 	return (
-		<li className="rounded-lg border border-line bg-panel p-4">
+		<li className={PANEL}>
 			<div className="flex items-baseline justify-between gap-4">
 				<h3 className="font-medium">{provider.name}</h3>
 				<span
-					className={`font-mono text-xs ${provider.hasKey ? "text-accent" : "text-dim"}`}
+					className={`font-mono text-xs ${provider.hasKey ? "text-good" : "text-dim"}`}
 				>
 					{provider.hasKey
 						? t("settings.keyConfigured")
@@ -54,13 +86,13 @@ function ProviderRow({
 			</div>
 			{provider.requiresKey && editable && (
 				<form
-					className="mt-3 flex gap-2"
+					className="mt-3 flex flex-wrap gap-2"
 					onSubmit={(event) => {
 						event.preventDefault();
 						save.mutate();
 					}}
 				>
-					<input
+					<Input
 						type="password"
 						value={key}
 						onChange={(event) => setKey(event.target.value)}
@@ -71,29 +103,87 @@ function ProviderRow({
 						}
 						aria-label={t("settings.keyLabel", { provider: provider.name })}
 						autoComplete="off"
-						className="min-w-0 flex-1 rounded-md border border-line bg-bg px-3 py-2 font-mono text-sm"
+						className="h-10 min-w-40 flex-1 font-mono"
 					/>
-					<button
-						type="submit"
-						disabled={!key.trim() || save.isPending}
-						className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-ink disabled:opacity-40"
-					>
+					<Button type="submit" disabled={!key.trim() || save.isPending}>
 						{t("settings.save")}
-					</button>
+					</Button>
 					{provider.hasKey && (
-						<button
-							type="button"
+						<Button
+							variant="outline"
 							onClick={() => remove.mutate()}
 							disabled={remove.isPending}
-							className="rounded-md border border-line px-3 py-2 text-sm text-dim hover:text-danger"
+							className="text-dim hover:text-danger"
 						>
 							{t("settings.remove")}
-						</button>
+						</Button>
 					)}
 				</form>
 			)}
 			{error && <p className="mt-2 text-sm text-danger">{explain(error)}</p>}
 		</li>
+	);
+}
+
+/** One choice among a few, some of which may need something first. */
+function Choice<T extends string>({
+	label,
+	value,
+	options,
+	disabled,
+	onChoose,
+}: {
+	label: string;
+	value: T;
+	options: { value: T; label: string; usable: boolean }[];
+	disabled: boolean;
+	onChoose(value: T): void;
+}) {
+	const { t } = useI18n();
+	const id = useId();
+	return (
+		<div className="flex flex-col gap-2">
+			<p id={id} className="text-sm font-medium">
+				{label}
+			</p>
+			<RadioGroup
+				aria-labelledby={id}
+				value={value}
+				onValueChange={(next) => {
+					const option = options.find((o) => o.value === next);
+					if (option) onChoose(option.value);
+				}}
+				disabled={disabled}
+				className="gap-0.5"
+			>
+				{options.map((option) => (
+					<Label
+						key={option.value}
+						className={cn(
+							"-mx-2 min-h-10 items-start gap-3 rounded-lg px-2 py-2.5 leading-snug font-normal hover:bg-panel-2/60",
+							!option.usable && "text-dim",
+						)}
+					>
+						<RadioGroupItem
+							value={option.value}
+							disabled={!option.usable}
+							className="mt-px"
+						/>
+						<span>
+							{option.label}
+							{!option.usable && (
+								<span className="text-xs">
+									{" "}
+									{option.value === "local"
+										? t("settings.translateLocalMissing")
+										: t("settings.translateNoKey")}
+								</span>
+							)}
+						</span>
+					</Label>
+				))}
+			</RadioGroup>
+		</div>
 	);
 }
 
@@ -164,127 +254,66 @@ function Translation() {
 		{ ...local, label: t("settings.assistantLocal", { name: local.label }) },
 	];
 	return (
-		<section className="mt-10">
-			<h2 className="font-medium">{t("settings.translation")}</h2>
-			<p className="mt-2 text-sm leading-relaxed text-dim">
-				{t("settings.translationIntro")}
-			</p>
-			<fieldset className="mt-4">
-				<legend className="text-sm font-medium">
-					{t("settings.translateWith")}
-				</legend>
-				<div className="mt-2 flex flex-col gap-1.5">
-					{options.map((option) => (
-						<label
-							key={option.value}
-							className={`flex items-center gap-2 text-sm ${option.usable ? "" : "text-dim"}`}
-						>
-							<input
-								type="radio"
-								name="translate-with"
-								value={option.value}
-								checked={chosen === option.value}
-								disabled={!option.usable || choose.isPending}
-								onChange={() => choose.mutate({ translateWith: option.value })}
-							/>
-							{option.label}
-							{!option.usable && (
-								<span className="text-xs">
-									{option.value === "local"
-										? t("settings.translateLocalMissing")
-										: t("settings.translateNoKey")}
-								</span>
-							)}
-						</label>
-					))}
-				</div>
-			</fieldset>
-			<fieldset className="mt-4">
-				<legend className="text-sm font-medium">
-					{t("settings.improveWith")}
-				</legend>
-				<div className="mt-2 flex flex-col gap-1.5">
-					{improveOptions.map((option) => (
-						<label
-							key={option.value}
-							className={`flex items-center gap-2 text-sm ${option.usable ? "" : "text-dim"}`}
-						>
-							<input
-								type="radio"
-								name="improve-with"
-								value={option.value}
-								checked={improveChosen === option.value}
-								disabled={!option.usable || choose.isPending}
-								onChange={() => choose.mutate({ improveWith: option.value })}
-							/>
-							{option.label}
-							{!option.usable && (
-								<span className="text-xs">
-									{option.value === "local"
-										? t("settings.translateLocalMissing")
-										: t("settings.translateNoKey")}
-								</span>
-							)}
-						</label>
-					))}
-				</div>
-			</fieldset>
-			<fieldset className="mt-4">
-				<legend className="text-sm font-medium">
-					{t("settings.assistantWith")}
-				</legend>
-				<div className="mt-2 flex flex-col gap-1.5">
-					{assistantOptions.map((option) => (
-						<label
-							key={option.value}
-							className={`flex items-center gap-2 text-sm ${option.usable ? "" : "text-dim"}`}
-						>
-							<input
-								type="radio"
-								name="assistant-with"
-								value={option.value}
-								checked={assistantChosen === option.value}
-								disabled={!option.usable || choose.isPending}
-								onChange={() => choose.mutate({ assistantWith: option.value })}
-							/>
-							{option.label}
-							{!option.usable && (
-								<span className="text-xs">
-									{option.value === "local"
-										? t("settings.translateLocalMissing")
-										: t("settings.translateNoKey")}
-								</span>
-							)}
-						</label>
-					))}
-				</div>
-			</fieldset>
-			{choose.error && (
-				<p className="mt-2 text-sm text-danger">{explain(choose.error)}</p>
-			)}
-			<HelperModel
-				model={model}
-				label={t("settings.translation")}
-				on={t("settings.translationOn")}
-				off={t("settings.translationOff")}
-				install={(size) => t("settings.translationInstall", { size })}
-			/>
-			{eyes && (
-				<>
-					<h3 className="mt-8 text-sm font-medium">{t("settings.eyes")}</h3>
-					<p className="mt-2 text-sm leading-relaxed text-dim">
-						{t("settings.eyesIntro")}
-					</p>
+		<>
+			<Card className={SECTION}>
+				<SectionHeader
+					title={t("settings.translation")}
+					intro={t("settings.translationIntro")}
+				/>
+				<CardContent className="flex flex-col gap-6">
+					<div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+						<Choice
+							label={t("settings.translateWith")}
+							value={chosen}
+							options={options}
+							disabled={choose.isPending}
+							onChoose={(value) => choose.mutate({ translateWith: value })}
+						/>
+						<Choice
+							label={t("settings.improveWith")}
+							value={improveChosen}
+							options={improveOptions}
+							disabled={choose.isPending}
+							onChoose={(value) => choose.mutate({ improveWith: value })}
+						/>
+						<Choice
+							label={t("settings.assistantWith")}
+							value={assistantChosen}
+							options={assistantOptions}
+							disabled={choose.isPending}
+							onChoose={(value) => choose.mutate({ assistantWith: value })}
+						/>
+					</div>
+					{choose.error && (
+						<p className="text-sm text-danger">{explain(choose.error)}</p>
+					)}
 					<HelperModel
-						model={eyes}
-						label={t("settings.eyes")}
-						on={t("settings.eyesOn")}
-						off={t("settings.eyesOff")}
-						install={(size) => t("settings.eyesInstall", { size })}
+						model={model}
+						label={t("settings.translation")}
+						on={t("settings.translationOn")}
+						off={t("settings.translationOff")}
+						install={(size) => t("settings.translationInstall", { size })}
 					/>
-				</>
+				</CardContent>
+			</Card>
+			{eyes && (
+				<Card className={SECTION}>
+					<SectionHeader
+						title={t("settings.eyes")}
+						intro={t("settings.eyesIntro")}
+					/>
+					<CardContent>
+						<HelperModel
+							model={eyes}
+							label={t("settings.eyes")}
+							on={t("settings.eyesOn")}
+							off={t("settings.eyesOff")}
+							install={(size) => t("settings.eyesInstall", { size })}
+						/>
+					</CardContent>
+				</Card>
 			)}
-		</section>
+		</>
 	);
 }
 
@@ -316,41 +345,25 @@ function HelperModel({
 	const percent = Math.round((received / Math.max(size, 1)) * 100);
 	const error = install.error ?? remove.error;
 	return (
-		<div className="mt-4 rounded-lg border border-line bg-panel p-4">
+		<div className={PANEL}>
 			<div className="flex items-baseline justify-between gap-4">
 				<h3 className="font-medium">{model.name}</h3>
 				<span
-					className={`font-mono text-xs ${model.ready ? "text-accent" : "text-dim"}`}
+					className={`font-mono text-xs ${model.ready ? "text-good" : "text-dim"}`}
 				>
 					{model.ready ? on : off}
 				</span>
 			</div>
 			{busy ? (
-				<div className="mt-3 flex items-center gap-3">
-					<div
-						role="progressbar"
-						aria-label={label}
-						aria-valuemin={0}
-						aria-valuemax={100}
-						aria-valuenow={percent}
-						className="h-1.5 flex-1 overflow-hidden rounded-full bg-line"
-					>
-						<div
-							className="h-full rounded-full bg-accent transition-[width] duration-300"
-							style={{ width: `${percent}%` }}
-						/>
-					</div>
+				<div className="mt-3 flex flex-wrap items-center gap-3">
+					<Bar value={percent} label={label} className="min-w-40 flex-1" />
 					<span className="font-mono text-xs text-dim">
 						{bytes(received)} / {bytes(size)}
 					</span>
 					{can.admin && (
-						<button
-							type="button"
-							onClick={() => cancel.mutate()}
-							className="rounded-md border border-line px-3 py-1.5 text-sm text-dim hover:text-ink"
-						>
+						<Button variant="outline" onClick={() => cancel.mutate()}>
 							{t("common.cancel")}
-						</button>
+						</Button>
 					)}
 				</div>
 			) : !can.admin ? (
@@ -358,23 +371,22 @@ function HelperModel({
 					<p className="mt-3 text-sm text-dim">{t("models.askAdmin")}</p>
 				)
 			) : model.ready ? (
-				<button
-					type="button"
+				<Button
+					variant="outline"
 					onClick={() => remove.mutate()}
 					disabled={remove.isPending}
-					className="mt-3 rounded-md border border-line px-3 py-2 text-sm text-dim hover:text-danger"
+					className="mt-3 text-dim hover:text-danger"
 				>
 					{t("settings.remove")}
-				</button>
+				</Button>
 			) : (
-				<button
-					type="button"
+				<Button
 					onClick={() => install.mutate()}
 					disabled={install.isPending}
-					className="mt-3 rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-ink disabled:opacity-40"
+					className="mt-3"
 				>
 					{installText(bytes(size))}
-				</button>
+				</Button>
 			)}
 			{model.error && !busy && (
 				<p className="mt-2 text-sm text-danger">
@@ -396,11 +408,11 @@ function CopyLine({ text }: { text: string }) {
 	const [copied, setCopied] = useState(false);
 	return (
 		<div className="mt-3 flex items-start gap-2">
-			<code className="min-w-0 flex-1 break-all rounded-md border border-line bg-bg px-3 py-2 font-mono text-xs leading-relaxed">
+			<code className="min-w-0 flex-1 rounded-lg border border-line bg-bg px-3 py-2.5 font-mono text-xs leading-relaxed break-all">
 				{text}
 			</code>
-			<button
-				type="button"
+			<Button
+				variant="outline"
 				disabled={!text}
 				onClick={() =>
 					void navigator.clipboard?.writeText(text).then(() => {
@@ -408,10 +420,9 @@ function CopyLine({ text }: { text: string }) {
 						setTimeout(() => setCopied(false), 2000);
 					})
 				}
-				className="rounded-md border border-line px-3 py-2 text-sm text-dim hover:text-ink"
 			>
 				{copied ? t("settings.agentsCopied") : t("settings.agentsCopy")}
-			</button>
+			</Button>
 		</div>
 	);
 }
@@ -441,6 +452,7 @@ const policyArgs = (policy: AgentPolicy) =>
  */
 function Agents() {
 	const { t, explain, number } = useI18n();
+	const id = useId();
 	const client = useQueryClient();
 	const status = useQuery({ queryKey: ["agents"], queryFn: api.agents });
 	const [allowPaid, setAllowPaid] = useState<boolean | null>(null);
@@ -499,128 +511,130 @@ function Agents() {
 		desktop.policy?.allowPaid === policy.allowPaid &&
 		(desktop.policy?.spendLimitUsd ?? null) === policy.spendLimitUsd;
 	const error = connect.error ?? disconnect.error ?? status.error;
-	const card = "rounded-lg border border-line bg-panel p-4";
 
 	return (
-		<section className="mt-10">
-			<h2 className="font-medium">{t("settings.agents")}</h2>
-			<p className="mt-2 text-sm leading-relaxed text-dim">
-				{t("settings.agentsIntro")}
-			</p>
-			<div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-				<label className="flex items-center gap-2">
-					<input
-						type="checkbox"
-						checked={paid}
-						onChange={(event) => setAllowPaid(event.target.checked)}
-						className="accent-accent"
-					/>
-					{t("settings.agentsPaid")}
-				</label>
-				{paid && (
-					<>
-						<label className="flex items-center gap-2 text-dim">
-							{t("settings.agentsLimit")}
-							<input
-								type="number"
-								min={0}
-								step={1}
-								value={limitText}
-								disabled={noLimit}
-								onChange={(event) => setLimit(event.target.value)}
-								aria-invalid={!validLimit}
-								className="w-24 rounded-md border border-line bg-bg px-2 py-1 font-mono disabled:opacity-40"
-							/>
-							{!noLimit && validLimit && (
-								<span className="text-xs">
-									{number(limitUsd, { style: "currency", currency: "USD" })}
-								</span>
-							)}
-						</label>
-						<label className="flex items-center gap-2 text-dim">
-							<input
-								type="checkbox"
-								checked={noLimit}
-								onChange={(event) => setUnlimited(event.target.checked)}
-								className="accent-accent"
-							/>
-							{t("settings.agentsNoLimit")}
-						</label>
-					</>
-				)}
-			</div>
-
-			<div className={`${card} mt-4`}>
-				<div className="flex items-baseline justify-between gap-4">
-					<h3 className="font-medium">Claude Desktop</h3>
-					<span
-						className={`font-mono text-xs ${desktop?.connected ? "text-accent" : "text-dim"}`}
-					>
-						{!desktop?.available
-							? t("settings.agentsNotInstalled")
-							: desktop.connected
-								? t("settings.agentsConnected")
-								: t("settings.agentsNotConnected")}
-					</span>
+		<Card className={SECTION}>
+			<SectionHeader
+				title={t("settings.agents")}
+				intro={t("settings.agentsIntro")}
+			/>
+			<CardContent className="flex flex-col gap-5">
+				<div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+					<Label className="min-h-10 gap-3 font-normal">
+						<Switch
+							checked={paid}
+							onCheckedChange={(checked) => setAllowPaid(checked)}
+						/>
+						{t("settings.agentsPaid")}
+					</Label>
+					{paid && (
+						<>
+							<div className="flex items-center gap-3">
+								<Label htmlFor={`${id}-limit`} className="font-normal text-dim">
+									{t("settings.agentsLimit")}
+								</Label>
+								<Input
+									id={`${id}-limit`}
+									type="number"
+									min={0}
+									step={1}
+									value={limitText}
+									disabled={noLimit}
+									onChange={(event) => setLimit(event.target.value)}
+									aria-invalid={!validLimit}
+									className="h-10 w-24 font-mono"
+								/>
+								{!noLimit && validLimit && (
+									<span className="font-mono text-xs text-dim">
+										{number(limitUsd, { style: "currency", currency: "USD" })}
+									</span>
+								)}
+							</div>
+							<Label className="min-h-10 gap-3 font-normal text-dim">
+								<Checkbox
+									checked={noLimit}
+									onCheckedChange={(checked) => setUnlimited(checked)}
+								/>
+								{t("settings.agentsNoLimit")}
+							</Label>
+						</>
+					)}
 				</div>
-				{desktop?.problem && (
-					<p className="mt-2 text-sm text-danger">
-						{t("settings.agentsUnreadable")}
-					</p>
-				)}
-				{desktop?.available && !desktop.problem && (
-					<div className="mt-3 flex flex-wrap gap-2">
-						{(!desktop.connected || !same) && (
-							<button
-								type="button"
-								onClick={() => connect.mutate()}
-								disabled={connect.isPending || !validLimit}
-								className="cta rounded-lg px-4 py-2 text-sm font-medium"
+
+				<div className="grid gap-3 md:grid-cols-2">
+					<div className={PANEL}>
+						<div className="flex items-baseline justify-between gap-4">
+							<h3 className="font-medium">Claude Desktop</h3>
+							<span
+								className={`font-mono text-xs ${desktop?.connected ? "text-good" : "text-dim"}`}
 							>
-								{desktop.connected
-									? t("settings.agentsUpdate")
-									: t("settings.agentsConnect")}
-							</button>
+								{!desktop?.available
+									? t("settings.agentsNotInstalled")
+									: desktop.connected
+										? t("settings.agentsConnected")
+										: t("settings.agentsNotConnected")}
+							</span>
+						</div>
+						{desktop?.problem && (
+							<p className="mt-2 text-sm text-danger">
+								{t("settings.agentsUnreadable")}
+							</p>
 						)}
-						{desktop.connected && (
-							<button
-								type="button"
-								onClick={() => disconnect.mutate()}
-								disabled={disconnect.isPending}
-								className="rounded-md border border-line px-3 py-2 text-sm text-dim hover:text-danger"
-							>
-								{t("settings.agentsDisconnect")}
-							</button>
+						{desktop?.available && !desktop.problem && (
+							<div className="mt-3 flex flex-wrap gap-2">
+								{(!desktop.connected || !same) && (
+									<Button
+										variant="aurora"
+										onClick={() => connect.mutate()}
+										disabled={connect.isPending || !validLimit}
+									>
+										{desktop.connected
+											? t("settings.agentsUpdate")
+											: t("settings.agentsConnect")}
+									</Button>
+								)}
+								{desktop.connected && (
+									<Button
+										variant="outline"
+										onClick={() => disconnect.mutate()}
+										disabled={disconnect.isPending}
+										className="text-dim hover:text-danger"
+									>
+										{t("settings.agentsDisconnect")}
+									</Button>
+								)}
+							</div>
+						)}
+						{restart && (
+							<p className="mt-2 text-sm text-dim" role="status">
+								{t("settings.agentsRestart")}
+							</p>
 						)}
 					</div>
-				)}
-				{restart && (
-					<p className="mt-2 text-sm text-dim" role="status">
-						{t("settings.agentsRestart")}
-					</p>
-				)}
-			</div>
 
-			<div className={`${card} mt-3`}>
-				<h3 className="font-medium">Claude Code</h3>
-				<p className="mt-1 text-sm text-dim">{t("settings.agentsCode")}</p>
-				<CopyLine text={command} />
-				{commandWsl && (
-					<>
-						<p className="mt-3 text-sm text-dim">
-							{t("settings.agentsCodeWsl")}
-						</p>
-						<CopyLine text={commandWsl} />
-					</>
-				)}
-			</div>
-			{error && <p className="mt-2 text-sm text-danger">{explain(error)}</p>}
-		</section>
+					<div className={PANEL}>
+						<h3 className="font-medium">Claude Code</h3>
+						<p className="mt-1 text-sm text-dim">{t("settings.agentsCode")}</p>
+						<CopyLine text={command} />
+						{commandWsl && (
+							<>
+								<p className="mt-3 text-sm text-dim">
+									{t("settings.agentsCodeWsl")}
+								</p>
+								<CopyLine text={commandWsl} />
+							</>
+						)}
+					</div>
+				</div>
+				{error && <p className="text-sm text-danger">{explain(error)}</p>}
+			</CardContent>
+		</Card>
 	);
 }
 
 export function Settings() {
 	const { t, explain, language, setLanguage, languages } = useI18n();
+	const id = useId();
 	// Agents are set up on the machine that runs Hatchlight.
 	const server = useServerMode();
 	const can = useCan();
@@ -628,48 +642,79 @@ export function Settings() {
 		queryKey: ["providers"],
 		queryFn: api.providers,
 	});
+	const languageItems = languages.map((option) => ({
+		value: option.code,
+		label: option.name,
+	}));
 	return (
-		<div className="mx-auto w-full max-w-2xl overflow-y-auto p-8">
-			<h1 className="font-display text-4xl leading-none font-extrabold tracking-tight">
-				{t("settings.title")}
-			</h1>
-			<section className="mt-6">
-				<h2 className="font-medium">{t("settings.language")}</h2>
-				<select
-					value={language}
-					onChange={(event) => setLanguage(event.target.value)}
-					aria-label={t("settings.language")}
-					className="mt-3 rounded-md border border-line bg-panel px-3 py-2 text-sm"
-				>
-					{languages.map((option) => (
-						<option key={option.code} value={option.code} lang={option.code}>
-							{option.name}
-						</option>
-					))}
-				</select>
-			</section>
-			<AccountSettings />
-			<Translation />
-			<h2 className="mt-10 font-medium">{t("settings.providers")}</h2>
-			<p className="mt-2 text-sm leading-relaxed text-dim">
-				{can.owner
-					? t("settings.providersIntro")
-					: t("settings.providersServer")}
-			</p>
-			{providers.error && (
-				<p className="mt-6 text-sm text-danger">{explain(providers.error)}</p>
-			)}
-			<ul className="mt-6 flex flex-col gap-3">
-				{providers.data?.map((provider) => (
-					<ProviderRow
-						key={provider.id}
-						provider={provider}
-						editable={can.owner}
+		<div className="min-h-0 flex-1 overflow-y-auto">
+			<div className="mx-auto flex w-full max-w-[1060px] flex-col gap-6 px-4 py-8 sm:px-8 sm:py-12">
+				<PageHeader
+					eyebrow={t("settings.eyebrow")}
+					title={t("settings.title")}
+					intro={t("settings.intro")}
+				/>
+				<Card className={SECTION}>
+					<CardHeader className="flex flex-wrap items-center justify-between gap-4">
+						<h2 className={LABEL}>
+							<label htmlFor={`${id}-language`}>{t("settings.language")}</label>
+						</h2>
+						<Select
+							items={languageItems}
+							value={language}
+							onValueChange={(next: string | null) => {
+								if (next) setLanguage(next);
+							}}
+						>
+							<SelectTrigger
+								id={`${id}-language`}
+								className="min-w-56 data-[size=default]:h-10"
+							>
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								{languages.map((option) => (
+									<SelectItem
+										key={option.code}
+										value={option.code}
+										lang={option.code}
+									>
+										{option.name}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+					</CardHeader>
+				</Card>
+				<AccountSettings />
+				<Translation />
+				<Card className={SECTION}>
+					<SectionHeader
+						title={t("settings.providers")}
+						intro={
+							can.owner
+								? t("settings.providersIntro")
+								: t("settings.providersServer")
+						}
 					/>
-				))}
-			</ul>
-			<UsersSettings />
-			{!server && <Agents />}
+					<CardContent className="flex flex-col gap-3">
+						{providers.error && (
+							<p className="text-sm text-danger">{explain(providers.error)}</p>
+						)}
+						<ul className="grid gap-3 md:grid-cols-2">
+							{providers.data?.map((provider) => (
+								<ProviderRow
+									key={provider.id}
+									provider={provider}
+									editable={can.owner}
+								/>
+							))}
+						</ul>
+					</CardContent>
+				</Card>
+				<UsersSettings />
+				{!server && <Agents />}
+			</div>
 		</div>
 	);
 }
