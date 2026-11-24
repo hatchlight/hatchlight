@@ -49,6 +49,26 @@ export function setSessionCookie(c: Context, signed: SignedIn): void {
 	});
 }
 
+/** Device cookies last a year: they only vouch that a browser signed in before. */
+const DEVICE_MAX_AGE = 365 * 24 * 60 * 60;
+const SECURE_DEVICE_COOKIE = "__Host-hatchlight-device";
+const PLAIN_DEVICE_COOKIE = "hatchlight_device";
+
+export function setDeviceCookie(c: Context, value: string): void {
+	const https = isHttps(c);
+	setCookie(c, https ? SECURE_DEVICE_COOKIE : PLAIN_DEVICE_COOKIE, value, {
+		httpOnly: true,
+		secure: https,
+		sameSite: "Lax",
+		path: "/",
+		maxAge: DEVICE_MAX_AGE,
+	});
+}
+
+export function deviceCookie(c: Context): string | undefined {
+	return getCookie(c, isHttps(c) ? SECURE_DEVICE_COOKIE : PLAIN_DEVICE_COOKIE);
+}
+
 export function clearSessionCookie(c: Context): void {
 	if (isHttps(c)) {
 		deleteCookie(c, SECURE_COOKIE, { path: "/", secure: true });

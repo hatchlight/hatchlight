@@ -1221,3 +1221,42 @@ test("password checks from one address run one at a time", async () => {
 	clearInterval(watch);
 	expect(most).toBe(1);
 });
+
+test("a browser that signed in before gets past strangers guessing its name", async () => {
+	const { call, runtime } = await serverApp();
+	const setup = await call("/api/setup", {
+		method: "POST",
+		body: {
+			code: runtime.accounts.setupCode(),
+			username: "owner",
+			password: PASSWORD,
+		},
+	});
+	const cookies = setup.headers.getSetCookie();
+	const device = cookies.find((c) => c.startsWith("hatchlight_device="));
+	expect(device).toContain("HttpOnly");
+	expect(device).toContain("SameSite=Lax");
+	const deviceCookie = device?.split(";")[0] as string;
+	// Sixty addresses each guess once: the name as a whole is now slowed.
+	for (let i = 0; i < 60; i++) {
+		await call("/api/login", {
+			method: "POST",
+			body: { username: "owner", password: "not the password" },
+			peer: `203.0.113.${i + 1}`,
+		});
+	}
+	const login = (headers: Record<string, string> = {}) =>
+		call("/api/login", {
+			method: "POST",
+			body: { username: "owner", password: PASSWORD },
+			peer: "198.51.100.4",
+			headers,
+		});
+	// An unknown browser waits like everyone else.
+	expect((await login()).status).toBe(429);
+	// The owner's own browser gets in.
+	expect((await login({ cookie: deviceCookie })).status).toBe(200);
+	// A cookie for another name, or a forged one, does not help.
+	const forged = deviceCookie.replace(/.$/, (c) => (c === "A" ? "B" : "A"));
+	expect((await login({ cookie: forged })).status).toBe(429);
+});

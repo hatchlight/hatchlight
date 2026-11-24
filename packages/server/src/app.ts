@@ -34,6 +34,7 @@ import { streamSSE } from "hono/streaming";
 import { mountAccounts } from "./accounts-routes";
 import type { Agents } from "./agents";
 import { requireAccess } from "./auth";
+import { DeviceCookies } from "./devices";
 import type { AssistantBrain, ImproveRequest } from "./runtime";
 import {
 	DEFAULT_LORA_QUOTA,
@@ -62,6 +63,11 @@ export interface AppOptions {
 	server?: ServerTransport;
 	/** LoRAs each member may add, on a server. Defaults to 20 files, 10 GB. */
 	loraQuota?: LoraQuota;
+	/**
+	 * Signs device cookies; kept in the data directory so they outlive a
+	 * restart. Without it, a new one each start.
+	 */
+	deviceKey?: Uint8Array;
 	/** The people of a server, who sign in; needed in server mode. */
 	accounts?: AccountService;
 	/** Why a person may not spend on paid models now, or null; servers only. */
@@ -376,7 +382,14 @@ export function createApp(options: AppOptions): Hono {
 	if (accounts) {
 		// On a server, every route but the public ones needs a signed-in person.
 		app.use("/api/*", requireAccess(accounts));
-		mountAccounts(app, accounts, json);
+		mountAccounts(
+			app,
+			accounts,
+			json,
+			new DeviceCookies(
+				options.deviceKey ?? crypto.getRandomValues(new Uint8Array(32)),
+			),
+		);
 	}
 
 	/** Why the person asking may not spend on paid models now, if they may not. */

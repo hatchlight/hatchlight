@@ -9,7 +9,13 @@ import {
 	ValidationError,
 } from "@hatchlight/core";
 import type { Context, Hono } from "hono";
-import { clearSessionCookie, setSessionCookie } from "./auth";
+import {
+	clearSessionCookie,
+	deviceCookie,
+	setDeviceCookie,
+	setSessionCookie,
+} from "./auth";
+import type { DeviceCookies } from "./devices";
 import { Limiter } from "./limiter";
 import { parseIp } from "./transport";
 
@@ -21,6 +27,7 @@ export function mountAccounts(
 	app: Hono,
 	accounts: AccountService,
 	json: (c: Context) => Promise<Record<string, unknown>>,
+	devices: DeviceCookies,
 	limits = {
 		// Guesses from one address, whatever name they try.
 		byAddress: new Limiter({ freeTries: 20 }),
@@ -72,6 +79,10 @@ export function mountAccounts(
 	): Promise<T> => {
 		const address = `ip:${addressGroup(c.get("client"))}`;
 		const lowered = name?.trim().toLowerCase() ?? null;
+		// A browser that signed in as this name before is not held back by
+		// strangers guessing it from elsewhere.
+		const knownDevice =
+			lowered !== null && devices.vouchesFor(deviceCookie(c), lowered);
 		const counted: [Limiter, string][] =
 			kind === "joining"
 				? [[limits.joining, address]]
@@ -80,7 +91,7 @@ export function mountAccounts(
 						...(lowered
 							? ([
 									[limits.byNameAndAddress, `${lowered}|${address}`],
-									[limits.byName, `user:${lowered}`],
+									...(knownDevice ? [] : [[limits.byName, `user:${lowered}`]]),
 								] as [Limiter, string][])
 							: []),
 					];
@@ -128,6 +139,7 @@ export function mountAccounts(
 			),
 		);
 		setSessionCookie(c, signed);
+		setDeviceCookie(c, devices.issue(signed.user.username));
 		return c.json(accountView(signed.user), 201);
 	});
 
@@ -149,6 +161,7 @@ export function mountAccounts(
 			),
 		);
 		setSessionCookie(c, signed);
+		setDeviceCookie(c, devices.issue(signed.user.username));
 		return c.json(accountView(signed.user));
 	});
 
@@ -275,6 +288,7 @@ export function mountAccounts(
 			),
 		);
 		setSessionCookie(c, signed);
+		setDeviceCookie(c, devices.issue(signed.user.username));
 		return c.json(accountView(signed.user), 201);
 	});
 	app.get("/api/invites", (c) => c.json(accounts.invites()));

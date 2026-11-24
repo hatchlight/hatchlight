@@ -61,11 +61,14 @@ import {
 	type CloudTranslatorId,
 } from "@hatchlight/providers";
 import { Assistant, type Reel } from "@hatchlight/tools";
+import { deviceKey } from "./devices";
 
 export interface Runtime {
 	service: ReelService;
 	/** The people of a server; unused on a personal install. */
 	accounts: AccountService;
+	/** Signs device cookies; servers only. */
+	deviceKey?: Uint8Array;
 	/** Why a person may not spend on paid models now; servers only. */
 	paidRefusal?: (userId: string) => PaidRefusal | null;
 	engine: JobEngine;
@@ -710,6 +713,9 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	return {
 		service,
 		accounts,
+		deviceKey: options.server
+			? deviceKey(join(options.dataDir, "device.key"))
+			: undefined,
 		paidRefusal: refusePaid,
 		engine,
 		models,
