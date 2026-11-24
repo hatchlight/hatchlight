@@ -51,7 +51,8 @@ RUN apt-get update \
 	&& useradd --uid 1000 --gid 1000 --create-home --home-dir /home/hatchlight \
 		--shell /usr/sbin/nologin hatchlight \
 	&& mkdir -p /data /models /trainer \
-	&& chown hatchlight:hatchlight /data /models /trainer
+	&& chown hatchlight:hatchlight /data /models /trainer \
+	&& chmod 700 /data /trainer
 
 COPY --from=engines /opt/hatchlight/engines /opt/hatchlight/engines
 COPY --from=build /opt/hatchlight/bin /opt/hatchlight/bin

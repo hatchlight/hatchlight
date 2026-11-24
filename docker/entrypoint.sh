@@ -8,13 +8,17 @@ PUID="${PUID:-1000}"
 PGID="${PGID:-1000}"
 
 if [ "$(id -u)" = 0 ]; then
-	case "$PUID$PGID" in
-	*[!0-9]*)
+	case "$PUID" in "" | *[!0-9]*) bad=1 ;; esac
+	case "$PGID" in "" | *[!0-9]*) bad=1 ;; esac
+	if [ -n "${bad:-}" ]; then
 		echo "PUID and PGID must be numbers (got PUID=$PUID PGID=$PGID)." >&2
 		exit 64
-		;;
-	esac
-	if [ "$PUID" = 0 ] || [ "$PGID" = 0 ]; then
+	fi
+	# As decimal numbers, without leading zeros: 00 is 0 and 0010 is 10. (The
+	# shell is dash: no $((10#...)), and $((010)) would be octal.)
+	while [ "${PUID#0}" != "$PUID" ] && [ -n "${PUID#0}" ]; do PUID=${PUID#0}; done
+	while [ "${PGID#0}" != "$PGID" ] && [ -n "${PGID#0}" ]; do PGID=${PGID#0}; done
+	if [ "$PUID" -eq 0 ] || [ "$PGID" -eq 0 ]; then
 		echo "Hatchlight does not run as root: set PUID and PGID to a user, such as 1000." >&2
 		exit 64
 	fi
@@ -31,6 +35,10 @@ if [ "$(id -u)" = 0 ]; then
 				echo "Could not change the owner of $dir (a network share?); make it writable by $PUID:$PGID." >&2
 		fi
 	done
+	# Accounts, keys and pictures, and the trainer's: their user's alone, on
+	# installs made before this too.
+	chmod 700 "$HATCHLIGHT_DATA_DIR" "$HATCHLIGHT_TRAINER_DIR" ||
+		echo "Could not make $HATCHLIGHT_DATA_DIR private (a network share?)." >&2
 fi
 
 # Said here with an example for Docker, before the app says it its own way.

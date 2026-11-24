@@ -14,7 +14,13 @@ serve | -*) set -- "$@" --resources "$resources" ;;
 users) set -- "$@" --resources "$resources" ;;
 esac
 
+# What it writes (pictures, backups, keys) is its user's alone.
+umask 077
+
+# As root: becomes the hatchlight user, with no capabilities left to it or to
+# what it starts, and no way to gain any back (setuid programs included).
 if [ "$(id -u)" = 0 ]; then
-	exec setpriv --reuid=hatchlight --regid=hatchlight --init-groups -- "$app" "$@"
+	exec setpriv --reuid=hatchlight --regid=hatchlight --init-groups \
+		--no-new-privs --inh-caps=-all --bounding-set=-all -- "$app" "$@"
 fi
 exec "$app" "$@"
