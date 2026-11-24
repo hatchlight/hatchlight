@@ -1,16 +1,34 @@
 import type { AccountView, InviteView, UserRole } from "@hatchlight/core/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { LogOutIcon, TriangleAlertIcon } from "lucide-react";
 import {
 	createContext,
 	type FormEvent,
 	type ReactNode,
 	useContext,
 	useEffect,
+	useId,
 	useState,
 	useSyncExternalStore,
 } from "react";
+import { Logo } from "@/components/Logo";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
 import { ApiError, api, type InviteTerms, whenSignedOut } from "./api";
 import { type I18n, useI18n } from "./i18n";
+import { ConfirmButton, LABEL, SECTION } from "./Training";
 
 const MIN_PASSWORD = 10;
 
@@ -51,12 +69,12 @@ const reload = () => {
 	window.location.reload();
 };
 
-const input =
-	"w-full rounded-md border border-line bg-bg px-3 py-2 text-sm focus:border-dim focus:outline-none";
-const primary =
-	"rounded-md bg-pink px-4 py-2 text-sm font-medium text-on-aurora disabled:opacity-40";
-const secondary =
-	"rounded-md border border-line px-3 py-2 text-sm text-dim hover:border-dim hover:text-ink disabled:opacity-40";
+/** A text field tall enough to touch. */
+const FIELD = "h-10";
+/** A panel inside a section: one form, one list. */
+const PANEL = "rounded-xl border border-line bg-bg/60 p-4";
+/** The small heading of a panel. */
+const PANEL_TITLE = "font-medium";
 
 const inviteToken = (hash: string) =>
 	/^#\/invite\/([\w-]+)$/.exec(hash)?.[1] ?? null;
@@ -151,18 +169,31 @@ function ServerGate({
 		screen = <SignIn />;
 	}
 	return (
-		<div className="flex h-full overflow-y-auto">
-			<main className="m-auto flex w-full max-w-sm flex-col gap-6 p-8">
-				<p className="flex items-center gap-3 font-display text-3xl leading-none font-extrabold tracking-tight">
-					<i
-						aria-hidden="true"
-						className="aurora relative size-6 rounded-full shadow-[0_0_24px_rgb(255_61_139/0.5)] after:absolute after:inset-[6px] after:rounded-full after:bg-bg"
-					/>
-					Hatchlight
-				</p>
+		<div className="relative isolate flex h-full overflow-x-hidden overflow-y-auto">
+			<div className="sky -z-10" aria-hidden="true" />
+			<main className="m-auto flex w-full max-w-md flex-col gap-6 px-4 py-10 sm:py-16">
+				<Logo className="self-center" />
 				{!secure && <Unencrypted />}
-				{screen}
+				{screen && (
+					<Card
+						className={cn(SECTION, "scene-in bg-panel/85 backdrop-blur-sm")}
+					>
+						<CardContent className="flex flex-col gap-6">{screen}</CardContent>
+					</Card>
+				)}
 			</main>
+		</div>
+	);
+}
+
+/** The top of a screen before the app: its title, big, and a few words. */
+function Heading({ title, intro }: { title: string; intro?: string }) {
+	return (
+		<div className="flex flex-col gap-3">
+			<h1 className="font-display text-[34px] leading-none font-extrabold tracking-[-0.02em] text-balance sm:text-4xl">
+				{title}
+			</h1>
+			{intro && <p className="text-sm leading-relaxed text-soft">{intro}</p>}
 		</div>
 	);
 }
@@ -178,19 +209,18 @@ function ResetNotice({ notice }: { notice: { by: string; at: number } }) {
 	return (
 		<div
 			role="status"
-			className="flex shrink-0 items-center justify-center gap-3 border-b border-line bg-panel px-4 py-2 text-sm"
+			className="flex shrink-0 flex-wrap items-center justify-center gap-x-4 gap-y-2 border-b border-line bg-panel px-4 py-2 text-sm"
 		>
 			<span>
 				{t("account.resetNotice", { name: notice.by, date: date(notice.at) })}
 			</span>
-			<button
-				type="button"
+			<Button
+				variant="outline"
 				onClick={() => dismiss.mutate()}
 				disabled={dismiss.isPending}
-				className={secondary}
 			>
 				{t("account.resetNoticeOk")}
-			</button>
+			</Button>
 		</div>
 	);
 }
@@ -198,35 +228,45 @@ function ResetNotice({ notice }: { notice: { by: string; at: number } }) {
 /** Passwords would cross the network as plain text. */
 function Unencrypted({ banner = false }: { banner?: boolean }) {
 	const { t } = useI18n();
+	if (banner) {
+		return (
+			<p
+				role="note"
+				className="shrink-0 bg-warn px-4 py-1 text-center text-xs font-medium text-black"
+			>
+				{t("account.unencrypted")}
+			</p>
+		);
+	}
 	return (
 		<p
 			role="note"
-			className={
-				banner
-					? "shrink-0 bg-warn px-4 py-1 text-center text-xs font-medium text-black"
-					: "rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn"
-			}
+			className="flex gap-3 rounded-xl border border-warn/40 bg-warn/10 px-4 py-3 text-sm leading-relaxed text-warn"
 		>
+			<TriangleAlertIcon
+				aria-hidden="true"
+				className="mt-0.5 size-4 shrink-0"
+			/>
 			{t("account.unencrypted")}
 		</p>
 	);
 }
 
+/** A label over its field; the field is the child. */
 function Field({ label, children }: { label: string; children: ReactNode }) {
 	return (
-		// biome-ignore lint/a11y/noLabelWithoutControl: the control is the child
-		<label className="flex flex-col gap-1.5 text-sm">
-			<span className="text-dim">{label}</span>
+		<Label className="flex-col items-stretch gap-2 font-normal text-soft">
+			{label}
 			{children}
-		</label>
+		</Label>
 	);
 }
 
-function Problem({ error }: { error: unknown }) {
+function Problem({ error, id }: { error: unknown; id?: string }) {
 	const { explain } = useI18n();
 	if (!error) return null;
 	return (
-		<p role="alert" className="text-sm text-danger">
+		<p id={id} role="alert" className="text-sm text-danger">
 			{explain(error)}
 		</p>
 	);
@@ -247,6 +287,7 @@ function NewAccount({
 	action: string;
 }) {
 	const { t } = useI18n();
+	const id = useId();
 	const [username, setUsername] = useState("");
 	const [password, setPassword] = useState("");
 	const [again, setAgain] = useState("");
@@ -261,48 +302,56 @@ function NewAccount({
 		>
 			{children}
 			<Field label={t("account.username")}>
-				<input
+				<Input
 					value={username}
 					onChange={(event) => setUsername(event.target.value)}
 					autoComplete="username"
 					required
-					className={input}
+					aria-describedby={error ? `${id}-error` : undefined}
+					className={FIELD}
 				/>
 			</Field>
 			<Field label={t("account.newPassword")}>
-				<input
+				<Input
 					type="password"
 					value={password}
 					onChange={(event) => setPassword(event.target.value)}
 					autoComplete="new-password"
 					minLength={MIN_PASSWORD}
 					required
-					className={input}
+					aria-describedby={`${id}-hint`}
+					className={FIELD}
 				/>
 			</Field>
 			<Field label={t("account.passwordAgain")}>
-				<input
+				<Input
 					type="password"
 					value={again}
 					onChange={(event) => setAgain(event.target.value)}
 					autoComplete="new-password"
 					required
-					className={input}
+					aria-invalid={mismatch || undefined}
+					aria-describedby={`${id}-hint`}
+					className={FIELD}
 				/>
 			</Field>
-			<p className="text-xs text-dim">
+			<p
+				id={`${id}-hint`}
+				className={cn("text-xs", mismatch ? "text-danger" : "text-dim")}
+			>
 				{mismatch
 					? t("account.passwordsDiffer")
 					: t("account.passwordHint", { min: MIN_PASSWORD })}
 			</p>
-			<Problem error={error} />
-			<button
+			<Problem error={error} id={`${id}-error`} />
+			<Button
 				type="submit"
+				variant="aurora"
+				size="lg"
 				disabled={pending || mismatch || password.length < MIN_PASSWORD}
-				className={primary}
 			>
 				{action}
-			</button>
+			</Button>
 		</form>
 	);
 }
@@ -317,12 +366,7 @@ function Setup() {
 	});
 	return (
 		<>
-			<div>
-				<h1 className="text-xl font-semibold">{t("setup.title")}</h1>
-				<p className="mt-2 text-sm leading-relaxed text-dim">
-					{t("setup.intro")}
-				</p>
-			</div>
+			<Heading title={t("setup.title")} intro={t("setup.intro")} />
 			<NewAccount
 				submit={(username, password) => setup.mutate({ username, password })}
 				pending={setup.isPending}
@@ -330,14 +374,14 @@ function Setup() {
 				action={t("setup.create")}
 			>
 				<Field label={t("setup.code")}>
-					<input
+					<Input
 						value={code}
 						onChange={(event) => setCode(event.target.value)}
 						autoComplete="off"
 						spellCheck={false}
 						required
 						placeholder="XXXX-XXXX-XXXX"
-						className={`${input} font-mono uppercase`}
+						className={cn(FIELD, "font-mono tracking-wider uppercase")}
 					/>
 				</Field>
 			</NewAccount>
@@ -347,6 +391,7 @@ function Setup() {
 
 function SignIn() {
 	const { t } = useI18n();
+	const id = useId();
 	const [username, setUsername] = useState("");
 	const [password, setPassword] = useState("");
 	const [code, setCode] = useState("");
@@ -368,62 +413,74 @@ function SignIn() {
 	// Being asked for the code is the next step, not a failure.
 	const asked =
 		login.error instanceof ApiError && login.error.code === "totpRequired";
+	const failed = login.error != null && !asked;
+	const describedBy = failed ? `${id}-error` : undefined;
 	return (
 		<>
-			<h1 className="text-xl font-semibold">{t("signin.title")}</h1>
+			<Heading title={t("signin.title")} />
 			<form className="flex flex-col gap-4" onSubmit={submit}>
 				{asksCode ? (
 					<Field label={t("signin.code")}>
-						<input
+						<Input
 							value={code}
 							onChange={(event) => setCode(event.target.value)}
 							inputMode="numeric"
 							autoComplete="one-time-code"
-							// biome-ignore lint/a11y/noAutofocus: the step that opens asks for it
 							autoFocus
 							required
-							className={`${input} font-mono tracking-widest`}
+							aria-invalid={failed || undefined}
+							aria-describedby={describedBy}
+							className={cn(FIELD, "font-mono text-lg tracking-[0.3em]")}
 						/>
 					</Field>
 				) : (
 					<>
 						<Field label={t("account.username")}>
-							<input
+							<Input
 								value={username}
 								onChange={(event) => setUsername(event.target.value)}
 								autoComplete="username"
 								required
-								className={input}
+								aria-invalid={failed || undefined}
+								aria-describedby={describedBy}
+								className={FIELD}
 							/>
 						</Field>
 						<Field label={t("account.password")}>
-							<input
+							<Input
 								type="password"
 								value={password}
 								onChange={(event) => setPassword(event.target.value)}
 								autoComplete="current-password"
 								required
-								className={input}
+								aria-invalid={failed || undefined}
+								aria-describedby={describedBy}
+								className={FIELD}
 							/>
 						</Field>
 					</>
 				)}
-				{!asked && <Problem error={login.error} />}
-				<button type="submit" disabled={login.isPending} className={primary}>
+				{failed && <Problem error={login.error} id={`${id}-error`} />}
+				<Button
+					type="submit"
+					variant="aurora"
+					size="lg"
+					disabled={login.isPending}
+				>
 					{t("signin.submit")}
-				</button>
+				</Button>
 				{asksCode && (
-					<button
-						type="button"
+					<Button
+						variant="ghost"
 						onClick={() => {
 							setAsksCode(false);
 							setCode("");
 							login.reset();
 						}}
-						className={secondary}
+						className="text-dim"
 					>
 						{t("common.back")}
-					</button>
+					</Button>
 				)}
 			</form>
 			<p className="text-xs leading-relaxed text-dim">{t("signin.forgot")}</p>
@@ -447,8 +504,9 @@ function AcceptInvite({ token }: { token: string }) {
 	if (invite.error) {
 		return (
 			<>
+				<Heading title={t("invite.title")} />
 				<Problem error={invite.error} />
-				<a href="#/" className={secondary}>
+				<a href="#/" className={buttonVariants({ variant: "outline" })}>
 					{t("signin.title")}
 				</a>
 			</>
@@ -456,12 +514,10 @@ function AcceptInvite({ token }: { token: string }) {
 	}
 	return (
 		<>
-			<div>
-				<h1 className="text-xl font-semibold">{t("invite.title")}</h1>
-				<p className="mt-2 text-sm leading-relaxed text-dim">
-					{t("invite.intro", { role: roleText(t, invite.data.role) })}
-				</p>
-			</div>
+			<Heading
+				title={t("invite.title")}
+				intro={t("invite.intro", { role: roleText(t, invite.data.role) })}
+			/>
 			<NewAccount
 				submit={(username, password) => accept.mutate({ username, password })}
 				pending={accept.isPending}
@@ -482,6 +538,7 @@ function ResetPassword({
 	signedIn: boolean;
 }) {
 	const { t } = useI18n();
+	const id = useId();
 	const [password, setPassword] = useState("");
 	const [again, setAgain] = useState("");
 	const reset = useQuery({
@@ -497,25 +554,26 @@ function ResetPassword({
 	if (save.isSuccess || reset.error) {
 		return (
 			<>
+				<Heading title={t("account.choosePassword")} />
 				{save.isSuccess ? (
-					<p className="text-sm text-good">{t("reset.done")}</p>
+					<p role="status" className="text-sm text-good">
+						{t("reset.done")}
+					</p>
 				) : (
 					<Problem error={reset.error} />
 				)}
-				<button type="button" onClick={reload} className={primary}>
+				<Button variant="aurora" size="lg" onClick={reload}>
 					{signedIn && !save.isSuccess ? t("reset.open") : t("signin.title")}
-				</button>
+				</Button>
 			</>
 		);
 	}
 	return (
 		<>
-			<div>
-				<h1 className="text-xl font-semibold">{t("account.choosePassword")}</h1>
-				<p className="mt-2 text-sm leading-relaxed text-dim">
-					{t("reset.intro", { name: reset.data.username })}
-				</p>
-			</div>
+			<Heading
+				title={t("account.choosePassword")}
+				intro={t("reset.intro", { name: reset.data.username })}
+			/>
 			<form
 				className="flex flex-col gap-4"
 				onSubmit={(event) => {
@@ -523,42 +581,57 @@ function ResetPassword({
 					if (!mismatch) save.mutate();
 				}}
 			>
+				{/* Lets a password manager save the new password for this account. */}
+				<input
+					type="text"
+					value={reset.data.username}
+					autoComplete="username"
+					readOnly
+					hidden
+				/>
 				<Field label={t("account.newPassword")}>
-					<input
+					<Input
 						type="password"
 						value={password}
 						onChange={(event) => setPassword(event.target.value)}
 						autoComplete="new-password"
 						minLength={MIN_PASSWORD}
 						required
-						className={input}
+						aria-describedby={`${id}-hint`}
+						className={FIELD}
 					/>
 				</Field>
 				<Field label={t("account.passwordAgain")}>
-					<input
+					<Input
 						type="password"
 						value={again}
 						onChange={(event) => setAgain(event.target.value)}
 						autoComplete="new-password"
 						required
-						className={input}
+						aria-invalid={mismatch || undefined}
+						aria-describedby={`${id}-hint`}
+						className={FIELD}
 					/>
 				</Field>
-				<p className="text-xs text-dim">
+				<p
+					id={`${id}-hint`}
+					className={cn("text-xs", mismatch ? "text-danger" : "text-dim")}
+				>
 					{mismatch
 						? t("account.passwordsDiffer")
 						: t("account.passwordHint", { min: MIN_PASSWORD })}
 				</p>
 				<Problem error={save.error} />
-				<button
+				<Button
 					type="submit"
+					variant="aurora"
+					size="lg"
 					disabled={
 						save.isPending || mismatch || password.length < MIN_PASSWORD
 					}
-					className={primary}
 				>
 					{t("reset.submit")}
-				</button>
+				</Button>
 			</form>
 		</>
 	);
@@ -569,20 +642,26 @@ function ChoosePassword() {
 	const { t } = useI18n();
 	return (
 		<>
-			<div>
-				<h1 className="text-xl font-semibold">{t("account.choosePassword")}</h1>
-				<p className="mt-2 text-sm leading-relaxed text-dim">
-					{t("account.choosePasswordIntro")}
-				</p>
-			</div>
-			<PasswordForm onDone={reload} />
-			<SignOut />
+			<Heading
+				title={t("account.choosePassword")}
+				intro={t("account.choosePasswordIntro")}
+			/>
+			<PasswordForm onDone={reload} wide />
+			<SignOut className="self-center text-dim" />
 		</>
 	);
 }
 
-function PasswordForm({ onDone }: { onDone?: () => void }) {
+function PasswordForm({
+	onDone,
+	wide = false,
+}: {
+	onDone?: () => void;
+	/** The only form of a screen: its button spans it, in the Aurora light. */
+	wide?: boolean;
+}) {
 	const { t } = useI18n();
+	const id = useId();
 	const [current, setCurrent] = useState("");
 	const [next, setNext] = useState("");
 	const [done, setDone] = useState(false);
@@ -597,7 +676,7 @@ function PasswordForm({ onDone }: { onDone?: () => void }) {
 	});
 	return (
 		<form
-			className="flex flex-col gap-3"
+			className="flex flex-col gap-4"
 			onSubmit={(event) => {
 				event.preventDefault();
 				setDone(false);
@@ -605,56 +684,63 @@ function PasswordForm({ onDone }: { onDone?: () => void }) {
 			}}
 		>
 			<Field label={t("account.currentPassword")}>
-				<input
+				<Input
 					type="password"
 					value={current}
 					onChange={(event) => setCurrent(event.target.value)}
 					autoComplete="current-password"
 					required
-					className={input}
+					aria-describedby={change.error ? `${id}-error` : undefined}
+					className={FIELD}
 				/>
 			</Field>
 			<Field label={t("account.newPassword")}>
-				<input
+				<Input
 					type="password"
 					value={next}
 					onChange={(event) => setNext(event.target.value)}
 					autoComplete="new-password"
 					minLength={MIN_PASSWORD}
 					required
-					className={input}
+					aria-describedby={`${id}-hint`}
+					className={FIELD}
 				/>
 			</Field>
-			<p className="text-xs text-dim">
+			<p id={`${id}-hint`} className="text-xs text-dim">
 				{t("account.passwordHint", { min: MIN_PASSWORD })}
 			</p>
-			<Problem error={change.error} />
+			<Problem error={change.error} id={`${id}-error`} />
 			{done && (
-				<p className="text-sm text-good">{t("account.passwordChanged")}</p>
+				<p role="status" className="text-sm text-good">
+					{t("account.passwordChanged")}
+				</p>
 			)}
-			<button
+			<Button
 				type="submit"
+				variant={wide ? "aurora" : "outline"}
+				size={wide ? "lg" : "default"}
 				disabled={change.isPending || next.length < MIN_PASSWORD}
-				className={`self-start ${primary}`}
+				className={wide ? undefined : "self-start"}
 			>
 				{t("account.changePassword")}
-			</button>
+			</Button>
 		</form>
 	);
 }
 
-export function SignOut({ className = secondary }: { className?: string }) {
+export function SignOut({ className }: { className?: string }) {
 	const { t } = useI18n();
 	const out = useMutation({ mutationFn: api.logout, onSettled: reload });
 	return (
-		<button
-			type="button"
+		<Button
+			variant="ghost"
 			onClick={() => out.mutate()}
 			disabled={out.isPending}
-			className={className}
+			className={cn("h-10", className)}
 		>
+			<LogOutIcon aria-hidden="true" />
 			{t("account.signOut")}
-		</button>
+		</Button>
 	);
 }
 
@@ -664,15 +750,33 @@ export function AccountMenu({ className }: { className: string }) {
 	const { t } = useI18n();
 	if (!account) return null;
 	return (
-		<div className="flex items-center justify-between gap-2 px-3 py-1">
-			<span className="min-w-0 truncate text-sm" title={account.username}>
-				{account.displayName}
-				<span className="ml-2 font-mono text-[11px] text-dim uppercase">
-					{roleText(t, account.role)}
+		<div className="mt-2 flex items-center justify-between gap-2 border-t border-line pt-3">
+			<div className="flex min-w-0 flex-col items-start gap-1 px-2">
+				<span
+					className="max-w-full truncate text-sm font-medium"
+					title={account.username}
+				>
+					{account.displayName}
 				</span>
-			</span>
+				<Badge
+					variant="outline"
+					className="font-mono text-[10px] tracking-[0.12em] text-dim uppercase"
+				>
+					{roleText(t, account.role)}
+				</Badge>
+			</div>
 			<SignOut className={className} />
 		</div>
+	);
+}
+
+/** The top of a Settings section: its label and what it is for. */
+function SectionHeader({ title, intro }: { title: string; intro: string }) {
+	return (
+		<CardHeader className="flex flex-col gap-2">
+			<h2 className={LABEL}>{title}</h2>
+			<p className="max-w-2xl text-sm leading-relaxed text-dim">{intro}</p>
+		</CardHeader>
 	);
 }
 
@@ -682,18 +786,24 @@ export function AccountSettings() {
 	const { t } = useI18n();
 	if (!account) return null;
 	return (
-		<section className="mt-10">
-			<h2 className="font-medium">{t("account.title")}</h2>
-			<p className="mt-2 text-sm text-dim">
-				{t("account.signedInAs", { name: account.username })}
-			</p>
-			<div className="mt-4 rounded-lg border border-line bg-panel p-4">
-				<h3 className="mb-3 font-medium">{t("account.changePassword")}</h3>
-				<PasswordForm />
-			</div>
-			<TwoStep enabled={account.totp} />
-			<Sessions />
-		</section>
+		<Card className={SECTION}>
+			<SectionHeader
+				title={t("account.title")}
+				intro={t("account.signedInAs", { name: account.username })}
+			/>
+			<CardContent className="flex flex-col gap-3">
+				<div className="grid items-start gap-3 md:grid-cols-2">
+					<div className={PANEL}>
+						<h3 className={cn(PANEL_TITLE, "mb-4")}>
+							{t("account.changePassword")}
+						</h3>
+						<PasswordForm />
+					</div>
+					<TwoStep enabled={account.totp} />
+				</div>
+				<Sessions />
+			</CardContent>
+		</Card>
 	);
 }
 
@@ -731,65 +841,69 @@ function TwoStep({ enabled }: { enabled: boolean }) {
 		onSuccess: done,
 	});
 	const passwordField = (
-		<input
-			type="password"
-			value={password}
-			onChange={(event) => setPassword(event.target.value)}
-			placeholder={t("account.currentPassword")}
-			aria-label={t("account.currentPassword")}
-			autoComplete="current-password"
-			className={`min-w-0 flex-1 ${input}`}
-		/>
+		<Field label={t("account.currentPassword")}>
+			<Input
+				type="password"
+				value={password}
+				onChange={(event) => setPassword(event.target.value)}
+				autoComplete="current-password"
+				className={FIELD}
+			/>
+		</Field>
 	);
 	const codeField = (
 		value: string,
 		set: (value: string) => void,
 		label: string,
 	) => (
-		<input
-			value={value}
-			onChange={(event) => set(event.target.value)}
-			placeholder="123456"
-			aria-label={label}
-			title={label}
-			inputMode="numeric"
-			autoComplete="one-time-code"
-			className={`w-36 font-mono tracking-widest ${input}`}
-		/>
+		<Field label={label}>
+			<Input
+				value={value}
+				onChange={(event) => set(event.target.value)}
+				placeholder="123456"
+				inputMode="numeric"
+				autoComplete="one-time-code"
+				className={cn(FIELD, "font-mono tracking-[0.3em]")}
+			/>
+		</Field>
 	);
 	const newApp = start.data && (
-		<>
-			<p className="text-sm">{t("account.twoStepAdd")}</p>
+		<div className="flex flex-col gap-3 rounded-lg border border-line bg-panel p-3">
+			<p className="text-sm leading-relaxed">{t("account.twoStepAdd")}</p>
 			<a
 				href={start.data.uri}
-				className="break-all font-mono text-xs text-pink underline"
+				className="rounded-sm font-mono text-xs break-all text-pink underline underline-offset-2 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
 			>
 				{start.data.uri}
 			</a>
-			<p className="text-sm">
-				{t("account.twoStepSecret")}{" "}
-				<code className="font-mono text-sm tracking-wider">
+			<p className="flex flex-col gap-1.5 text-sm text-dim">
+				{t("account.twoStepSecret")}
+				<code className="rounded-lg border border-line bg-bg px-3 py-2.5 font-mono text-base tracking-[0.18em] break-all text-ink select-all">
 					{start.data.secret.replace(/(.{4})/g, "$1 ").trim()}
 				</code>
 			</p>
-		</>
+		</div>
 	);
 	return (
-		<div className="mt-4 rounded-lg border border-line bg-panel p-4">
-			<div className="flex items-baseline justify-between gap-4">
-				<h3 className="font-medium">{t("account.twoStep")}</h3>
-				<span
-					className={`font-mono text-xs ${enabled ? "text-pink" : "text-dim"}`}
+		<div className={cn(PANEL, "flex flex-col gap-4")}>
+			<div className="flex items-center justify-between gap-4">
+				<h3 className={PANEL_TITLE}>{t("account.twoStep")}</h3>
+				<Badge
+					variant="outline"
+					className={cn(
+						"font-mono text-[10px] tracking-[0.12em] uppercase",
+						enabled ? "border-good/40 text-good" : "text-dim",
+					)}
 				>
 					{enabled ? t("account.twoStepOn") : t("account.twoStepOff")}
-				</span>
+				</Badge>
 			</div>
-			<p className="mt-2 text-sm leading-relaxed text-dim">
+			<p className="text-sm leading-relaxed text-dim">
 				{t("account.twoStepIntro")}
 			</p>
 			{enabled && start.data ? (
 				<form
-					className="mt-3 flex flex-col gap-3"
+					className="flex flex-col gap-4"
 					onSubmit={(event) => {
 						event.preventDefault();
 						enable.mutate();
@@ -797,94 +911,97 @@ function TwoStep({ enabled }: { enabled: boolean }) {
 				>
 					{newApp}
 					<p className="text-sm text-dim">{t("account.twoStepMoveHint")}</p>
-					<div className="flex flex-wrap gap-2">
-						{passwordField}
+					{passwordField}
+					<div className="grid gap-4 sm:grid-cols-2">
 						{codeField(current, setCurrent, t("account.twoStepOldCode"))}
 						{codeField(code, setCode, t("account.twoStepNewCode"))}
 					</div>
-					<div className="flex gap-2">
-						<button
+					<div className="flex flex-wrap gap-2">
+						<Button
 							type="submit"
+							variant="aurora"
 							disabled={!password || !current || !code || enable.isPending}
-							className={primary}
 						>
 							{t("account.twoStepMoveConfirm")}
-						</button>
-						<button
-							type="button"
+						</Button>
+						<Button
+							variant="ghost"
 							onClick={() => {
 								start.reset();
 								enable.reset();
 								setCode("");
 								setCurrent("");
 							}}
-							className={secondary}
 						>
 							{t("common.cancel")}
-						</button>
+						</Button>
 					</div>
 				</form>
 			) : enabled ? (
 				<>
 					<form
-						className="mt-3 flex flex-wrap gap-2"
+						className="flex flex-col gap-4"
 						onSubmit={(event) => {
 							event.preventDefault();
 							disable.mutate();
 						}}
 					>
-						{passwordField}
-						{codeField(current, setCurrent, t("signin.code"))}
-						<button
+						<div className="grid gap-4 sm:grid-cols-2">
+							{passwordField}
+							{codeField(current, setCurrent, t("signin.code"))}
+						</div>
+						<Button
 							type="submit"
+							variant="outline"
 							disabled={!password || !current || disable.isPending}
-							className={secondary}
+							className="self-start text-dim hover:text-danger"
 						>
 							{t("account.twoStepDisable")}
-						</button>
+						</Button>
 					</form>
-					<button
-						type="button"
+					<Button
+						variant="ghost"
 						onClick={() => {
 							disable.reset();
 							start.mutate();
 						}}
 						disabled={start.isPending}
-						className={`mt-3 ${secondary}`}
+						className="self-start"
 					>
 						{t("account.twoStepMove")}
-					</button>
+					</Button>
 				</>
 			) : start.data ? (
 				<form
-					className="mt-3 flex flex-col gap-3"
+					className="flex flex-col gap-4"
 					onSubmit={(event) => {
 						event.preventDefault();
 						enable.mutate();
 					}}
 				>
 					{newApp}
-					<div className="flex flex-wrap gap-2">
+					<div className="grid gap-4 sm:grid-cols-2">
 						{passwordField}
 						{codeField(code, setCode, t("signin.code"))}
-						<button
-							type="submit"
-							disabled={!code || !password || enable.isPending}
-							className={primary}
-						>
-							{t("account.twoStepConfirm")}
-						</button>
 					</div>
+					<Button
+						type="submit"
+						variant="aurora"
+						disabled={!code || !password || enable.isPending}
+						className="self-start"
+					>
+						{t("account.twoStepConfirm")}
+					</Button>
 				</form>
 			) : (
-				<button
-					type="button"
+				<Button
+					variant="outline"
 					onClick={() => start.mutate()}
 					disabled={start.isPending}
-					className={`mt-3 ${secondary}`}
+					className="self-start"
 				>
 					{t("account.twoStepEnable")}
-				</button>
+				</Button>
 			)}
 			<Problem error={start.error ?? enable.error ?? disable.error} />
 		</div>
@@ -909,48 +1026,57 @@ function Sessions() {
 		onSuccess: refresh,
 	});
 	return (
-		<div className="mt-4 rounded-lg border border-line bg-panel p-4">
-			<div className="flex items-baseline justify-between gap-4">
-				<h3 className="font-medium">{t("account.sessions")}</h3>
+		<div className={cn(PANEL, "flex flex-col gap-4")}>
+			<div className="flex flex-wrap items-center justify-between gap-3">
+				<h3 className={PANEL_TITLE}>{t("account.sessions")}</h3>
 				{(sessions.data?.length ?? 0) > 1 && (
-					<button
-						type="button"
-						onClick={() => others.mutate()}
+					<ConfirmButton
+						label={t("account.signOutOthers")}
+						question={t("account.signOutOthersQuestion")}
+						confirm={t("account.signOutOthers")}
 						disabled={others.isPending}
-						className="text-xs text-dim hover:text-danger"
-					>
-						{t("account.signOutOthers")}
-					</button>
+						onConfirm={() => others.mutate()}
+					/>
 				)}
 			</div>
-			<ul className="mt-3 flex flex-col gap-2">
-				{sessions.data?.map((session) => (
-					<li
-						key={session.id}
-						className="flex items-center justify-between gap-3 text-sm"
-					>
-						<span className="min-w-0">
-							<span className="block truncate">
-								{session.userAgent ?? t("account.unknownBrowser")}
+			<ul className="flex flex-col divide-y divide-line">
+				{sessions.data?.map((session) => {
+					const browser = session.userAgent ?? t("account.unknownBrowser");
+					return (
+						<li
+							key={session.id}
+							className="flex flex-col gap-3 py-3 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between"
+						>
+							<span className="flex min-w-0 flex-col gap-1">
+								<span className="text-sm break-words">{browser}</span>
+								<span className="flex flex-wrap items-center gap-2 font-mono text-xs text-dim">
+									{session.current ? (
+										<Badge
+											variant="outline"
+											className="border-good/40 font-mono text-[10px] tracking-[0.12em] text-good uppercase"
+										>
+											{t("account.thisBrowser")}
+										</Badge>
+									) : (
+										t("account.lastSeen", { when: date(session.lastSeenAt) })
+									)}
+									{session.ip && <span>{session.ip}</span>}
+								</span>
 							</span>
-							<span className="font-mono text-xs text-dim">
-								{session.current
-									? t("account.thisBrowser")
-									: t("account.lastSeen", { when: date(session.lastSeenAt) })}
-								{session.ip ? ` · ${session.ip}` : ""}
-							</span>
-						</span>
-						{!session.current && (
-							<button
-								type="button"
-								onClick={() => revoke.mutate(session.id)}
-								className="shrink-0 text-xs text-dim hover:text-danger"
-							>
-								{t("account.signOutThere")}
-							</button>
-						)}
-					</li>
-				))}
+							{!session.current && (
+								<ConfirmButton
+									label={t("account.signOutThere")}
+									ariaLabel={`${t("account.signOutThere")}: ${browser}`}
+									question={t("account.signOutThereQuestion", {
+										browser,
+									})}
+									confirm={t("account.signOutThere")}
+									onConfirm={() => revoke.mutate(session.id)}
+								/>
+							)}
+						</li>
+					);
+				})}
 			</ul>
 			<Problem error={sessions.error ?? revoke.error ?? others.error} />
 		</div>
@@ -963,15 +1089,14 @@ export function UsersSettings() {
 	const { t } = useI18n();
 	if (!account || account.role === "member") return null;
 	return (
-		<section className="mt-10">
-			<h2 className="font-medium">{t("users.title")}</h2>
-			<p className="mt-2 text-sm leading-relaxed text-dim">
-				{t("users.intro")}
-			</p>
-			<NewInvite owner={account.role === "owner"} />
-			<Invites />
-			<People me={account} />
-		</section>
+		<Card className={SECTION}>
+			<SectionHeader title={t("users.title")} intro={t("users.intro")} />
+			<CardContent className="flex flex-col gap-3">
+				<NewInvite owner={account.role === "owner"} />
+				<Invites />
+				<People me={account} />
+			</CardContent>
+		</Card>
 	);
 }
 
@@ -985,64 +1110,80 @@ function Terms({
 	owner: boolean;
 }) {
 	const { t } = useI18n();
+	const id = useId();
 	// Admins make members only.
 	const roles: UserRole[] = owner ? ["member", "admin", "owner"] : ["member"];
 	return (
-		<div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+		<div className="flex flex-col gap-x-6 gap-y-3 sm:flex-row sm:flex-wrap sm:items-center">
 			{owner ? (
-				<select
-					value={terms.role}
-					onChange={(event) =>
-						setTerms({ ...terms, role: event.target.value as UserRole })
-					}
-					aria-label={t("users.role")}
-					className="rounded-md border border-line bg-bg px-2 py-1.5 text-sm"
-				>
-					{roles.map((role) => (
-						<option key={role} value={role}>
-							{roleText(t, role)}
-						</option>
-					))}
-				</select>
+				<div className="flex items-center gap-3">
+					<Label htmlFor={`${id}-role`} className="font-normal text-dim">
+						{t("users.role")}
+					</Label>
+					<Select
+						items={roles.map((role) => ({
+							value: role,
+							label: roleText(t, role),
+						}))}
+						value={terms.role}
+						onValueChange={(next: UserRole | null) => {
+							if (next) setTerms({ ...terms, role: next });
+						}}
+					>
+						<SelectTrigger
+							id={`${id}-role`}
+							className="min-w-32 data-[size=default]:h-10"
+						>
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							{roles.map((role) => (
+								<SelectItem key={role} value={role}>
+									{roleText(t, role)}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+				</div>
 			) : (
 				// Admins make members only: nothing to choose.
-				<span className="text-dim">{roleText(t, terms.role)}</span>
+				<span className="text-sm text-dim">{roleText(t, terms.role)}</span>
 			)}
 			{terms.role === "member" && (
 				<>
-					<label className="flex items-center gap-2">
-						<input
-							type="checkbox"
+					<Label className="min-h-10 gap-3 font-normal">
+						<Switch
 							checked={terms.canUsePaid}
-							onChange={(event) =>
-								setTerms({ ...terms, canUsePaid: event.target.checked })
+							onCheckedChange={(checked) =>
+								setTerms({ ...terms, canUsePaid: checked })
 							}
 						/>
 						{t("users.canUsePaid")}
-					</label>
-					<label className="flex items-center gap-2">
-						<input
-							type="checkbox"
+					</Label>
+					<Label className="min-h-10 gap-3 font-normal">
+						<Switch
 							checked={terms.canTrain}
-							onChange={(event) =>
-								setTerms({ ...terms, canTrain: event.target.checked })
+							onCheckedChange={(checked) =>
+								setTerms({ ...terms, canTrain: checked })
 							}
 						/>
 						{t("users.canTrain")}
-					</label>
+					</Label>
 				</>
 			)}
-			{/* biome-ignore lint/a11y/noLabelWithoutControl: the input is inside */}
-			<label className="flex items-center gap-2">
-				{t("users.limit")}
+			<div className="flex items-center gap-3">
+				<Label htmlFor={`${id}-limit`} className="font-normal text-dim">
+					{t("users.limit")}
+				</Label>
 				<LimitInput
+					id={`${id}-limit`}
 					value={terms.monthlyLimitUsd}
 					placeholder={t("users.noLimit")}
 					onCommit={(monthlyLimitUsd) =>
 						setTerms({ ...terms, monthlyLimitUsd })
 					}
 				/>
-			</label>
+			</div>
 		</div>
 	);
 }
@@ -1052,10 +1193,12 @@ function Terms({
  * Enter is pressed, not at every key.
  */
 function LimitInput({
+	id,
 	value,
 	placeholder,
 	onCommit,
 }: {
+	id: string;
 	value: number | null;
 	placeholder: string;
 	onCommit(value: number | null): void;
@@ -1072,7 +1215,8 @@ function LimitInput({
 		if (next !== value) onCommit(next);
 	};
 	return (
-		<input
+		<Input
+			id={id}
 			type="number"
 			min={0}
 			step="any"
@@ -1086,8 +1230,43 @@ function LimitInput({
 					commit();
 				}
 			}}
-			className="w-24 rounded-md border border-line bg-bg px-2 py-1.5 font-mono text-sm"
+			className={cn(FIELD, "w-28 font-mono")}
 		/>
+	);
+}
+
+/** A link to hand to someone, with a button that copies it. */
+function CopyLink({
+	link,
+	label,
+	copied,
+	onCopy,
+}: {
+	link: string;
+	label: string;
+	copied: boolean;
+	onCopy(): void;
+}) {
+	const { t } = useI18n();
+	const id = useId();
+	return (
+		<div className="flex flex-col gap-2">
+			<Label htmlFor={id} className="leading-relaxed font-normal text-dim">
+				{label}
+			</Label>
+			<div className="flex flex-col gap-2 sm:flex-row">
+				<Input
+					id={id}
+					readOnly
+					value={link}
+					onFocus={(event) => event.target.select()}
+					className={cn(FIELD, "flex-1 font-mono text-xs md:text-xs")}
+				/>
+				<Button variant="outline" onClick={onCopy}>
+					{copied ? t("settings.agentsCopied") : t("settings.agentsCopy")}
+				</Button>
+			</div>
+		</div>
 	);
 }
 
@@ -1112,41 +1291,28 @@ function NewInvite({ owner }: { owner: boolean }) {
 		? `${window.location.origin}/#/invite/${create.data.token}`
 		: null;
 	return (
-		<div className="mt-4 rounded-lg border border-line bg-panel p-4">
-			<h3 className="mb-3 font-medium">{t("users.invite")}</h3>
+		<div className={cn(PANEL, "flex flex-col gap-4")}>
+			<h3 className={PANEL_TITLE}>{t("users.invite")}</h3>
 			<Terms terms={terms} setTerms={setTerms} owner={owner} />
-			<button
-				type="button"
+			<Button
+				variant="aurora"
 				onClick={() => create.mutate()}
 				disabled={create.isPending}
-				className={`mt-3 ${primary}`}
+				className="self-start"
 			>
 				{t("users.createInvite")}
-			</button>
+			</Button>
 			{link && (
-				<div className="mt-3 flex flex-col gap-2">
-					<p className="text-sm text-dim">{t("users.inviteLink")}</p>
-					<div className="flex gap-2">
-						<input
-							readOnly
-							value={link}
-							aria-label={t("users.inviteLink")}
-							onFocus={(event) => event.target.select()}
-							className={`min-w-0 flex-1 font-mono text-xs ${input}`}
-						/>
-						<button
-							type="button"
-							onClick={() =>
-								void navigator.clipboard
-									?.writeText(link)
-									.then(() => setCopied(true))
-							}
-							className={secondary}
-						>
-							{copied ? t("settings.agentsCopied") : t("settings.agentsCopy")}
-						</button>
-					</div>
-				</div>
+				<CopyLink
+					link={link}
+					label={t("users.inviteLink")}
+					copied={copied}
+					onCopy={() =>
+						void navigator.clipboard
+							?.writeText(link)
+							.then(() => setCopied(true))
+					}
+				/>
 			)}
 			<Problem error={create.error} />
 		</div>
@@ -1167,27 +1333,31 @@ function Invites() {
 	);
 	if (open.length === 0) return null;
 	return (
-		<div className="mt-4 rounded-lg border border-line bg-panel p-4">
-			<h3 className="font-medium">{t("users.openInvites")}</h3>
-			<ul className="mt-3 flex flex-col gap-2">
+		<div className={cn(PANEL, "flex flex-col gap-4")}>
+			<h3 className={PANEL_TITLE}>{t("users.openInvites")}</h3>
+			<ul className="flex flex-col divide-y divide-line">
 				{open.map((invite) => (
 					<li
 						key={invite.id}
-						className="flex items-center justify-between gap-3 text-sm"
+						className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
 					>
-						<span>
-							{roleText(t, invite.role)}
-							<span className="ml-2 font-mono text-xs text-dim">
+						<span className="flex flex-wrap items-center gap-2 text-sm">
+							<Badge
+								variant="outline"
+								className="font-mono text-[10px] tracking-[0.12em] uppercase"
+							>
+								{roleText(t, invite.role)}
+							</Badge>
+							<span className="font-mono text-xs text-dim">
 								{t("users.expires", { when: date(invite.expiresAt) })}
 							</span>
 						</span>
-						<button
-							type="button"
-							onClick={() => remove.mutate(invite.id)}
-							className="text-xs text-dim hover:text-danger"
-						>
-							{t("users.revokeInvite")}
-						</button>
+						<ConfirmButton
+							label={t("users.revokeInvite")}
+							question={t("users.revokeInviteQuestion")}
+							confirm={t("users.revokeInvite")}
+							onConfirm={() => remove.mutate(invite.id)}
+						/>
 					</li>
 				))}
 			</ul>
@@ -1200,9 +1370,9 @@ function People({ me }: { me: AccountView }) {
 	const { t } = useI18n();
 	const users = useQuery({ queryKey: ["users"], queryFn: api.users });
 	return (
-		<div className="mt-4 rounded-lg border border-line bg-panel p-4">
-			<h3 className="font-medium">{t("users.people")}</h3>
-			<ul className="mt-3 flex flex-col divide-y divide-line">
+		<div className={cn(PANEL, "flex flex-col gap-2")}>
+			<h3 className={PANEL_TITLE}>{t("users.people")}</h3>
+			<ul className="flex flex-col divide-y divide-line">
 				{users.data?.map((user) => (
 					<Person key={user.id} user={user} me={me} />
 				))}
@@ -1231,21 +1401,33 @@ function Person({ user, me }: { user: AccountView; me: AccountView }) {
 	const link = reset.data
 		? `${window.location.origin}/#/reset/${reset.data.token}`
 		: null;
+	const badge = "font-mono text-[10px] tracking-[0.12em] uppercase";
 	return (
-		<li className="flex flex-col gap-2 py-3">
-			<div className="flex items-baseline justify-between gap-3">
+		<li className="flex flex-col gap-3 py-4 last:pb-0">
+			<div className="flex flex-wrap items-center gap-2">
 				<span
-					className={`font-medium ${user.disabled ? "text-dim line-through" : ""}`}
+					className={cn(
+						"font-medium break-all",
+						user.disabled && "text-dim line-through",
+					)}
 				>
 					{user.username}
-					{user.id === me.id && (
-						<span className="ml-2 text-xs text-dim">{t("users.you")}</span>
-					)}
 				</span>
+				{user.id === me.id && (
+					<span className="text-xs text-dim">{t("users.you")}</span>
+				)}
+				{!mayChange && (
+					<Badge variant="outline" className={cn(badge, "text-dim")}>
+						{roleText(t, user.role)}
+					</Badge>
+				)}
 				{user.totp && (
-					<span className="font-mono text-[11px] text-dim uppercase">
-						{t("account.twoStepOn")}
-					</span>
+					<Badge
+						variant="outline"
+						className={cn(badge, "border-good/40 text-good")}
+					>
+						{t("account.twoStep")}
+					</Badge>
 				)}
 			</div>
 			{user.lastReset && (
@@ -1256,7 +1438,7 @@ function Person({ user, me }: { user: AccountView; me: AccountView }) {
 					})}
 				</p>
 			)}
-			{mayChange ? (
+			{mayChange && (
 				<>
 					<Terms
 						terms={{
@@ -1268,57 +1450,47 @@ function Person({ user, me }: { user: AccountView; me: AccountView }) {
 						setTerms={(terms) => update.mutate(terms)}
 						owner={me.role === "owner"}
 					/>
-					<div className="flex flex-wrap gap-2">
-						{user.id !== me.id && (
-							<button
-								type="button"
-								onClick={() => update.mutate({ disabled: !user.disabled })}
-								className={secondary}
-							>
-								{user.disabled ? t("users.enable") : t("users.disable")}
-							</button>
-						)}
-						{user.id !== me.id && (
-							<button
-								type="button"
-								onClick={() => reset.mutate()}
+					{user.id !== me.id && (
+						<div className="flex flex-wrap gap-2">
+							{user.disabled ? (
+								<Button
+									variant="outline"
+									onClick={() => update.mutate({ disabled: false })}
+								>
+									{t("users.enable")}
+								</Button>
+							) : (
+								<ConfirmButton
+									label={t("users.disable")}
+									question={t("users.disableQuestion", {
+										name: user.username,
+									})}
+									confirm={t("users.disable")}
+									onConfirm={() => update.mutate({ disabled: true })}
+								/>
+							)}
+							<ConfirmButton
+								label={t("users.resetPassword")}
+								question={t("users.resetQuestion", { name: user.username })}
+								confirm={t("users.resetPassword")}
 								disabled={reset.isPending}
-								className={secondary}
-							>
-								{t("users.resetPassword")}
-							</button>
-						)}
-					</div>
+								onConfirm={() => reset.mutate()}
+							/>
+						</div>
+					)}
 				</>
-			) : (
-				<p className="text-sm text-dim">{roleText(t, user.role)}</p>
 			)}
 			{link && (
-				<div className="flex flex-col gap-2">
-					<p className="text-sm text-dim">
-						{t("users.resetLink", { name: user.username })}
-					</p>
-					<div className="flex gap-2">
-						<input
-							readOnly
-							value={link}
-							aria-label={t("users.resetLink", { name: user.username })}
-							onFocus={(event) => event.target.select()}
-							className={`min-w-0 flex-1 font-mono text-xs ${input}`}
-						/>
-						<button
-							type="button"
-							onClick={() =>
-								void navigator.clipboard
-									?.writeText(link)
-									.then(() => setCopied(true))
-							}
-							className={secondary}
-						>
-							{copied ? t("settings.agentsCopied") : t("settings.agentsCopy")}
-						</button>
-					</div>
-				</div>
+				<CopyLink
+					link={link}
+					label={t("users.resetLink", { name: user.username })}
+					copied={copied}
+					onCopy={() =>
+						void navigator.clipboard
+							?.writeText(link)
+							.then(() => setCopied(true))
+					}
+				/>
 			)}
 			<Problem error={update.error ?? reset.error} />
 		</li>
