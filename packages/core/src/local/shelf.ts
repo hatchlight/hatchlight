@@ -236,6 +236,11 @@ export class Shelf<T extends ShelfItem> {
 	async add(
 		body: ReadableStream<Uint8Array> | Blob,
 		fileName: string,
+		/**
+		 * A lower limit than the kind's, such as what is left of a quota, and
+		 * the error to give past it.
+		 */
+		limit?: { maxBytes: number; error: () => Error },
 	): Promise<T> {
 		this.options.check?.();
 		// Busy before anything else, so a move cannot start in between.
@@ -248,7 +253,37 @@ export class Shelf<T extends ShelfItem> {
 		});
 		const part = join(dir, `${crypto.randomUUID()}.part`);
 		try {
-			const written = await Bun.write(part, new Response(body));
+			// Counted as it comes: a file past the limit stops at the limit,
+			// not after it is all on disk.
+			const tooLarge = () =>
+				new ValidationError(
+					"This file is too large",
+					this.kind.errors.tooLarge,
+				);
+			const max = Math.min(this.kind.maxBytes, limit?.maxBytes ?? Infinity);
+			let seen = 0;
+			let overflow: Error | null = null;
+			const counted = (body instanceof Blob ? body.stream() : body).pipeThrough(
+				new TransformStream<Uint8Array, Uint8Array>({
+					transform: (chunk, controller) => {
+						seen += chunk.byteLength;
+						if (seen > max) {
+							overflow =
+								seen > this.kind.maxBytes || !limit
+									? tooLarge()
+									: limit.error();
+							controller.error(overflow);
+							return;
+						}
+						controller.enqueue(chunk);
+					},
+				}),
+			);
+			const written = await Bun.write(part, new Response(counted)).catch(
+				(error) => {
+					throw overflow ?? error;
+				},
+			);
 			if (written > this.kind.maxBytes) {
 				throw new ValidationError(
 					"This file is too large",

@@ -84,3 +84,15 @@ describe("settings", () => {
 		expect((await settings.get(bia)).translateWith).toBe("off");
 	});
 });
+
+test("the first owner of a server takes the choices made before", async () => {
+	const { settings } = await store();
+	await settings.set({ userId: "local" }, { translateWith: "openai" });
+	await settings.moveUser("local", ana.userId);
+	expect((await settings.get(ana)).translateWith).toBe("openai");
+	expect((await settings.get({ userId: "local" })).translateWith).toBe("local");
+	// Choices someone already made are kept.
+	await settings.set({ userId: "local" }, { translateWith: "google" });
+	await settings.moveUser("local", ana.userId);
+	expect((await settings.get(ana)).translateWith).toBe("openai");
+});

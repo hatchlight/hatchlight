@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { AccountMenu } from "./Accounts";
 import { Assistant } from "./Assistant";
 import { api } from "./api";
 import { Chat } from "./Chat";
@@ -132,6 +133,7 @@ export function App() {
 					>
 						{t("nav.settings")}
 					</a>
+					<AccountMenu className="shrink-0 text-xs text-dim hover:text-ink" />
 				</div>
 			</nav>
 

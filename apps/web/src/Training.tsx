@@ -13,6 +13,7 @@ import {
 	useQueryClient,
 } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { useAccount, useCan } from "./Accounts";
 import { api, assetUrl, GALLERY_PAGE, sampleUrl } from "./api";
 import { remaining } from "./format";
 import { type I18n, useI18n } from "./i18n";
@@ -177,6 +178,7 @@ function Samples({ training }: { training: TrainingView }) {
 /** A training under way, or how the last one ended. */
 function Progress({ training }: { training: TrainingView }) {
 	const i18n = useI18n();
+	const account = useAccount();
 	const { t, bytes, explain } = i18n;
 	const cancel = useMutation({ mutationFn: api.cancelTraining });
 	const finish = useMutation({ mutationFn: api.finishTraining });
@@ -218,7 +220,15 @@ function Progress({ training }: { training: TrainingView }) {
 		<div className="flex flex-col gap-3">
 			<div className="flex flex-col gap-2">
 				<div className="flex flex-wrap items-baseline justify-between gap-2">
-					<p className="font-medium">{training.name}</p>
+					<p className="font-medium">
+						{training.name}
+						{training.startedBy &&
+							training.startedBy.userId !== account?.id && (
+								<span className="ml-2 text-sm font-normal text-dim">
+									{t("training.startedBy", { name: training.startedBy.name })}
+								</span>
+							)}
+					</p>
 					<p className="text-sm text-dim" role="status">
 						{stageText(t, training.stage)}
 					</p>
@@ -772,6 +782,7 @@ function Remove() {
 /** Training a LoRA from the person's own pictures. */
 export function TrainPanel() {
 	const { t, explain } = useI18n();
+	const can = useCan();
 	const status = useQuery({ queryKey: ["trainer"], queryFn: api.trainer });
 	const data = status.data;
 	return (
@@ -787,13 +798,16 @@ export function TrainPanel() {
 			{status.error && (
 				<p className="text-sm text-danger">{explain(status.error)}</p>
 			)}
-			{data && data.state !== "ready" && <Install status={data} />}
+			{data && data.state !== "ready" && can.owner && <Install status={data} />}
+			{data && data.state !== "ready" && !can.owner && (
+				<p className="text-sm text-dim">{t("training.askOwner")}</p>
+			)}
 			{data?.state === "ready" && (
 				<>
 					{data.training && <Progress training={data.training} />}
 					{/* Kept while it trains: after a failure the pictures are still here. */}
 					<Form hidden={data.training?.state === "running"} />
-					{data.training?.state !== "running" && <Remove />}
+					{data.training?.state !== "running" && can.owner && <Remove />}
 				</>
 			)}
 		</section>

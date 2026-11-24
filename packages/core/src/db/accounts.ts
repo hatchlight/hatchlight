@@ -1,0 +1,382 @@
+import type { Database } from "bun:sqlite";
+import { and, asc, eq, gte, isNull, ne, sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import { LOCAL_USER } from "../types";
+import * as schema from "./schema";
+
+export type UserRow = typeof schema.users.$inferSelect;
+export type AuthSessionRow = typeof schema.authSessions.$inferSelect;
+export type InviteRow = typeof schema.invites.$inferSelect;
+export type ApiTokenRow = typeof schema.apiTokens.$inferSelect;
+export type PasswordResetRow = typeof schema.passwordResets.$inferSelect;
+
+export type UserPatch = Partial<
+	Pick<
+		UserRow,
+		| "displayName"
+		| "passwordHash"
+		| "role"
+		| "canUsePaid"
+		| "canTrain"
+		| "monthlyLimitUsd"
+		| "totpSecret"
+		| "totpLastCounter"
+		| "mustChangePassword"
+		| "disabledAt"
+	>
+>;
+
+/** The accounts of a server, in the same database as what they make. */
+export class SqliteAccounts {
+	private db;
+
+	/** `sqlite` must already be migrated. */
+	constructor(private sqlite: Database) {
+		this.db = drizzle(sqlite, { schema });
+	}
+
+	countUsers(): number {
+		return (
+			this.db.select({ n: sql<number>`count(*)` }).from(schema.users).get()
+				?.n ?? 0
+		);
+	}
+
+	/** Owners who can still sign in. */
+	countActiveOwners(): number {
+		return (
+			this.db
+				.select({ n: sql<number>`count(*)` })
+				.from(schema.users)
+				.where(
+					and(eq(schema.users.role, "owner"), isNull(schema.users.disabledAt)),
+				)
+				.get()?.n ?? 0
+		);
+	}
+
+	createUser(user: UserRow): void {
+		this.db.insert(schema.users).values(user).run();
+	}
+
+	getUser(id: string): UserRow | null {
+		return (
+			this.db
+				.select()
+				.from(schema.users)
+				.where(eq(schema.users.id, id))
+				.get() ?? null
+		);
+	}
+
+	/** Usernames are compared without case: "Ana" and "ana" are one. */
+	findUser(username: string): UserRow | null {
+		return (
+			this.db
+				.select()
+				.from(schema.users)
+				.where(sql`lower(${schema.users.username}) = lower(${username})`)
+				.get() ?? null
+		);
+	}
+
+	listUsers(): UserRow[] {
+		return this.db
+			.select()
+			.from(schema.users)
+			.orderBy(asc(schema.users.createdAt))
+			.all();
+	}
+
+	updateUser(id: string, patch: UserPatch): void {
+		this.db
+			.update(schema.users)
+			.set(patch)
+			.where(eq(schema.users.id, id))
+			.run();
+	}
+
+	createSession(session: AuthSessionRow): void {
+		this.db.insert(schema.authSessions).values(session).run();
+	}
+
+	getSession(id: string): AuthSessionRow | null {
+		return (
+			this.db
+				.select()
+				.from(schema.authSessions)
+				.where(eq(schema.authSessions.id, id))
+				.get() ?? null
+		);
+	}
+
+	touchSession(id: string, lastSeenAt: number, expiresAt: number): void {
+		this.db
+			.update(schema.authSessions)
+			.set({ lastSeenAt, expiresAt })
+			.where(eq(schema.authSessions.id, id))
+			.run();
+	}
+
+	listSessions(userId: string, now: number): AuthSessionRow[] {
+		return this.db
+			.select()
+			.from(schema.authSessions)
+			.where(
+				and(
+					eq(schema.authSessions.userId, userId),
+					gte(schema.authSessions.expiresAt, now),
+				),
+			)
+			.orderBy(sql`${schema.authSessions.lastSeenAt} desc`)
+			.all();
+	}
+
+	deleteSession(userId: string, id: string): boolean {
+		return (
+			this.sqlite
+				.prepare("delete from auth_sessions where id = ? and user_id = ?")
+				.run(id, userId).changes > 0
+		);
+	}
+
+	/** Signs a person out everywhere, or everywhere but `keep`. */
+	deleteSessionsOf(userId: string, keep?: string): void {
+		this.db
+			.delete(schema.authSessions)
+			.where(
+				and(
+					eq(schema.authSessions.userId, userId),
+					keep ? ne(schema.authSessions.id, keep) : undefined,
+				),
+			)
+			.run();
+	}
+
+	createInvite(invite: InviteRow): void {
+		this.db.insert(schema.invites).values(invite).run();
+	}
+
+	getInvite(id: string): InviteRow | null {
+		return (
+			this.db
+				.select()
+				.from(schema.invites)
+				.where(eq(schema.invites.id, id))
+				.get() ?? null
+		);
+	}
+
+	listInvites(): InviteRow[] {
+		return this.db
+			.select()
+			.from(schema.invites)
+			.orderBy(sql`${schema.invites.createdAt} desc`)
+			.all();
+	}
+
+	deleteInvite(id: string): boolean {
+		return (
+			this.sqlite.prepare("delete from invites where id = ?").run(id).changes >
+			0
+		);
+	}
+
+	/**
+	 * Makes the account an invite was for, once: false when the invite was
+	 * already used, which a second person accepting at once would find.
+	 */
+	acceptInvite(id: string, user: UserRow): boolean {
+		return this.sqlite.transaction(() => {
+			const used = this.sqlite
+				.prepare(
+					"update invites set used_at = ? where id = ? and used_at is null",
+				)
+				.run(user.createdAt, id);
+			if (used.changes === 0) return false;
+			this.db.insert(schema.users).values(user).run();
+			this.db
+				.update(schema.invites)
+				.set({ usedBy: user.id })
+				.where(eq(schema.invites.id, id))
+				.run();
+			return true;
+		})();
+	}
+
+	/**
+	 * Records a two-step code's time step as used, if it is later than the
+	 * last one: false when it is not, as for a code used twice at once.
+	 */
+	advanceTotpCounter(userId: string, step: number): boolean {
+		return (
+			this.sqlite
+				.prepare(
+					"update users set totp_last_counter = ? where id = ? and (totp_last_counter is null or totp_last_counter < ?)",
+				)
+				.run(step, userId, step).changes > 0
+		);
+	}
+
+	/** Ends every API token of a person. */
+	deleteTokensOf(userId: string): void {
+		this.db
+			.delete(schema.apiTokens)
+			.where(eq(schema.apiTokens.userId, userId))
+			.run();
+	}
+
+	createPasswordReset(reset: PasswordResetRow): void {
+		this.db.insert(schema.passwordResets).values(reset).run();
+	}
+
+	getPasswordReset(id: string): PasswordResetRow | null {
+		return (
+			this.db
+				.select()
+				.from(schema.passwordResets)
+				.where(eq(schema.passwordResets.id, id))
+				.get() ?? null
+		);
+	}
+
+	/** Ends the links not yet used to reset a person's password. */
+	expireUnusedResets(userId: string, at: number): void {
+		this.sqlite
+			.prepare(
+				"update password_resets set expires_at = ? where user_id = ? and used_at is null and expires_at > ?",
+			)
+			.run(at - 1, userId, at);
+	}
+
+	/** The last time a link set the person's password, and who gave it. */
+	lastUsedReset(
+		userId: string,
+	): { id: string; by: string; at: number; noticedAt: number | null } | null {
+		return (
+			(this.sqlite
+				.prepare(
+					`select r.id as id, coalesce(u.display_name, '') as by, r.used_at as at, r.noticed_at as noticedAt
+					 from password_resets r left join users u on u.id = r.created_by
+					 where r.user_id = ? and r.used_at is not null
+					 order by r.used_at desc limit 1`,
+				)
+				.get(userId) as {
+				id: string;
+				by: string;
+				at: number;
+				noticedAt: number | null;
+			} | null) ?? null
+		);
+	}
+
+	markResetNoticed(id: string, at: number): void {
+		this.db
+			.update(schema.passwordResets)
+			.set({ noticedAt: at })
+			.where(eq(schema.passwordResets.id, id))
+			.run();
+	}
+
+	/** Marks a reset link used, once: false when it already was. */
+	usePasswordReset(id: string, at: number): boolean {
+		return (
+			this.sqlite
+				.prepare(
+					"update password_resets set used_at = ? where id = ? and used_at is null",
+				)
+				.run(at, id).changes > 0
+		);
+	}
+
+	createToken(token: ApiTokenRow): void {
+		this.db.insert(schema.apiTokens).values(token).run();
+	}
+
+	getToken(id: string): ApiTokenRow | null {
+		return (
+			this.db
+				.select()
+				.from(schema.apiTokens)
+				.where(eq(schema.apiTokens.id, id))
+				.get() ?? null
+		);
+	}
+
+	touchToken(id: string, lastUsedAt: number): void {
+		this.db
+			.update(schema.apiTokens)
+			.set({ lastUsedAt })
+			.where(eq(schema.apiTokens.id, id))
+			.run();
+	}
+
+	/**
+	 * Makes the first owner and gives them everything made before there were
+	 * accounts, in one go.
+	 */
+	createFirstOwner(user: UserRow): boolean {
+		return this.db.transaction((tx) => {
+			const existing = tx
+				.select({ n: sql<number>`count(*)` })
+				.from(schema.users)
+				.get();
+			if ((existing?.n ?? 0) > 0) return false;
+			tx.insert(schema.users).values(user).run();
+			for (const table of [
+				schema.sessions,
+				schema.turns,
+				schema.jobs,
+				schema.assets,
+				schema.messages,
+			]) {
+				tx.update(table)
+					.set({ userId: user.id })
+					.where(eq(table.userId, LOCAL_USER.userId))
+					.run();
+			}
+			return true;
+		});
+	}
+
+	recordLoraUpload(row: typeof schema.loraUploads.$inferInsert): void {
+		this.db
+			.insert(schema.loraUploads)
+			.values(row)
+			.onConflictDoUpdate({ target: schema.loraUploads.loraId, set: row })
+			.run();
+	}
+
+	loraUploadsOf(userId: string): (typeof schema.loraUploads.$inferSelect)[] {
+		return this.db
+			.select()
+			.from(schema.loraUploads)
+			.where(eq(schema.loraUploads.userId, userId))
+			.all();
+	}
+
+	forgetLoraUpload(loraId: string): void {
+		this.db
+			.delete(schema.loraUploads)
+			.where(eq(schema.loraUploads.loraId, loraId))
+			.run();
+	}
+
+	/** What a person spent on paid services since `since`, in dollars. */
+	spentSince(userId: string, since: number): number {
+		return (
+			this.db
+				.select({
+					total: sql<number>`coalesce(sum(${schema.spending.costUsd}), 0)`,
+				})
+				.from(schema.spending)
+				.where(
+					and(
+						eq(schema.spending.userId, userId),
+						gte(schema.spending.createdAt, since),
+					),
+				)
+				.get()?.total ?? 0
+		);
+	}
+}

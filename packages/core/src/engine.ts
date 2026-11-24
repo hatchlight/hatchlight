@@ -1,6 +1,11 @@
 import type { AssetStore } from "./assets";
 import type { JobPatch, Repository } from "./db/repository";
-import { CodedError, describeError, ValidationError } from "./errors";
+import {
+	AccessError,
+	CodedError,
+	describeError,
+	ValidationError,
+} from "./errors";
 import { newId } from "./ids";
 import type { KeyStore } from "./keys";
 import { sniffMime } from "./mime";
@@ -56,6 +61,11 @@ export interface JobEngineDeps {
 	assets: AssetStore;
 	registry: ProviderRegistry;
 	keys: KeyStore;
+	/**
+	 * Why a person may not use models that need a key, which spend money, or
+	 * null when they may. Everyone may when absent, as on a personal install.
+	 */
+	paidRefusal?: (userId: string) => PaidRefusal | null;
 	/** Jobs running at once per provider. Defaults to 4. */
 	concurrencyPerProvider?: number;
 	/** The wait before the first try again; it doubles each time. */
@@ -68,6 +78,19 @@ export interface JobEngineDeps {
 	translator?: (
 		userId: string,
 	) => Translator | null | Promise<Translator | null>;
+}
+
+/** Why someone may not spend on paid models. */
+export type PaidRefusal = "paidNotAllowed" | "monthlyLimitReached";
+
+export function paidError(refusal: PaidRefusal): AccessError {
+	return new AccessError(
+		refusal === "paidNotAllowed"
+			? "This account cannot use paid models"
+			: "This month's limit for paid models is reached",
+		refusal,
+		403,
+	);
 }
 
 /** A translation that takes longer is given up on; the prompt goes as written. */
@@ -325,6 +348,10 @@ export class JobEngine {
 					{ model: job.modelId },
 				);
 			}
+			const refusal = adapter.requiresKey
+				? this.deps.paidRefusal?.(job.userId)
+				: null;
+			if (refusal) throw paidError(refusal);
 			const apiKey =
 				(await keys.get(ctx, adapter.id)) ??
 				(adapter.keyEnv ? process.env[adapter.keyEnv] : undefined);
@@ -410,16 +437,28 @@ export class JobEngine {
 							for (const output of event.outputs) {
 								await this.storeOutput(ctx, job, output, controller.signal);
 							}
+							const costUsd =
+								event.costUsd ??
+								estimateCost(model, job.params, event.outputs.length);
 							await this.update(jobId, {
 								status: "succeeded",
 								error: null,
 								errorCode: null,
 								errorParams: null,
 								finishedAt: Date.now(),
-								costUsd:
-									event.costUsd ??
-									estimateCost(model, job.params, event.outputs.length),
+								costUsd,
 							});
+							// Kept apart from the job, which can be deleted.
+							if (costUsd != null && costUsd > 0) {
+								await this.deps.repo.addSpending({
+									id: newId("spd"),
+									userId: job.userId,
+									kind: "generation",
+									jobId,
+									costUsd,
+									createdAt: Date.now(),
+								});
+							}
 							return;
 						}
 					}
