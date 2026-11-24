@@ -35,7 +35,7 @@ import { CheckpointShelf } from "./checkpoints";
 import { type BuildChoice, chooseBuild, chooseVariant, fitOf } from "./engines";
 import { isLocked, tryFileLock, withFileLock } from "./file-lock";
 import { GpuLock } from "./gpu";
-import { detectHardware } from "./hardware";
+import { detectHardware, type GpuMemory, readGpuMemory } from "./hardware";
 import { LoraShelf } from "./loras";
 import { cleanUp, type Mirror, mirrorInto, treeSize, undo } from "./move";
 import { extractTarGz } from "./tar";
@@ -101,6 +101,8 @@ export interface LocalModelStoreOptions {
 	fetch?: Fetch;
 	/** Defaults to looking at this machine. */
 	hardware?: () => Promise<Hardware>;
+	/** Reads the GPU's free memory; defaults to asking the driver. */
+	gpuMemory?: () => Promise<GpuMemory | null>;
 	/**
 	 * Tries an engine's program right after it is installed. Resolves with why
 	 * it does not run, or null when it does. Defaults to running it with
@@ -351,6 +353,7 @@ export class LocalModelStore {
 	private engines: LocalEngineSpec[];
 	private fetch: Fetch;
 	private detect: () => Promise<Hardware>;
+	private gpuMemory: () => Promise<GpuMemory | null>;
 	private hardware: Promise<Hardware> | null = null;
 	private checkEngine: (executable: string) => Promise<string | null>;
 	/** Builds that were installed here and did not run. */
@@ -394,6 +397,10 @@ export class LocalModelStore {
 		this.engines = options.engines;
 		this.fetch = options.fetch ?? globalThis.fetch;
 		this.detect = options.hardware ?? (() => detectHardware());
+		// Given hardware stands for a machine that is not this one.
+		this.gpuMemory =
+			options.gpuMemory ??
+			(options.hardware ? async () => null : () => readGpuMemory());
 		this.checkEngine = options.checkEngine ?? runsWithHelp;
 		this.loras = new LoraShelf({
 			root: () => this.root,
@@ -443,6 +450,21 @@ export class LocalModelStore {
 			this.checkProvided(),
 		]).then(([hardware]) => hardware);
 		return this.hardware;
+	}
+
+	/** The hardware with the first NVIDIA card's free memory, as it is now. */
+	private async withFreeMemory(hardware: Hardware): Promise<Hardware> {
+		const first = hardware.gpus[0];
+		if (first?.vendor !== "nvidia") return hardware;
+		const memory = await this.gpuMemory().catch(() => null);
+		if (!memory) return hardware;
+		return {
+			...hardware,
+			gpus: [
+				{ ...first, freeBytes: memory.freeBytes },
+				...hardware.gpus.slice(1),
+			],
+		};
 	}
 
 	/**
@@ -777,7 +799,7 @@ export class LocalModelStore {
 		}
 		this.lastReady = ready;
 		return {
-			hardware,
+			hardware: await this.withFreeMemory(hardware),
 			engines,
 			models,
 			disk: {

@@ -595,6 +595,7 @@
 	"picker.whySlow": "Runs on your graphics card, borrowing system memory, so it is slower. Free and private.",
 	"progress.generating": "Generating",
 	"progress.loading": "Loading the model into memory",
+	"progress.lowMemory": "Other programs are using {size} of graphics memory, so this may be slow",
 	"progress.queued": "In line",
 	"progress.queuedAt": "In line (position {position})",
 	"progress.retrying": "Something went wrong, trying again",

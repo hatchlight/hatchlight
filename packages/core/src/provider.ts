@@ -36,6 +36,11 @@ export type ProviderEvent =
 			/** Sampling steps done and in all, when the model reports them. */
 			step?: number;
 			steps?: number;
+			/**
+			 * Graphics memory other programs hold, when it leaves too little for
+			 * the model: the job still runs, but slowly.
+			 */
+			busyBytes?: number;
 			/** The picture as it stands at this step, when the model shows it. */
 			preview?: { data: Uint8Array; mime: string };
 	  }

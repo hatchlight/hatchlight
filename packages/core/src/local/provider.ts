@@ -23,6 +23,7 @@ import {
 	checkpointModelId,
 	checkpointOf,
 } from "./checkpoints";
+import { type GpuMemory, readGpuMemory } from "./hardware";
 import type { LocalModelStore, LocalRuntime } from "./store";
 import { WarmEngines } from "./warm";
 
@@ -395,6 +396,23 @@ export interface LocalProviderOptions {
 	 * picture, as tests and engines without a server do.
 	 */
 	warm?: WarmEngines | false;
+	/** Reads the GPU's free memory; tests give their own. */
+	freeMemory?: () => Promise<GpuMemory | null>;
+}
+
+/**
+ * How much graphics memory other programs hold, when the free memory (plus
+ * `own`, what this process already holds and reuses or gives back) is below
+ * what the model needs; null when there is enough or it is not known.
+ */
+export function busyGpuMemory(
+	memory: GpuMemory | null,
+	needed: number,
+	own = 0,
+): number | null {
+	if (!memory) return null;
+	const free = memory.freeBytes + own;
+	return free < needed ? Math.max(0, memory.totalBytes - free) : null;
 }
 
 /** At most this many pictures are shown while one forms: each costs a decode. */
@@ -514,12 +532,14 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 	private spawn: Spawn;
 	private windowsPath: PathMapper;
 	private warm: WarmEngines | false;
+	private freeMemory: () => Promise<GpuMemory | null>;
 
 	constructor(options: LocalProviderOptions) {
 		this.store = options.store;
 		this.catalog = options.catalog;
 		this.spawn = options.spawn ?? spawnProcess;
 		this.windowsPath = options.windowsPath ?? windowsPath;
+		this.freeMemory = options.freeMemory ?? (() => readGpuMemory());
 		this.warm =
 			options.warm ??
 			new WarmEngines({ spawn: this.spawn, gpu: this.store.gpu });
@@ -760,6 +780,24 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 		const path = runtime.throughWindows
 			? this.windowsPath
 			: async (p: string) => p;
+
+		// Other programs holding the GPU's memory push a model that fits into
+		// spilling over to the computer's, which is many times slower.
+		if (runtime.fit === "gpu") {
+			const busyBytes = busyGpuMemory(
+				await this.freeMemory().catch(() => null),
+				runtime.variant.memoryBytes,
+				this.store.gpu.reserved,
+			);
+			if (busyBytes != null) {
+				yield {
+					type: "progress",
+					message:
+						"Other programs are using graphics memory, so this may be slow",
+					busyBytes,
+				};
+			}
+		}
 
 		// Pictures go through a server that keeps the model loaded, when the
 		// engine has one. Not under WSL, where the server's port on the Windows

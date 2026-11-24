@@ -214,6 +214,13 @@ export function JobCard(props: {
 								/>
 							)}
 						</div>
+						{job.status === "running" && progress?.busyBytes != null && (
+							<p className="text-dim">
+								{t("progress.lowMemory", {
+									size: i18n.bytes(progress.busyBytes),
+								})}
+							</p>
+						)}
 					</div>
 				</>
 			)}

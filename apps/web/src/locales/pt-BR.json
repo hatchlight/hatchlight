@@ -595,6 +595,7 @@
 	"picker.whySlow": "Roda na sua placa de vídeo usando também a memória do sistema, por isso é mais lento. Grátis e privado.",
 	"progress.generating": "Gerando",
 	"progress.loading": "Carregando o modelo na memória",
+	"progress.lowMemory": "Outros programas estão usando {size} da memória gráfica, então isso pode demorar",
 	"progress.queued": "Na fila",
 	"progress.queuedAt": "Na fila (posição {position})",
 	"progress.retrying": "Algo deu errado, tentando de novo",

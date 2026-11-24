@@ -9,6 +9,7 @@ import {
 	DEFAULT_STRENGTH,
 	dimensions,
 	engineArguments,
+	type GpuMemory,
 	type LocalModelSpec,
 	LocalProvider,
 	type LocalRuntime,
@@ -487,11 +488,15 @@ describe("running", () => {
 					},
 				};
 			};
-		const provider = (spawn: Spawn) =>
+		const provider = (
+			spawn: Spawn,
+			freeMemory: () => Promise<GpuMemory | null> = async () => null,
+		) =>
 			new LocalProvider({
 				store: store as never,
 				catalog: [model],
 				spawn,
+				freeMemory,
 			});
 		return {
 			dir,
@@ -554,6 +559,42 @@ describe("running", () => {
 		]);
 		await local.load();
 		expect(changed).toBe(1); // nothing changed
+	});
+
+	test("a job says when other programs leave too little graphics memory, and still runs", async () => {
+		const { provider, fake } = await setup();
+		const GB = 2 ** 30;
+		const events = await run(
+			provider(fake([]), async () => ({
+				freeBytes: 0,
+				totalBytes: 12 * GB,
+			})),
+		);
+		expect(events[0]).toEqual({
+			type: "progress",
+			message: "Other programs are using graphics memory, so this may be slow",
+			busyBytes: 12 * GB,
+		});
+		expect(events.some((e) => e.type === "completed")).toBe(true);
+	});
+
+	test("a job with enough free graphics memory, or an unknown amount, says nothing", async () => {
+		const { provider, fake } = await setup();
+		const GB = 2 ** 30;
+		for (const memory of [{ freeBytes: 8 * GB, totalBytes: 12 * GB }, null]) {
+			const events = await run(provider(fake([]), async () => memory));
+			expect(events.some((e) => "busyBytes" in e)).toBe(false);
+		}
+	});
+
+	test("a failing reading of the free memory does not fail the job", async () => {
+		const { provider, fake } = await setup();
+		const events = await run(
+			provider(fake([]), async () => {
+				throw new Error("nvidia-smi is gone");
+			}),
+		);
+		expect(events.some((e) => e.type === "completed")).toBe(true);
 	});
 
 	test("a job reports sampling progress and returns the image", async () => {
@@ -725,6 +766,7 @@ describe("running", () => {
 				throw new Error("the engine is not run once");
 			},
 			warm: warm as never,
+			freeMemory: async () => null,
 		});
 		await local.load();
 		const [model] = local.listModels();
