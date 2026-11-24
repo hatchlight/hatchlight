@@ -108,7 +108,7 @@ export function App() {
 		// Fits the space it is given: a server's notices may sit above it.
 		<SidebarProvider
 			defaultOpen={sidebarStartsOpen()}
-			className="h-full min-h-0"
+			className="relative h-full min-h-0"
 		>
 			<UpdateToast />
 			<KeysLostToast />
@@ -196,7 +196,9 @@ function AppSidebar({ route }: { route: Route }) {
 				collapsible="icon"
 				role="navigation"
 				aria-label={t("ui.menu")}
-				className="border-sidebar-border"
+				// Held within the app, not the window: a server's notice above
+				// it, such as the unencrypted-connection banner, stays in view.
+				className="absolute h-full border-sidebar-border"
 			>
 				<SidebarHeader className="gap-4 p-4 group-data-[collapsible=icon]:px-2">
 					<a
