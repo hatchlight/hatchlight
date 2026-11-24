@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import {
 	type ChatMessage,
 	type ChatModel,
@@ -704,5 +704,31 @@ describe("eyes for an assistant that cannot see", () => {
 		await idle(sessionId);
 		const last = (await assistant.view(ctx, sessionId)).entries.at(-1);
 		expect(last?.message).toMatchObject({ text: "Done." });
+	});
+
+	test("closed, stop at once and leave the store alone", async () => {
+		let thinking: () => void = () => {};
+		const brain: ChatModel = {
+			vision: false,
+			// Slow to notice the stop, as a model that ignores it would be.
+			chat: () =>
+				new Promise((done) => {
+					thinking = () => done({ text: "late", toolCalls: [] });
+				}),
+		};
+		const { assistant, store } = setup(brain);
+		await assistant.send(ctx, { text: "a fox" });
+		await Bun.sleep(5);
+		const kept = store.entries.length;
+		const errors = spyOn(console, "error");
+		try {
+			assistant.close();
+			thinking();
+			await Bun.sleep(20);
+			expect(store.entries.length).toBe(kept);
+			expect(errors).not.toHaveBeenCalled();
+		} finally {
+			errors.mockRestore();
+		}
 	});
 });

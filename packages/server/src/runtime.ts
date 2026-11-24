@@ -840,6 +840,8 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		moveModels: (path) => models.relocate(path),
 		start: () => engine.start(),
 		close: () => {
+			// The assistant's work stops before the database it writes to closes.
+			assistant.close();
 			// Downloads stop with the process; what they fetched is resumed later.
 			trainer.cancelTraining();
 			trainer.cancelInstall();

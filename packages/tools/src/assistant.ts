@@ -309,6 +309,7 @@ export class Assistant {
 	>();
 	private limitUsd: number;
 	private maxSteps: number;
+	private closed = false;
 
 	constructor(private options: AssistantOptions) {
 		this.limitUsd = options.limitUsd ?? DEFAULT_LIMIT_USD;
@@ -323,7 +324,7 @@ export class Assistant {
 	}
 
 	async view(ctx: UserContext, sessionId: string): Promise<AssistantView> {
-		const entries = await this.options.store.list(ctx, sessionId);
+		const entries = await this.store.list(ctx, sessionId);
 		const guard = await this.guard(ctx, sessionId, entries);
 		// Turns no tool waited for to the end (stopped, or still running then)
 		// are counted once they end.
@@ -357,7 +358,7 @@ export class Assistant {
 		if (input.sessionId) await this.options.reel(ctx).session(sessionId);
 		const work = this.claim(ctx, sessionId);
 		try {
-			const entries = await this.options.store.list(ctx, sessionId);
+			const entries = await this.store.list(ctx, sessionId);
 			// Paid generations still waiting: the person moved on.
 			for (const entry of entries) {
 				if (entry.confirm?.state === "asked") {
@@ -392,7 +393,7 @@ export class Assistant {
 		let brain: ChatModel | null;
 		let othersWaiting: boolean;
 		try {
-			const entries = await this.options.store.list(ctx, sessionId);
+			const entries = await this.store.list(ctx, sessionId);
 			const found = entries.find((e) => e.id === entryId);
 			if (found?.confirm?.state !== "asked") {
 				throw new NotFoundError(
@@ -474,7 +475,7 @@ export class Assistant {
 		}
 		const body = bodyOf(entry);
 		const yes = { ...confirm, state: "approved" as const };
-		await this.options.store.update(ctx, entry.id, { ...body, confirm: yes });
+		await this.store.update(ctx, entry.id, { ...body, confirm: yes });
 		this.changed(ctx, entry.sessionId);
 		const result = await this.call(
 			ctx,
@@ -483,13 +484,13 @@ export class Assistant {
 			tools,
 			call,
 			(turnId) =>
-				this.options.store.update(ctx, entry.id, {
+				this.store.update(ctx, entry.id, {
 					...body,
 					confirm: yes,
 					turnId,
 				}),
 		);
-		await this.options.store.update(ctx, entry.id, {
+		await this.store.update(ctx, entry.id, {
 			...body,
 			confirm: yes,
 			message: withoutPictures(resultMessage(call, result, false)),
@@ -502,6 +503,21 @@ export class Assistant {
 	forget(ctx: UserContext, sessionId: string): void {
 		this.stop(ctx, sessionId);
 		this.guards.delete(this.key(ctx, sessionId));
+	}
+
+	/**
+	 * Stops all work, for good: the process is closing. What is under way
+	 * ends without touching the store, which may be closed next.
+	 */
+	close(): void {
+		this.closed = true;
+		for (const work of this.working.values()) work.controller.abort();
+	}
+
+	/** Where conversations are kept, until the assistant is closed. */
+	private get store(): AssistantStore {
+		if (this.closed) throw new Error("The assistant is closed");
+		return this.options.store;
 	}
 
 	/** Stops the assistant's work on a conversation; what it made stays. */
@@ -586,7 +602,7 @@ export class Assistant {
 			sessionId,
 			createdAt: Date.now(),
 		};
-		await this.options.store.add(ctx, entry);
+		await this.store.add(ctx, entry);
 		this.changed(ctx, sessionId);
 		return entry;
 	}
@@ -594,7 +610,7 @@ export class Assistant {
 	/** Says no to a paid generation that was waiting, telling the model why. */
 	private async decide(ctx: UserContext, entry: AssistantEntry, text: string) {
 		if (!entry.confirm || entry.message.role !== "tool") return;
-		await this.options.store.update(ctx, entry.id, {
+		await this.store.update(ctx, entry.id, {
 			...bodyOf(entry),
 			confirm: { ...entry.confirm, state: "declined" },
 			message: { ...entry.message, content: [{ type: "text", text }] },
@@ -613,7 +629,10 @@ export class Assistant {
 		before?: (tools: Tool[], guard: SpendGuard) => Promise<void>,
 	) {
 		void this.loop(ctx, sessionId, work, brain, language, before)
-			.catch((error) => console.error(error))
+			// Once closed, what fails is the closing itself.
+			.catch((error) => {
+				if (!this.closed) console.error(error);
+			})
 			.finally(() => this.release(ctx, sessionId));
 	}
 
@@ -634,7 +653,7 @@ export class Assistant {
 			});
 		};
 		try {
-			const entries = await this.options.store.list(ctx, sessionId);
+			const entries = await this.store.list(ctx, sessionId);
 			const guard = await this.guard(ctx, sessionId, entries);
 			const tools = createTools(reel, {
 				allowPaid: true,
@@ -649,7 +668,7 @@ export class Assistant {
 				return;
 			}
 			const specs = tools.map(toolSpec);
-			const kept = await this.options.store.list(ctx, sessionId);
+			const kept = await this.store.list(ctx, sessionId);
 			const messages = conversation(kept);
 			if (brain.vision) await this.showAgain(ctx, sessionId, kept, messages);
 			const instructions = assistantInstructions(language);
@@ -728,7 +747,7 @@ export class Assistant {
 						tools,
 						call,
 						(turnId) =>
-							this.options.store.update(ctx, entry.id, {
+							this.store.update(ctx, entry.id, {
 								...bodyOf(entry),
 								turnId,
 							}),
@@ -738,7 +757,7 @@ export class Assistant {
 						: await this.described(ctx, made, messages, signal);
 					const message = resultMessage(call, result, brain.vision);
 					messages.push(message);
-					await this.options.store.update(ctx, entry.id, {
+					await this.store.update(ctx, entry.id, {
 						...bodyOf(entry),
 						// Kept as words only: the pictures come back from the turn.
 						message: resultMessage(call, result, false),
