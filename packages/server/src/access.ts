@@ -30,6 +30,8 @@ export const ROUTE_ACCESS: Readonly<Record<string, Access>> = {
 	"POST /api/login": "public",
 	"GET /api/invites/:token": "public",
 	"POST /api/invites/:token/accept": "public",
+	"GET /api/password-resets/:token": "public",
+	"POST /api/password-resets/:token": "public",
 
 	// One's own account.
 	"POST /api/logout": "account",

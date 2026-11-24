@@ -8,6 +8,7 @@ export type UserRow = typeof schema.users.$inferSelect;
 export type AuthSessionRow = typeof schema.authSessions.$inferSelect;
 export type InviteRow = typeof schema.invites.$inferSelect;
 export type ApiTokenRow = typeof schema.apiTokens.$inferSelect;
+export type PasswordResetRow = typeof schema.passwordResets.$inferSelect;
 
 export type UserPatch = Partial<
 	Pick<
@@ -19,6 +20,7 @@ export type UserPatch = Partial<
 		| "canTrain"
 		| "monthlyLimitUsd"
 		| "totpSecret"
+		| "totpLastCounter"
 		| "mustChangePassword"
 		| "disabledAt"
 	>
@@ -200,6 +202,39 @@ export class SqliteAccounts {
 				.run();
 			return true;
 		})();
+	}
+
+	/** Ends every API token of a person. */
+	deleteTokensOf(userId: string): void {
+		this.db
+			.delete(schema.apiTokens)
+			.where(eq(schema.apiTokens.userId, userId))
+			.run();
+	}
+
+	createPasswordReset(reset: PasswordResetRow): void {
+		this.db.insert(schema.passwordResets).values(reset).run();
+	}
+
+	getPasswordReset(id: string): PasswordResetRow | null {
+		return (
+			this.db
+				.select()
+				.from(schema.passwordResets)
+				.where(eq(schema.passwordResets.id, id))
+				.get() ?? null
+		);
+	}
+
+	/** Marks a reset link used, once: false when it already was. */
+	usePasswordReset(id: string, at: number): boolean {
+		return (
+			this.sqlite
+				.prepare(
+					"update password_resets set used_at = ? where id = ? and used_at is null",
+				)
+				.run(at, id).changes > 0
+		);
 	}
 
 	createToken(token: ApiTokenRow): void {

@@ -8,7 +8,7 @@ import type {
 } from "./db/accounts";
 import { AccessError, NotFoundError, ValidationError } from "./errors";
 import { newId } from "./ids";
-import { newTotpSecret, totpUri, verifyTotp } from "./totp";
+import { matchTotp, newTotpSecret, totpUri } from "./totp";
 import type {
 	AccountView,
 	AuthSessionView,
@@ -26,6 +26,7 @@ export const SESSION_MS = 30 * DAY_MS;
 /** Sessions are written to at most this often as they are used. */
 const TOUCH_MS = 60 * 1000;
 const INVITE_MS = 7 * DAY_MS;
+const RESET_MS = DAY_MS;
 /**
  * Argon2 takes memory and time on purpose; a flood of sign-ins must not
  * take all of both. At most this many run at once, the others wait.
@@ -56,7 +57,8 @@ export const hashingRunning = () => hashingNow;
 const verifyPassword = (password: string, hash: string) =>
 	hashing(() => Bun.password.verify(password, hash));
 
-const USERNAME = /^[\p{L}\p{N}._-]{1,32}$/u;
+/** ASCII only: names that look alike cannot be told apart otherwise. */
+const USERNAME = /^[a-z0-9._-]{3,32}$/;
 
 /** A secret to hand out once: 32 random bytes, in base64url. */
 export function newToken(): string {
@@ -239,9 +241,7 @@ export class AccountService {
 					401,
 				);
 			}
-			if (!verifyTotp(user.totpSecret, input.totp, this.now())) {
-				throw new AccessError("The code is not right", "badTotp", 401);
-			}
+			this.useTotpCode(user, input.totp, 401);
 		}
 		return this.startSession(user, where);
 	}
@@ -345,6 +345,7 @@ export class AccountService {
 			mustChangePassword: false,
 		});
 		this.repo.deleteSessionsOf(userId, keep ?? undefined);
+		this.repo.deleteTokensOf(userId);
 	}
 
 	/** A new secret for an authenticator app, not yet turned on. */
@@ -354,20 +355,30 @@ export class AccountService {
 		return { secret, uri: totpUri(secret, user.username, "Hatchlight") };
 	}
 
-	/** Turns two-step sign-in on, once the app shows the right code. */
-	enableTotp(userId: string, secret: string, code: string): void {
-		this.mustGet(userId);
+	/**
+	 * Accepts a two-step code once: a code already used, or an older one,
+	 * is refused, so a code seen over a shoulder cannot be replayed.
+	 */
+	private useTotpCode(user: UserRow, code: string, status: 401 | 403): void {
+		const step = user.totpSecret
+			? matchTotp(user.totpSecret, code, this.now())
+			: null;
 		if (
-			!/^[A-Z2-7]{32}$/.test(secret) ||
-			!verifyTotp(secret, code, this.now())
+			step === null ||
+			(user.totpLastCounter != null && step <= user.totpLastCounter)
 		) {
-			throw new AccessError("The code is not right", "badTotp", 403);
+			throw new AccessError("The code is not right", "badTotp", status);
 		}
-		this.repo.updateUser(userId, { totpSecret: secret });
+		this.repo.updateUser(user.id, { totpLastCounter: step });
+		user.totpLastCounter = step;
 	}
 
-	async disableTotp(userId: string, password: string): Promise<void> {
-		const user = this.mustGet(userId);
+	/** Who changes two-step sign-in proves it with the password and the code. */
+	private async assertOwnsAccount(
+		user: UserRow,
+		password: string,
+		code: string | undefined,
+	): Promise<void> {
 		if (
 			!(await verifyPassword(
 				password.slice(0, MAX_PASSWORD_LENGTH),
@@ -380,7 +391,49 @@ export class AccountService {
 				403,
 			);
 		}
-		this.repo.updateUser(userId, { totpSecret: null });
+		if (user.totpSecret) {
+			if (!code) {
+				throw new AccessError(
+					"Enter the code from your authenticator app",
+					"totpRequired",
+					403,
+				);
+			}
+			this.useTotpCode(user, code, 403);
+		}
+	}
+
+	/**
+	 * Turns two-step sign-in on, or moves it to a new app, once the new app
+	 * shows the right code. Needs the password, and the current code when it
+	 * is already on.
+	 */
+	async enableTotp(
+		userId: string,
+		input: { secret: string; code: string; password: string; current?: string },
+	): Promise<void> {
+		const user = this.mustGet(userId);
+		await this.assertOwnsAccount(user, input.password, input.current);
+		const step = /^[A-Z2-7]{32}$/.test(input.secret)
+			? matchTotp(input.secret, input.code, this.now())
+			: null;
+		if (step === null) {
+			throw new AccessError("The code is not right", "badTotp", 403);
+		}
+		this.repo.updateUser(userId, {
+			totpSecret: input.secret,
+			totpLastCounter: step,
+		});
+	}
+
+	/** Turns two-step sign-in off, with the password and a current code. */
+	async disableTotp(
+		userId: string,
+		input: { password: string; code?: string },
+	): Promise<void> {
+		const user = this.mustGet(userId);
+		await this.assertOwnsAccount(user, input.password, input.code);
+		this.repo.updateUser(userId, { totpSecret: null, totpLastCounter: null });
 	}
 
 	createInvite(
@@ -485,23 +538,92 @@ export class AccountService {
 		this.repo.updateUser(id, patch);
 		// Signed out at once: what they may do just changed.
 		if (patch.disabledAt != null) this.repo.deleteSessionsOf(id);
+		// Tokens were made for what the person could do then.
+		if (
+			patch.disabledAt != null ||
+			(patch.role !== undefined && patch.role !== user.role)
+		) {
+			this.repo.deleteTokensOf(id);
+		}
 		return accountView(this.mustGet(id));
 	}
 
 	/**
-	 * A one-time password to give the person, which they must change when
-	 * they sign in. Their other sign-ins end.
+	 * For an owner locked out, from the server's command line: a one-time
+	 * password that must be changed at the next sign-in. Two-step sign-in is
+	 * turned off, since a lost phone is why one ends up here. Every sign-in
+	 * and API token of the person ends.
 	 */
-	async resetPassword(actor: UserRow | null, id: string): Promise<string> {
-		const user = this.mustGet(id);
-		if (actor) this.assertMayManage(actor, user);
+	async resetPasswordFromConsole(id: string): Promise<string> {
+		this.mustGet(id);
 		const temporary = newToken().slice(0, 16);
 		this.repo.updateUser(id, {
 			passwordHash: await hashPassword(temporary),
 			mustChangePassword: true,
+			totpSecret: null,
+			totpLastCounter: null,
 		});
 		this.repo.deleteSessionsOf(id);
+		this.repo.deleteTokensOf(id);
 		return temporary;
+	}
+
+	/**
+	 * A link, valid for a day and once, for the person to choose a new
+	 * password: nobody else learns it.
+	 */
+	createPasswordReset(
+		actor: UserRow,
+		id: string,
+	): { token: string; expiresAt: number } {
+		const user = this.mustGet(id);
+		this.assertMayManage(actor, user);
+		const token = newToken();
+		const now = this.now();
+		const expiresAt = now + RESET_MS;
+		this.repo.createPasswordReset({
+			id: hashToken(token),
+			userId: id,
+			createdBy: actor.id,
+			createdAt: now,
+			expiresAt,
+			usedAt: null,
+		});
+		return { token, expiresAt };
+	}
+
+	/** Whose password a reset link sets, or null when it cannot be used. */
+	passwordResetFor(token: string): { username: string } | null {
+		const reset = this.repo.getPasswordReset(hashToken(token));
+		if (!reset || reset.usedAt != null || reset.expiresAt < this.now()) {
+			return null;
+		}
+		const user = this.repo.getUser(reset.userId);
+		return user && user.disabledAt == null ? { username: user.username } : null;
+	}
+
+	/**
+	 * Sets the new password a reset link was for. Every sign-in and token of
+	 * the person ends; they then sign in as usual, two-step code included.
+	 */
+	async usePasswordReset(token: string, password: string): Promise<void> {
+		const invalid = () =>
+			new AccessError(
+				"This link has expired or was already used",
+				"resetInvalid",
+				403,
+			);
+		const reset = this.repo.getPasswordReset(hashToken(token));
+		if (!reset || reset.usedAt != null || reset.expiresAt < this.now()) {
+			throw invalid();
+		}
+		const user = this.repo.getUser(reset.userId);
+		if (!user || user.disabledAt != null) throw invalid();
+		const passwordHash = await hashPassword(password);
+		if (!this.repo.usePasswordReset(reset.id, this.now())) throw invalid();
+		this.repo.updateUser(user.id, { passwordHash, mustChangePassword: false });
+		this.repo.deleteSessionsOf(user.id);
+		this.repo.deleteTokensOf(user.id);
 	}
 
 	/** Finds a person by name, for the command line. */
@@ -554,29 +676,38 @@ export class AccountService {
 	}
 
 	/** Admins run the server for its owners: they cannot change an owner. */
+	/**
+	 * Owners manage anyone. Admins manage members only: not themselves, not
+	 * other admins, not owners. Members manage nobody.
+	 */
 	private assertMayManage(actor: UserRow, user: UserRow): void {
+		if (actor.role === "owner") return;
 		if (
-			actor.role === "member" ||
-			(actor.role === "admin" && user.role === "owner")
+			actor.role === "admin" &&
+			user.role === "member" &&
+			user.id !== actor.id
 		) {
-			throw new AccessError(
-				"Only an owner can change this account",
-				"forbidden",
-				403,
-			);
+			return;
 		}
+		throw new AccessError(
+			"Only an owner can change this account",
+			"forbidden",
+			403,
+		);
 	}
 
+	/** Owners make anyone; admins make members only. */
 	private assertMayGrant(actor: UserRow, role: UserRole): void {
 		if (!USER_ROLES.includes(role)) {
 			throw new ValidationError(`Unknown role: ${role}`);
 		}
-		if (
-			actor.role === "member" ||
-			(role === "owner" && actor.role !== "owner")
-		) {
-			throw new AccessError("Only an owner can make owners", "forbidden", 403);
-		}
+		if (actor.role === "owner") return;
+		if (actor.role === "admin" && role === "member") return;
+		throw new AccessError(
+			"Only an owner can make admins and owners",
+			"forbidden",
+			403,
+		);
 	}
 
 	private async newUser(
@@ -584,10 +715,10 @@ export class AccountService {
 		password: string,
 		terms: InviteTerms,
 	): Promise<UserRow> {
-		const name = username.trim();
+		const name = username.trim().toLowerCase();
 		if (!USERNAME.test(name)) {
 			throw new ValidationError(
-				"A username is 1 to 32 letters, digits, dots, dashes or underscores",
+				"A username is 3 to 32 letters a to z, digits, dots, dashes or underscores",
 				"usernameInvalid",
 			);
 		}
@@ -604,6 +735,7 @@ export class AccountService {
 			canTrain: terms.canTrain,
 			monthlyLimitUsd: terms.monthlyLimitUsd,
 			totpSecret: null,
+			totpLastCounter: null,
 			mustChangePassword: false,
 			disabledAt: null,
 			createdAt: this.now(),

@@ -60,6 +60,8 @@ const secondary =
 
 const inviteToken = (hash: string) =>
 	/^#\/invite\/([\w-]+)$/.exec(hash)?.[1] ?? null;
+const resetToken = (hash: string) =>
+	/^#\/reset\/([\w-]+)$/.exec(hash)?.[1] ?? null;
 
 const subscribeHash = (notify: () => void) => {
 	window.addEventListener("hashchange", notify);
@@ -116,9 +118,13 @@ function ServerGate({
 	);
 
 	const token = inviteToken(hash);
+	const reset = resetToken(hash);
 	let screen: ReactNode = null;
 	if (account.isPending || (account.data === null && setup.isPending)) {
 		screen = null;
+	} else if (reset) {
+		// Whoever is signed in here, the link is for its own person.
+		screen = <ResetPassword token={reset} />;
 	} else if (account.data && !account.data.mustChangePassword) {
 		return (
 			<AccountContext.Provider value={account.data}>
@@ -435,6 +441,91 @@ function AcceptInvite({ token }: { token: string }) {
 	);
 }
 
+/** A link from an admin or owner, to choose a new password. */
+function ResetPassword({ token }: { token: string }) {
+	const { t } = useI18n();
+	const [password, setPassword] = useState("");
+	const [again, setAgain] = useState("");
+	const reset = useQuery({
+		queryKey: ["reset", token],
+		queryFn: () => api.passwordReset(token),
+		retry: false,
+	});
+	const save = useMutation({
+		mutationFn: () => api.setPasswordFromLink(token, password),
+	});
+	const mismatch = again !== "" && again !== password;
+	if (reset.isPending) return null;
+	if (save.isSuccess || reset.error) {
+		return (
+			<>
+				{save.isSuccess ? (
+					<p className="text-sm text-good">{t("reset.done")}</p>
+				) : (
+					<Problem error={reset.error} />
+				)}
+				<button type="button" onClick={reload} className={primary}>
+					{t("signin.title")}
+				</button>
+			</>
+		);
+	}
+	return (
+		<>
+			<div>
+				<h1 className="text-xl font-semibold">{t("account.choosePassword")}</h1>
+				<p className="mt-2 text-sm leading-relaxed text-dim">
+					{t("reset.intro", { name: reset.data.username })}
+				</p>
+			</div>
+			<form
+				className="flex flex-col gap-4"
+				onSubmit={(event) => {
+					event.preventDefault();
+					if (!mismatch) save.mutate();
+				}}
+			>
+				<Field label={t("account.newPassword")}>
+					<input
+						type="password"
+						value={password}
+						onChange={(event) => setPassword(event.target.value)}
+						autoComplete="new-password"
+						minLength={MIN_PASSWORD}
+						required
+						className={input}
+					/>
+				</Field>
+				<Field label={t("account.passwordAgain")}>
+					<input
+						type="password"
+						value={again}
+						onChange={(event) => setAgain(event.target.value)}
+						autoComplete="new-password"
+						required
+						className={input}
+					/>
+				</Field>
+				<p className="text-xs text-dim">
+					{mismatch
+						? t("account.passwordsDiffer")
+						: t("account.passwordHint", { min: MIN_PASSWORD })}
+				</p>
+				<Problem error={save.error} />
+				<button
+					type="submit"
+					disabled={
+						save.isPending || mismatch || password.length < MIN_PASSWORD
+					}
+					className={primary}
+				>
+					{t("reset.submit")}
+				</button>
+			</form>
+		</>
+	);
+}
+
 /** A temporary password is replaced before anything else. */
 function ChoosePassword() {
 	const { t } = useI18n();
@@ -574,23 +665,47 @@ function TwoStep({ enabled }: { enabled: boolean }) {
 	const [code, setCode] = useState("");
 	const [password, setPassword] = useState("");
 	const refresh = () => client.invalidateQueries({ queryKey: ["account"] });
+	const done = () => {
+		setCode("");
+		setPassword("");
+		return refresh();
+	};
 	const start = useMutation({ mutationFn: api.startTotp });
+	// Changing it takes the password, and the current code when it is on.
 	const enable = useMutation({
 		mutationFn: () =>
-			api.enableTotp({ secret: start.data?.secret ?? "", code }),
+			api.enableTotp({ secret: start.data?.secret ?? "", code, password }),
 		onSuccess: () => {
 			start.reset();
-			setCode("");
-			return refresh();
+			return done();
 		},
 	});
 	const disable = useMutation({
-		mutationFn: () => api.disableTotp(password),
-		onSuccess: () => {
-			setPassword("");
-			return refresh();
-		},
+		mutationFn: () => api.disableTotp({ password, code }),
+		onSuccess: done,
 	});
+	const passwordField = (
+		<input
+			type="password"
+			value={password}
+			onChange={(event) => setPassword(event.target.value)}
+			placeholder={t("account.currentPassword")}
+			aria-label={t("account.currentPassword")}
+			autoComplete="current-password"
+			className={`min-w-0 flex-1 ${input}`}
+		/>
+	);
+	const codeField = (
+		<input
+			value={code}
+			onChange={(event) => setCode(event.target.value)}
+			placeholder="123456"
+			aria-label={t("signin.code")}
+			inputMode="numeric"
+			autoComplete="one-time-code"
+			className={`w-36 font-mono tracking-widest ${input}`}
+		/>
+	);
 	return (
 		<div className="mt-4 rounded-lg border border-line bg-panel p-4">
 			<div className="flex items-baseline justify-between gap-4">
@@ -612,18 +727,11 @@ function TwoStep({ enabled }: { enabled: boolean }) {
 						disable.mutate();
 					}}
 				>
-					<input
-						type="password"
-						value={password}
-						onChange={(event) => setPassword(event.target.value)}
-						placeholder={t("account.currentPassword")}
-						aria-label={t("account.currentPassword")}
-						autoComplete="current-password"
-						className={`min-w-0 flex-1 ${input}`}
-					/>
+					{passwordField}
+					{codeField}
 					<button
 						type="submit"
-						disabled={!password || disable.isPending}
+						disabled={!password || !code || disable.isPending}
 						className={secondary}
 					>
 						{t("account.twoStepDisable")}
@@ -650,19 +758,12 @@ function TwoStep({ enabled }: { enabled: boolean }) {
 							{start.data.secret.replace(/(.{4})/g, "$1 ").trim()}
 						</code>
 					</p>
-					<div className="flex gap-2">
-						<input
-							value={code}
-							onChange={(event) => setCode(event.target.value)}
-							placeholder="123456"
-							aria-label={t("signin.code")}
-							inputMode="numeric"
-							autoComplete="one-time-code"
-							className={`w-36 font-mono tracking-widest ${input}`}
-						/>
+					<div className="flex flex-wrap gap-2">
+						{passwordField}
+						{codeField}
 						<button
 							type="submit"
-							disabled={!code || enable.isPending}
+							disabled={!code || !password || enable.isPending}
 							className={primary}
 						>
 							{t("account.twoStepConfirm")}
@@ -778,9 +879,8 @@ function Terms({
 	owner: boolean;
 }) {
 	const { t } = useI18n();
-	const roles: UserRole[] = owner
-		? ["member", "admin", "owner"]
-		: ["member", "admin"];
+	// Admins make members only.
+	const roles: UserRole[] = owner ? ["member", "admin", "owner"] : ["member"];
 	return (
 		<div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
 			<select
@@ -1005,9 +1105,10 @@ function People({ me }: { me: AccountView }) {
 function Person({ user, me }: { user: AccountView; me: AccountView }) {
 	const { t } = useI18n();
 	const client = useQueryClient();
-	const [password, setPassword] = useState<string | null>(null);
-	// Admins run the server for its owners: an owner is not theirs to change.
-	const mayChange = me.role === "owner" || user.role !== "owner";
+	const [copied, setCopied] = useState(false);
+	// Owners manage anyone; admins only members other than themselves.
+	const mayChange =
+		me.role === "owner" || (user.role === "member" && user.id !== me.id);
 	const update = useMutation({
 		mutationFn: (change: Partial<InviteTerms> & { disabled?: boolean }) =>
 			api.updateUser(user.id, change),
@@ -1015,8 +1116,11 @@ function Person({ user, me }: { user: AccountView; me: AccountView }) {
 	});
 	const reset = useMutation({
 		mutationFn: () => api.resetPassword(user.id),
-		onSuccess: (result) => setPassword(result.password),
+		onSuccess: () => setCopied(false),
 	});
+	const link = reset.data
+		? `${window.location.origin}/#/reset/${reset.data.token}`
+		: null;
 	return (
 		<li className="flex flex-col gap-2 py-3">
 			<div className="flex items-baseline justify-between gap-3">
@@ -1056,31 +1160,47 @@ function Person({ user, me }: { user: AccountView; me: AccountView }) {
 								{user.disabled ? t("users.enable") : t("users.disable")}
 							</button>
 						)}
-						<button
-							type="button"
-							onClick={() => {
-								if (
-									window.confirm(
-										t("users.resetConfirm", { name: user.username }),
-									)
-								) {
-									reset.mutate();
-								}
-							}}
-							className={secondary}
-						>
-							{t("users.resetPassword")}
-						</button>
+						{user.id !== me.id && (
+							<button
+								type="button"
+								onClick={() => reset.mutate()}
+								disabled={reset.isPending}
+								className={secondary}
+							>
+								{t("users.resetPassword")}
+							</button>
+						)}
 					</div>
 				</>
 			) : (
 				<p className="text-sm text-dim">{roleText(t, user.role)}</p>
 			)}
-			{password && (
-				<p className="text-sm">
-					{t("users.temporaryPassword", { name: user.username })}{" "}
-					<code className="select-all font-mono">{password}</code>
-				</p>
+			{link && (
+				<div className="flex flex-col gap-2">
+					<p className="text-sm text-dim">
+						{t("users.resetLink", { name: user.username })}
+					</p>
+					<div className="flex gap-2">
+						<input
+							readOnly
+							value={link}
+							aria-label={t("users.resetLink", { name: user.username })}
+							onFocus={(event) => event.target.select()}
+							className={`min-w-0 flex-1 font-mono text-xs ${input}`}
+						/>
+						<button
+							type="button"
+							onClick={() =>
+								void navigator.clipboard
+									?.writeText(link)
+									.then(() => setCopied(true))
+							}
+							className={secondary}
+						>
+							{copied ? t("settings.agentsCopied") : t("settings.agentsCopy")}
+						</button>
+					</div>
+				</div>
 			)}
 			<Problem error={update.error ?? reset.error} />
 		</li>

@@ -70,25 +70,34 @@ export function totp(
 }
 
 /**
- * Whether `code` is right for now, a step before or a step after: clocks
- * drift, and people type slowly.
+ * The time step `code` is right for: now, a step before or a step after,
+ * since clocks drift and people type slowly. Null when it is not right.
  */
+export function matchTotp(
+	secretBase32: string,
+	code: string,
+	nowMs = Date.now(),
+): number | null {
+	const secret = base32Decode(secretBase32);
+	const typed = code.replace(/\s/g, "");
+	if (!secret || !/^\d{6}$/.test(typed)) return null;
+	const now = Math.floor(nowMs / 1000 / 30);
+	let matched: number | null = null;
+	for (const step of [now - 1, now, now + 1]) {
+		const expected = Buffer.from(totp(secret, step * 30));
+		// Every window is checked, so the time taken says nothing.
+		if (timingSafeEqual(expected, Buffer.from(typed))) matched = step;
+	}
+	return matched;
+}
+
+/** Whether `code` is right for now, give or take a step. */
 export function verifyTotp(
 	secretBase32: string,
 	code: string,
 	nowMs = Date.now(),
 ): boolean {
-	const secret = base32Decode(secretBase32);
-	const typed = code.replace(/\s/g, "");
-	if (!secret || !/^\d{6}$/.test(typed)) return false;
-	const seconds = Math.floor(nowMs / 1000);
-	let ok = false;
-	for (const drift of [-30, 0, 30]) {
-		const expected = Buffer.from(totp(secret, seconds + drift));
-		// Every window is checked, so the time taken says nothing.
-		if (timingSafeEqual(expected, Buffer.from(typed))) ok = true;
-	}
-	return ok;
+	return matchTotp(secretBase32, code, nowMs) !== null;
 }
 
 /** A new secret: 20 random bytes, as RFC 4226 recommends. */

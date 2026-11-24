@@ -439,15 +439,14 @@ test("a new password or a disabled account ends the other sessions", async () =>
 	expect((await call("/api/models", { who: member })).status).toBe(401);
 });
 
-test("a reset password must be changed before anything else", async () => {
-	const { call, setupOwner, invite, cookieOf, userId } = await serverApp();
+test("a console reset password must be changed before anything else", async () => {
+	const { call, setupOwner, invite, cookieOf, userId, runtime } =
+		await serverApp();
 	const owner = await setupOwner();
 	const member = await invite(owner);
-	const reset = await call(`/api/users/${userId(member.username)}/password`, {
-		method: "POST",
-		who: owner,
-	});
-	const { password } = (await reset.json()) as { password: string };
+	const password = await runtime.accounts.resetPasswordFromConsole(
+		userId(member.username),
+	);
 	const signed = await call("/api/login", {
 		method: "POST",
 		body: { username: member.username, password },
@@ -466,29 +465,76 @@ test("a reset password must be changed before anything else", async () => {
 	expect((await call("/api/models", { who })).status).toBe(200);
 });
 
-test("two-step sign-in is set up with a code and then asked for", async () => {
+test("admins give out reset links, never passwords, and only for members", async () => {
+	const { call, setupOwner, invite, userId } = await serverApp();
+	const owner = await setupOwner();
+	const admin = await invite(owner, { role: "admin" });
+	const other = await invite(owner, { role: "admin" });
+	const member = await invite(owner);
+	const reset = (who: Who, username: string) =>
+		call(`/api/users/${userId(username)}/password`, { method: "POST", who });
+	expect((await reset(admin, other.username)).status).toBe(403);
+	expect((await reset(admin, admin.username)).status).toBe(403);
+	// Nor change their own limit.
+	const own = await call(`/api/users/${userId(admin.username)}`, {
+		method: "PATCH",
+		who: admin,
+		body: { monthlyLimitUsd: null },
+	});
+	expect(own.status).toBe(403);
+
+	const created = await reset(admin, member.username);
+	expect(created.status).toBe(201);
+	const link = (await created.json()) as { token: string; password?: string };
+	expect(link.password).toBeUndefined();
+	expect(
+		await (await call(`/api/password-resets/${link.token}`)).json(),
+	).toEqual({ username: member.username });
+	const set = await call(`/api/password-resets/${link.token}`, {
+		method: "POST",
+		body: { password: "chosen by the member" },
+	});
+	expect(set.status).toBe(204);
+	// Signed out everywhere; the new password works, the link no more.
+	expect((await call("/api/models", { who: member })).status).toBe(401);
+	expect(
+		(
+			await call("/api/login", {
+				method: "POST",
+				body: { username: member.username, password: "chosen by the member" },
+			})
+		).status,
+	).toBe(200);
+	expect((await call(`/api/password-resets/${link.token}`)).status).toBe(404);
+});
+
+test("two-step sign-in is set up with the password and a code, then asked for", async () => {
 	const { call, setupOwner } = await serverApp();
 	const owner = await setupOwner();
 	const { secret, uri } = (await (
 		await call("/api/account/totp", { method: "POST", who: owner })
 	).json()) as { secret: string; uri: string };
 	expect(uri).toStartWith("otpauth://totp/Hatchlight%3Aowner?");
-	const code = () =>
-		totp(base32Decode(secret) as Uint8Array, Math.floor(Date.now() / 1000));
-	const wrong = await call("/api/account/totp", {
-		method: "PUT",
-		who: owner,
-		body: { secret, code: "000000" },
-	});
-	expect(wrong.status).toBe(403);
+	// The code of the next step: the current one turns it on and is spent.
+	const code = (stepsAhead = 0) =>
+		totp(
+			base32Decode(secret) as Uint8Array,
+			Math.floor(Date.now() / 1000) + 30 * stepsAhead,
+		);
+	const enable = (body: Record<string, unknown>) =>
+		call("/api/account/totp", { method: "PUT", who: owner, body });
 	expect(
-		(
-			await call("/api/account/totp", {
-				method: "PUT",
-				who: owner,
-				body: { secret, code: code() },
-			})
-		).status,
+		(await enable({ secret, code: "000000", password: PASSWORD })).status,
+	).toBe(403);
+	expect(
+		await errorCode(
+			await enable({ secret, code: code(), password: "not the password" }),
+		),
+	).toBe("badPassword");
+	// Taken together, so a step ending meanwhile changes nothing.
+	const [current, next] = [code(), code(1)];
+	expect(
+		(await enable({ secret, code: current, password: PASSWORD })).status,
 	).toBe(204);
 
 	const login = (totpCode?: string) =>
@@ -499,7 +545,10 @@ test("two-step sign-in is set up with a code and then asked for", async () => {
 	const asked = await login();
 	expect(asked.status).toBe(401);
 	expect(await errorCode(asked)).toBe("totpRequired");
-	expect((await login(code())).status).toBe(200);
+	// Each code works once.
+	expect(await errorCode(await login(current))).toBe("badTotp");
+	expect((await login(next)).status).toBe(200);
+	expect(await errorCode(await login(next))).toBe("badTotp");
 });
 
 test("people see only their own sessions, pictures, jobs and events", async () => {
@@ -785,6 +834,21 @@ test("an API token acts for its person, and only to use the server", async () =>
 	// Not for managing the server or accounts, even an owner's.
 	expect((await call("/api/users", { who: { token } })).status).toBe(403);
 	expect((await call("/api/account", { who: { token } })).status).toBe(403);
+	for (const [method, path] of [
+		["POST", "/api/invites"],
+		["PUT", "/api/providers/paid/key"],
+		["POST", "/api/trainer/install"],
+		["POST", "/api/logout"],
+	] as const) {
+		const response = await call(path, {
+			method,
+			who: { token },
+			headers: { origin: "" },
+			body: {},
+		});
+		expect(response.status).toBe(403);
+		expect(await errorCode(response)).toBe("forbidden");
+	}
 	expect(
 		(await call("/api/models", { who: { token: "made-up" } })).status,
 	).toBe(401);

@@ -123,6 +123,8 @@ export const users = sqliteTable(
 		canTrain: integer("can_train", { mode: "boolean" }).notNull(),
 		monthlyLimitUsd: real("monthly_limit_usd"),
 		totpSecret: text("totp_secret"),
+		/** The last two-step code's time step, which cannot be used again. */
+		totpLastCounter: integer("totp_last_counter"),
 		/** Set by a reset: the next sign-in must choose a new password. */
 		mustChangePassword: integer("must_change_password", { mode: "boolean" })
 			.notNull()
@@ -203,3 +205,20 @@ export const spending = sqliteTable(
 	},
 	(t) => [index("spending_user_created").on(t.userId, t.createdAt)],
 );
+
+/**
+ * Links that let someone choose a new password, given by an admin or owner.
+ * The id is the token's SHA-256.
+ */
+export const passwordResets = sqliteTable("password_resets", {
+	id: text("id").primaryKey(),
+	userId: text("user_id")
+		.notNull()
+		.references(() => users.id, { onDelete: "cascade" }),
+	createdBy: text("created_by")
+		.notNull()
+		.references(() => users.id, { onDelete: "cascade" }),
+	createdAt: integer("created_at").notNull(),
+	expiresAt: integer("expires_at").notNull(),
+	usedAt: integer("used_at"),
+});

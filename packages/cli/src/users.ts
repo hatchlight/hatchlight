@@ -14,7 +14,8 @@ Usage: hatchlight users list [options]
        hatchlight users reset-password <username> [options]
 
 reset-password prints a one-time password, which must be changed at the
-next sign-in, and signs the person out everywhere. Use it when an owner is
+next sign-in, turns two-step sign-in off, and ends every sign-in and API
+token of the account. Use it when an owner is
 locked out, for instance through docker exec. It works while the server runs.
 
 Options:
@@ -75,9 +76,13 @@ export async function users(args: string[]): Promise<number> {
 				console.error(`No account named ${username}.`);
 				return 1;
 			}
-			const password = await accounts.resetPassword(null, user.id);
+			const password = await accounts.resetPasswordFromConsole(user.id);
 			console.log(`One-time password for ${user.username}: ${password}`);
 			console.log("It must be changed at the next sign-in.");
+			console.log(
+				"Two-step sign-in is turned off; it can be set up again in Settings.",
+			);
+			console.log("Every sign-in and API token of the account has ended.");
 			return 0;
 		}
 		console.error(`Unknown command: ${command}. See hatchlight users --help.`);

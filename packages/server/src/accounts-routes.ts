@@ -176,15 +176,18 @@ export function mountAccounts(
 	app.post("/api/account/totp", (c) =>
 		c.json(accounts.startTotp(c.get("viewer").user.id)),
 	);
+	const optionalText = (value: unknown, name: string) =>
+		value === undefined || value === null ? undefined : text(value, name);
 	app.put("/api/account/totp", async (c) => {
 		const body = await json(c);
 		const { user } = c.get("viewer");
-		await guarded(c, user.username, "signIn", async () =>
-			accounts.enableTotp(
-				user.id,
-				text(body.secret, "secret"),
-				text(body.code, "code"),
-			),
+		await guarded(c, user.username, "signIn", () =>
+			accounts.enableTotp(user.id, {
+				secret: text(body.secret, "secret"),
+				code: text(body.code, "code"),
+				password: text(body.password, "password"),
+				current: optionalText(body.current, "current"),
+			}),
 		);
 		return c.body(null, 204);
 	});
@@ -192,7 +195,32 @@ export function mountAccounts(
 		const body = await json(c);
 		const { user } = c.get("viewer");
 		await guarded(c, user.username, "signIn", () =>
-			accounts.disableTotp(user.id, text(body.password, "password")),
+			accounts.disableTotp(user.id, {
+				password: text(body.password, "password"),
+				code: optionalText(body.code, "code"),
+			}),
+		);
+		return c.body(null, 204);
+	});
+
+	// Reset links: given by admins and owners, opened by the person.
+	app.get("/api/password-resets/:token", (c) => {
+		const reset = accounts.passwordResetFor(c.req.param("token"));
+		if (!reset) {
+			throw new NotFoundError(
+				"This link has expired or was already used",
+				"resetInvalid",
+			);
+		}
+		return c.json(reset);
+	});
+	app.post("/api/password-resets/:token", async (c) => {
+		const body = await json(c);
+		await guarded(c, null, "joining", () =>
+			accounts.usePasswordReset(
+				c.req.param("token"),
+				text(body.password, "password"),
+			),
 		);
 		return c.body(null, 204);
 	});
@@ -261,13 +289,13 @@ export function mountAccounts(
 			accounts.updateUser(c.get("viewer").user, c.req.param("id"), change),
 		);
 	});
-	app.post("/api/users/:id/password", async (c) => {
-		const password = await accounts.resetPassword(
-			c.get("viewer").user,
-			c.req.param("id"),
-		);
-		return c.json({ password });
-	});
+	// A link for the person to choose a new password: nobody else learns it.
+	app.post("/api/users/:id/password", (c) =>
+		c.json(
+			accounts.createPasswordReset(c.get("viewer").user, c.req.param("id")),
+			201,
+		),
+	);
 }
 
 function role(value: unknown): UserRole {

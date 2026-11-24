@@ -205,10 +205,14 @@ export const api = {
 		request<{ secret: string; uri: string }>("/api/account/totp", {
 			method: "POST",
 		}),
-	enableTotp: (input: { secret: string; code: string }) =>
-		request<void>("/api/account/totp", send("PUT", input)),
-	disableTotp: (password: string) =>
-		request<void>("/api/account/totp", send("DELETE", { password })),
+	enableTotp: (input: {
+		secret: string;
+		code: string;
+		password: string;
+		current?: string;
+	}) => request<void>("/api/account/totp", send("PUT", input)),
+	disableTotp: (input: { password: string; code?: string }) =>
+		request<void>("/api/account/totp", send("DELETE", input)),
 	invite: (token: string) =>
 		request<{ role: UserRole; expiresAt: number }>(`/api/invites/${token}`),
 	acceptInvite: (
@@ -229,10 +233,15 @@ export const api = {
 		id: string,
 		change: Partial<InviteTerms> & { disabled?: boolean },
 	) => request<AccountView>(`/api/users/${id}`, send("PATCH", change)),
+	/** A link for the person to choose a new password. */
 	resetPassword: (id: string) =>
-		request<{ password: string }>(`/api/users/${id}/password`, {
+		request<{ token: string; expiresAt: number }>(`/api/users/${id}/password`, {
 			method: "POST",
 		}),
+	passwordReset: (token: string) =>
+		request<{ username: string }>(`/api/password-resets/${token}`),
+	setPasswordFromLink: (token: string, password: string) =>
+		request<void>(`/api/password-resets/${token}`, send("POST", { password })),
 	agents: () => request<AgentsStatus>("/api/agents"),
 	connectClaudeDesktop: (policy: AgentPolicy) =>
 		request<void>("/api/agents/claude-desktop", send("PUT", policy)),

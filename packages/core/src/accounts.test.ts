@@ -135,7 +135,8 @@ test("a wrong username and a wrong password get the same answer", async () => {
 		username: "OWNER",
 		password: PASSWORD,
 	});
-	expect(signed.user.username).toBe("Owner");
+	// Kept in lower case, and found whatever the case.
+	expect(signed.user.username).toBe("owner");
 });
 
 test("sessions slide for 30 days, touched at most once a minute", async () => {
@@ -202,18 +203,47 @@ test("a new password signs out the other browsers", async () => {
 	await accounts.login({ username: "owner", password: "another password" });
 });
 
-test("two-step sign-in asks for the app's code", async () => {
-	const { accounts, owner, now } = await withOwner();
+test("two-step sign-in asks for the app's code, each code once", async () => {
+	const { accounts, owner, now, tick } = await withOwner();
 	const { secret, uri } = accounts.startTotp(owner.user.id);
 	expect(uri).toContain(`secret=${secret}`);
 	const at = () =>
 		totp(base32Decode(secret) as Uint8Array, Math.floor(now() / 1000));
-	expect(() => accounts.enableTotp(owner.user.id, secret, "000000")).toThrow();
-	accounts.enableTotp(owner.user.id, secret, at());
+	expect(
+		await code(
+			accounts.enableTotp(owner.user.id, {
+				secret,
+				code: "000000",
+				password: PASSWORD,
+			}),
+		),
+	).toBe("badTotp");
+	// Turning it on takes the password.
+	expect(
+		await code(
+			accounts.enableTotp(owner.user.id, {
+				secret,
+				code: at(),
+				password: "not the password",
+			}),
+		),
+	).toBe("badPassword");
+	await accounts.enableTotp(owner.user.id, {
+		secret,
+		code: at(),
+		password: PASSWORD,
+	});
 
 	expect(
 		await code(accounts.login({ username: "owner", password: PASSWORD })),
 	).toBe("totpRequired");
+	// The code that turned it on is spent.
+	expect(
+		await code(
+			accounts.login({ username: "owner", password: PASSWORD, totp: at() }),
+		),
+	).toBe("badTotp");
+	tick(30_000);
 	expect(
 		await code(
 			accounts.login({ username: "owner", password: PASSWORD, totp: "123456" }),
@@ -229,9 +259,45 @@ test("two-step sign-in asks for the app's code", async () => {
 			}),
 		),
 	).toBe("badCredentials");
-	await accounts.login({ username: "owner", password: PASSWORD, totp: at() });
+	const fresh = at();
+	await accounts.login({ username: "owner", password: PASSWORD, totp: fresh });
+	// Seen once, a code cannot be used again.
+	expect(
+		await code(
+			accounts.login({ username: "owner", password: PASSWORD, totp: fresh }),
+		),
+	).toBe("badTotp");
 
-	await accounts.disableTotp(owner.user.id, PASSWORD);
+	// Moving it to another app takes the password and a current code.
+	const next = accounts.startTotp(owner.user.id);
+	const nextAt = () =>
+		totp(base32Decode(next.secret) as Uint8Array, Math.floor(now() / 1000));
+	tick(30_000);
+	expect(
+		await code(
+			accounts.enableTotp(owner.user.id, {
+				secret: next.secret,
+				code: nextAt(),
+				password: PASSWORD,
+			}),
+		),
+	).toBe("totpRequired");
+	await accounts.enableTotp(owner.user.id, {
+		secret: next.secret,
+		code: nextAt(),
+		password: PASSWORD,
+		current: at(),
+	});
+
+	// Turning it off too.
+	tick(30_000);
+	expect(
+		await code(accounts.disableTotp(owner.user.id, { password: PASSWORD })),
+	).toBe("totpRequired");
+	await accounts.disableTotp(owner.user.id, {
+		password: PASSWORD,
+		code: nextAt(),
+	});
 	await accounts.login({ username: "owner", password: PASSWORD });
 });
 
@@ -351,10 +417,19 @@ test("admins manage members but not owners, and the last owner stays", async () 
 	accounts.updateUser(owner.user, owner.user.id, { role: "admin" });
 });
 
-test("a reset password works once and must then be changed", async () => {
-	const { accounts, owner } = await withOwner();
-	const temporary = await accounts.resetPassword(null, owner.user.id);
+test("the console reset gives a one-time password, ends sign-ins, tokens and two-step", async () => {
+	const { accounts, owner, now } = await withOwner();
+	const { secret } = accounts.startTotp(owner.user.id);
+	await accounts.enableTotp(owner.user.id, {
+		secret,
+		code: totp(base32Decode(secret) as Uint8Array, Math.floor(now() / 1000)),
+		password: PASSWORD,
+	});
+	const token = accounts.createApiToken(owner.user.id, { name: "agent" });
+	const temporary = await accounts.resetPasswordFromConsole(owner.user.id);
 	expect(accounts.resolveSession(owner.token)).toBeNull();
+	expect(accounts.resolveApiToken(token)).toBeNull();
+	// Two-step is off: a lost phone is why one ends up here.
 	const signed = await accounts.login({
 		username: "owner",
 		password: temporary,
@@ -366,6 +441,39 @@ test("a reset password works once and must then be changed", async () => {
 		null,
 	);
 	expect(accounts.getUser(owner.user.id)?.mustChangePassword).toBe(false);
+});
+
+test("a reset link sets a new password once, within a day", async () => {
+	const { accounts, owner, tick } = await withOwner();
+	const member = await accounts.acceptInvite(
+		accounts.createInvite(owner.user, {
+			role: "member",
+			canUsePaid: false,
+			canTrain: false,
+			monthlyLimitUsd: null,
+		}).token,
+		{ username: "mem", password: PASSWORD },
+	);
+	const token = accounts.createApiToken(member.user.id, { name: "agent" });
+	const link = accounts.createPasswordReset(owner.user, member.user.id);
+	expect(accounts.passwordResetFor(link.token)).toEqual({ username: "mem" });
+	await accounts.usePasswordReset(link.token, "the member's own choice");
+	expect(accounts.resolveSession(member.token)).toBeNull();
+	expect(accounts.resolveApiToken(token)).toBeNull();
+	await accounts.login({
+		username: "mem",
+		password: "the member's own choice",
+	});
+	expect(
+		await code(accounts.usePasswordReset(link.token, "another one, later")),
+	).toBe("resetInvalid");
+
+	const late = accounts.createPasswordReset(owner.user, member.user.id);
+	tick(25 * 60 * 60 * 1000);
+	expect(accounts.passwordResetFor(late.token)).toBeNull();
+	expect(
+		await code(accounts.usePasswordReset(late.token, "too late for this")),
+	).toBe("resetInvalid");
 });
 
 test("API tokens act for their person until they expire", async () => {
@@ -397,4 +505,102 @@ test("only a few password checks run at once, the others wait", async () => {
 	expect(most).toBeGreaterThan(0);
 	expect(most).toBeLessThanOrEqual(MAX_HASHING);
 	expect(hashingRunning()).toBe(0);
+});
+
+test("admins manage members only: not themselves, not other admins", async () => {
+	const { accounts, owner } = await withOwner();
+	const join = async (role: "admin" | "member", username: string) =>
+		(
+			await accounts.acceptInvite(
+				accounts.createInvite(owner.user, {
+					role,
+					canUsePaid: false,
+					canTrain: false,
+					monthlyLimitUsd: 1,
+				}).token,
+				{ username, password: PASSWORD },
+			)
+		).user;
+	const admin = await join("admin", "adm");
+	const other = await join("admin", "adm2");
+	const member = await join("member", "mem");
+	const refused = (fn: () => unknown) => expect(fn).toThrow(AccessError);
+	// Not their own limit, nor another admin's account.
+	refused(() =>
+		accounts.updateUser(admin, admin.id, { monthlyLimitUsd: null }),
+	);
+	refused(() => accounts.updateUser(admin, other.id, { disabled: true }));
+	refused(() => accounts.createPasswordReset(admin, other.id));
+	refused(() => accounts.createPasswordReset(admin, admin.id));
+	// Nor make admins.
+	refused(() => accounts.updateUser(admin, member.id, { role: "admin" }));
+	refused(() =>
+		accounts.createInvite(admin, {
+			role: "admin",
+			canUsePaid: false,
+			canTrain: false,
+			monthlyLimitUsd: null,
+		}),
+	);
+	// Members are theirs to manage.
+	expect(
+		accounts.updateUser(admin, member.id, { canTrain: true }).canTrain,
+	).toBe(true);
+	accounts.createPasswordReset(admin, member.id);
+	// Nobody but an owner changes their own account.
+	refused(() =>
+		accounts.updateUser(member, member.id, { monthlyLimitUsd: null }),
+	);
+	expect(
+		accounts.updateUser(owner.user, owner.user.id, { monthlyLimitUsd: 3 })
+			.monthlyLimitUsd,
+	).toBe(3);
+	// Owners manage admins.
+	accounts.updateUser(owner.user, admin.id, { monthlyLimitUsd: null });
+});
+
+test("a person's API tokens end when what they may do changes", async () => {
+	const { accounts, owner } = await withOwner();
+	const member = await accounts.acceptInvite(
+		accounts.createInvite(owner.user, {
+			role: "member",
+			canUsePaid: false,
+			canTrain: false,
+			monthlyLimitUsd: null,
+		}).token,
+		{ username: "mem", password: PASSWORD },
+	);
+	const token = () => accounts.createApiToken(member.user.id, { name: "t" });
+	const promoted = token();
+	accounts.updateUser(owner.user, member.user.id, { role: "admin" });
+	expect(accounts.resolveApiToken(promoted)).toBeNull();
+	const disabled = token();
+	accounts.updateUser(owner.user, member.user.id, { disabled: true });
+	expect(accounts.resolveApiToken(disabled)).toBeNull();
+	accounts.updateUser(owner.user, member.user.id, { disabled: false });
+	const changed = token();
+	await accounts.changePassword(
+		member.user.id,
+		{ current: PASSWORD, next: "a newer password" },
+		null,
+	);
+	expect(accounts.resolveApiToken(changed)).toBeNull();
+});
+
+test("usernames are plain ASCII, 3 to 32 characters, in lower case", async () => {
+	const { accounts, owner } = await withOwner();
+	const join = (username: string) =>
+		accounts.acceptInvite(
+			accounts.createInvite(owner.user, {
+				role: "member",
+				canUsePaid: false,
+				canTrain: false,
+				monthlyLimitUsd: null,
+			}).token,
+			{ username, password: PASSWORD },
+		);
+	for (const bad of ["ab", "ãna", "аdmin", "a b", "x".repeat(33)]) {
+		expect(await code(join(bad))).toBe("usernameInvalid");
+	}
+	expect((await join("Ana.Silva")).user.username).toBe("ana.silva");
 });
