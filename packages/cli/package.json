@@ -11,6 +11,7 @@
 	"dependencies": {
 		"@hatchlight/mcp": "workspace:*",
 		"@hatchlight/server": "workspace:*",
-		"@hatchlight/core": "workspace:*"
+		"@hatchlight/core": "workspace:*",
+		"@hatchlight/tools": "workspace:*"
 	}
 }

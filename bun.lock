@@ -12,7 +12,7 @@
     },
     "apps/desktop": {
       "name": "@hatchlight/desktop",
-      "version": "0.1.1",
+      "version": "0.2.0",
       "devDependencies": {
         "@tauri-apps/cli": "2.12.5",
       },
@@ -65,6 +65,7 @@
         "@hatchlight/core": "workspace:*",
         "@hatchlight/mcp": "workspace:*",
         "@hatchlight/server": "workspace:*",
+        "@hatchlight/tools": "workspace:*",
       },
     },
     "packages/core": {

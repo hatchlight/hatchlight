@@ -53,6 +53,26 @@ picture: download a model that runs on your computer, or paste an API key.
 environment: `FAL_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,
 `REPLICATE_API_TOKEN`, `OPENROUTER_API_KEY`.
 
+## Use it from the terminal
+
+The same program makes pictures from the command line. From the Hatchlight
+folder, `bun run start <command>`:
+
+```sh
+bun run start models                         # what can be used now
+bun run start generate "a lighthouse at dusk" -m local/sdxl-turbo -o out/
+bun run start generate "the same, at night" -r out/first.png --seed 7
+bun run start upscale ast_… -o big.png
+bun run start gallery lighthouse             # find what was made before
+bun run start get ast_… -o lighthouse.png
+```
+
+`generate` waits and shows how each model is doing. With the app open, Ctrl+C
+stops waiting while the job goes on, to follow with `status <session>`. Compare models by
+repeating `-m`. Every command takes `--json` for scripts and has `--help`.
+Like agents, it uses the Hatchlight already running or starts one for the
+command, and only models on your computer unless you pass `--allow-paid`.
+
 ## Use it from an AI agent
 
 `hatchlight mcp` lets an agent that speaks the

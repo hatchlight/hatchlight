@@ -28,6 +28,8 @@ from code:
 
 - `apps/web/src/locales/` for the app, `apps/site/src/locales/` for the site,
   one JSON file per language.
+- The command line (`packages/cli`) and agent tools speak English only, like
+  other developer tools; they have no catalog.
 - English (`en.json`) is the source and has every key. Other languages may lag
   behind: a missing key falls back to English.
 - When you add or change an English message, update the other languages you

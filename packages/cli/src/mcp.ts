@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 import { defaultDataDir } from "@hatchlight/core";
 import { runMcp } from "@hatchlight/mcp";
+import { launcher, serverArgs } from "./launcher";
 
 const HELP = `hatchlight mcp — lets an AI agent make pictures and videos with Hatchlight
 
@@ -45,18 +46,10 @@ export async function mcp(args: string[]): Promise<void> {
 		console.error("--spend-limit only applies with --allow-paid");
 		process.exit(1);
 	}
-	// This same program starts a server: a compiled one by itself, Bun with
-	// this script otherwise. A compiled program's script is not a file.
-	const compiled = /\$bunfs|~BUN/.test(Bun.main);
-	const launcher = compiled ? [process.execPath] : [process.execPath, Bun.main];
-	const serverArgs = [
-		...(values["data-dir"] ? ["--data-dir", values["data-dir"]] : []),
-		...(values.resources ? ["--resources", values.resources] : []),
-	];
 	await runMcp({
 		dataDir: values["data-dir"] ?? defaultDataDir(),
-		launcher,
-		serverArgs,
+		launcher: launcher(),
+		serverArgs: serverArgs(values),
 		allowPaid: values["allow-paid"],
 		spendLimitUsd: limit,
 	});
