@@ -251,4 +251,4 @@ security problem, see [SECURITY.md](SECURITY.md).
 ## License
 
 [MIT](LICENSE). The models and engines the app downloads keep their own
-licenses.
+licenses: see [THIRD_PARTY.md](THIRD_PARTY.md).
