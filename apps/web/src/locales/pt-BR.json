@@ -279,6 +279,7 @@
 	"errors.unknownModel": "O modelo {model} não está disponível.",
 	"errors.unknownProvider": "{provider} não é um serviço conhecido.",
 	"errors.unknownVariant": "Essa versão do modelo não existe.",
+	"errors.uploadBusy": "Outro envio seu ainda está em andamento. Espere ele terminar.",
 	"errors.uploadType": "Só é possível adicionar imagens PNG, JPEG e WebP.",
 	"errors.usernameInvalid": "O nome de usuário tem de 3 a 32 letras de a a z, números, pontos, hífens ou sublinhados.",
 	"errors.usernameTaken": "Esse nome de usuário já existe.",

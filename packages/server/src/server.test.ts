@@ -1677,3 +1677,51 @@ test("a job tried again is a new picture, held to the room left", async () => {
 	expect(retried.status).toBe(403);
 	expect(await errorCode(retried)).toBe("storageFull");
 });
+
+test("uploads take turns, and one that would not fit is refused before it is read", async () => {
+	const { call, setupOwner, invite } = await serverApp({
+		env: { HATCHLIGHT_ASSET_GB_PER_PERSON: String(100 / 1024 ** 3) },
+	});
+	const owner = await setupOwner();
+	const member = await invite(owner);
+	const upload = (body: Uint8Array | ReadableStream, headers = {}) =>
+		call("/api/assets", {
+			method: "POST",
+			who: member,
+			body,
+			headers: { "content-type": "image/png", ...headers },
+		});
+	// Says it brings more than the room left: refused before it is read.
+	let pulled = 0;
+	const declared = new ReadableStream<Uint8Array>({
+		pull(controller) {
+			pulled++;
+			if (pulled > 20) controller.close();
+			else controller.enqueue(new Uint8Array(10).fill(1));
+		},
+	});
+	const big = await upload(declared, { "content-length": "200" });
+	expect(await errorCode(big)).toBe("storageFull");
+	expect(pulled).toBeLessThan(5);
+	// One at a time: a second while the first is still coming is refused.
+	let finish: () => void = () => {};
+	const held = new Promise<void>((resolve) => {
+		finish = resolve;
+	});
+	const slow = new ReadableStream<Uint8Array>({
+		async start(controller) {
+			controller.enqueue(PNG.slice(0, 4));
+			await held;
+			controller.enqueue(PNG.slice(4));
+			controller.close();
+		},
+	});
+	const first = upload(slow);
+	await Bun.sleep(30);
+	const second = await upload(PNG);
+	expect(second.status).toBe(409);
+	expect(await errorCode(second)).toBe("uploadBusy");
+	finish();
+	expect((await first).status).toBe(201);
+	expect((await upload(PNG)).status).toBe(201);
+});

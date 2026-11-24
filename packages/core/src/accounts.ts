@@ -612,13 +612,22 @@ export class AccountService {
 	}
 
 	/**
-	 * Why a person may not start new pictures now: their pictures already
-	 * take all the room they have. Pictures under way still finish.
+	 * Why a person may not add pictures now: theirs already take all the
+	 * room they have, or `incomingBytes` more would not fit. Pictures under
+	 * way still finish, so the room can be passed by what they make.
 	 */
-	storageRefusal(userId: string): AccessError | null {
+	storageRefusal(userId: string, incomingBytes = 0): AccessError | null {
 		const user = this.repo.getUser(userId);
 		const quota = user ? this.assetQuota(user) : null;
-		if (quota == null || this.repo.assetBytes(userId) < quota) return null;
+		if (quota == null) return null;
+		const used = this.repo.assetBytes(userId);
+		// Full already, or what comes would not fit.
+		if (
+			used < quota &&
+			(incomingBytes === 0 || used + incomingBytes <= quota)
+		) {
+			return null;
+		}
 		return new AccessError(
 			"Your pictures take all the room you have on this server",
 			"storageFull",

@@ -279,6 +279,7 @@
 	"errors.unknownModel": "The model {model} is not available.",
 	"errors.unknownProvider": "{provider} is not a known service.",
 	"errors.unknownVariant": "That version of the model does not exist.",
+	"errors.uploadBusy": "Another of your uploads is still under way. Wait for it to finish.",
 	"errors.uploadType": "Only PNG, JPEG and WebP images can be added.",
 	"errors.usernameInvalid": "A username is 3 to 32 letters a to z, digits, dots, dashes or underscores.",
 	"errors.usernameTaken": "That username is taken.",

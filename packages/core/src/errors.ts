@@ -108,6 +108,7 @@ export const ERROR_CODES = [
 	"unknownModel",
 	"unknownProvider",
 	"unknownVariant",
+	"uploadBusy",
 	"uploadType",
 	"usernameInvalid",
 	"usernameTaken",

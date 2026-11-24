@@ -575,17 +575,42 @@ export function createApp(options: AppOptions): Hono {
 		return c.body(null, 204);
 	});
 
+	/** People with an upload under way, on a server: one each. */
+	const uploading = new Set<string>();
 	app.post(
 		"/api/assets",
+		// On a server, one upload at a time each, and only if what it says
+		// it brings fits the room left: two at once cannot both slip in.
+		async (c, next) => {
+			if (!accounts) return next();
+			const { userId } = user(c);
+			const declared = Number(c.req.header("content-length") ?? 0) || 0;
+			const full = accounts.storageRefusal(userId, declared);
+			if (full) throw full;
+			if (uploading.has(userId)) {
+				throw new AccessError(
+					"Another of your uploads is still under way",
+					"uploadBusy",
+					409,
+				);
+			}
+			uploading.add(userId);
+			try {
+				await next();
+			} finally {
+				uploading.delete(userId);
+			}
+		},
 		bodyLimit({
 			maxSize: MAX_UPLOAD_BYTES,
 			onError: (c) => c.json({ error: "The image is larger than 20 MB" }, 413),
 		}),
 		async (c) => {
-			const full = accounts?.storageRefusal(user(c).userId);
-			if (full) throw full;
 			const data = new Uint8Array(await c.req.arrayBuffer());
 			if (data.byteLength === 0) throw new ValidationError("Empty upload");
+			// What it really brought, when it did not say.
+			const full = accounts?.storageRefusal(user(c).userId, data.byteLength);
+			if (full) throw full;
 			return c.json(await service.uploadAsset(user(c), data), 201);
 		},
 	);
