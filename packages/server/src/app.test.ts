@@ -341,6 +341,36 @@ function otherProcess(): number {
 	return child.pid;
 }
 
+test("a personal install answers only connections from this computer", async () => {
+	const { runtime } = await setup();
+	const app = createApp(runtime);
+	// Host can be forged; the connection's address cannot.
+	const from = (peer: string) =>
+		app.request("http://localhost:4096/api/models", {}, { peer });
+	const refused = await from("192.168.1.9");
+	expect(refused.status).toBe(403);
+	expect(await refused.json()).toEqual({ error: "Forbidden address" });
+	expect((await from("::ffff:10.0.0.4")).status).toBe(403);
+	expect((await from("127.0.0.1")).status).toBe(200);
+	expect((await from("::1")).status).toBe(200);
+	expect((await from("::ffff:127.0.0.1")).status).toBe(200);
+});
+
+test("a second process cannot take over a data directory in use", async () => {
+	const { dir, runtime, post } = await setup();
+	runtime.engine.subscribe(() => {});
+	await expect(
+		createRuntime({ dataDir: dir, providers: [new FakeProvider()] }),
+	).rejects.toBeInstanceOf(DataDirInUseError);
+
+	// The first process is untouched and still runs jobs.
+	const created = await post("/api/turns", {
+		prompt: "x",
+		modelIds: ["fake/alpha"],
+	});
+	expect(created.status).toBe(201);
+});
+
 test("a lock left by a dead process is taken over", async () => {
 	const root = await mkdtemp(join(tmpdir(), "hatchlight-lock-"));
 	await Bun.write(join(root, "hatchlight.lock"), "2147483646");
