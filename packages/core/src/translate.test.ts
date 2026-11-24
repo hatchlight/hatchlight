@@ -7,6 +7,7 @@ describe("a prompt plainly in English", () => {
 			"A cozy ramen shop on a rainy night, neon reflections on the street",
 			"a red fox curled up in the snow",
 			"portrait of an old fisherman, 85mm",
+			"the cat’s red hat on a wooden table",
 		]) {
 			expect(plainlyEnglish(english)).toBe(true);
 		}
@@ -17,6 +18,14 @@ describe("a prompt plainly in English", () => {
 			"un zorro rojo en la nieve con luz de la manana",
 			"ein roter Fuchs im Schnee",
 			"cyberpunk city, neon, rain",
+			"gato fofo usando chapeu, estilo pixar, by greg rutkowski",
+			"menina sob a chuva at night, cinematic",
+			"isang pusa at aso sa bubong",
+			"beyaz bir at",
+			"het huis is groot",
+			"een kat of een hond",
+			"en katt under bordet",
+			"kot to zwierze",
 			"",
 		]) {
 			expect(plainlyEnglish(other)).toBe(false);
