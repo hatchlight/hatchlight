@@ -680,6 +680,7 @@
 	"training.stage.training": "Training",
 	"training.stage.waitingGpu": "Waiting for the graphics card",
 	"training.start": "Start training",
+	"training.startedBy": "started by {name}",
 	"training.steps": "Step {step} of {steps}",
 	"training.stepsLabel": "Steps",
 	"training.title": "Train a LoRA",

@@ -515,8 +515,8 @@ test("people see only their own sessions, pictures, jobs and events", async () =
 	await listening;
 });
 
-test("a training shows only to whoever started it", async () => {
-	const training: TrainingView = {
+test("a training shows only to whoever started it, and to admins", async () => {
+	let training: TrainingView = {
 		id: "trn_1",
 		name: "ana's dog",
 		trigger: "ohwx",
@@ -549,7 +549,8 @@ test("a training shows only to whoever started it", async () => {
 			return () => listeners.delete(listener);
 		},
 		assertCanTrain: async () => {},
-		train: async () => {
+		train: async (request: { startedBy?: TrainingView["startedBy"] }) => {
+			training = { ...training, startedBy: request.startedBy ?? null };
 			status = { ...status, training };
 			return training;
 		},
@@ -582,7 +583,12 @@ test("a training shows only to whoever started it", async () => {
 			.training?.name ?? null;
 	expect(await seen(ana)).toBe("ana's dog");
 	expect(await seen(bia)).toBeNull();
-	expect(await seen(owner)).toBeNull();
+	// Those who run the server see it, and who started it.
+	expect(await seen(owner)).toBe("ana's dog");
+	const forOwner = (await (
+		await call("/api/trainer", { who: owner })
+	).json()) as TrainerStatus;
+	expect(forOwner.training?.startedBy?.name).toBe(ana.username);
 
 	for (const listener of listeners) {
 		listener({ type: "trainer.changed", trainer: status });

@@ -146,6 +146,8 @@ export interface TrainingView {
 	id: string;
 	name: string;
 	trigger: string;
+	/** Who started it, on a server; null on a personal install. */
+	startedBy: { userId: string; name: string } | null;
 	state: "running" | "done" | "failed" | "canceled";
 	stage: TrainingStage;
 	step: number;

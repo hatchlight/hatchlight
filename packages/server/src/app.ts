@@ -23,6 +23,7 @@ import {
 	type Trainer,
 	type TrainerEvent,
 	type TrainerStatus,
+	type TrainingView,
 	type UserContext,
 	ValidationError,
 } from "@hatchlight/core";
@@ -722,22 +723,19 @@ export function createApp(options: AppOptions): Hono {
 		if (!options.trainer) throw new NotFoundError("No trainer here");
 		return options.trainer;
 	};
-	// On a server, a training shows only to who started it: its name and
-	// samples are theirs.
-	const trainingOwners = new Map<string, string>();
-	const mayManageTraining = (c: Context, id: string) =>
-		!server ||
-		trainingOwners.get(id) === user(c).userId ||
+	// On a server, a training shows only to who started it, and to those who
+	// run the server: its name and samples are theirs.
+	const runsServer = (c: Context) =>
 		["owner", "admin"].includes(c.get("viewer").user.role);
-	const forViewer = (userId: string, status: TrainerStatus): TrainerStatus =>
-		server &&
-		status.training &&
-		trainingOwners.get(status.training.id) !== userId
+	const maySee = (c: Context, training: TrainingView) =>
+		!server || training.startedBy?.userId === user(c).userId || runsServer(c);
+	const forViewer = (c: Context, status: TrainerStatus): TrainerStatus =>
+		status.training && !maySee(c, status.training)
 			? { ...status, training: null }
 			: status;
 	const assertMayManageTraining = async (c: Context) => {
 		const training = (await trainer().status()).training;
-		if (training && !mayManageTraining(c, training.id)) {
+		if (training && !maySee(c, training)) {
 			throw new AccessError(
 				"Only who started this training can stop it",
 				"forbidden",
@@ -746,7 +744,7 @@ export function createApp(options: AppOptions): Hono {
 		}
 	};
 	app.get("/api/trainer", async (c) =>
-		c.json(forViewer(user(c).userId, await trainer().status())),
+		c.json(forViewer(c, await trainer().status())),
 	);
 	app.post("/api/trainer/install", async (c) => {
 		await trainer().install();
@@ -810,13 +808,16 @@ export function createApp(options: AppOptions): Hono {
 				caption: typeof caption === "string" ? caption.slice(0, 500) : "",
 			});
 		}
+		const viewer = server ? c.get("viewer").user : null;
 		const training = await trainer().train({
 			name,
 			trigger,
 			steps,
 			pictures: read,
+			startedBy: viewer
+				? { userId: viewer.id, name: viewer.displayName }
+				: undefined,
 		});
-		trainingOwners.set(training.id, user(c).userId);
 		return c.json(training, 202);
 	});
 	app.post("/api/trainings/cancel", async (c) => {
@@ -830,7 +831,8 @@ export function createApp(options: AppOptions): Hono {
 		return c.body(null, 204);
 	});
 	app.get("/api/trainings/:id/samples/:step", async (c) => {
-		if (!mayManageTraining(c, c.req.param("id"))) {
+		const training = (await trainer().status()).training;
+		if (!training || !maySee(c, training)) {
 			throw new NotFoundError("Sample not found");
 		}
 		const file = trainer().sampleFile(
@@ -1016,7 +1018,7 @@ export function createApp(options: AppOptions): Hono {
 				),
 			);
 			const unsubscribeTrainer = options.trainer?.subscribe((event) => {
-				const trainer = forViewer(userId, event.trainer);
+				const trainer = forViewer(c, event.trainer);
 				send({ ...event, trainer } satisfies TrainerEvent);
 			});
 			const unsubscribeAssistant = options.assistant?.subscribe(

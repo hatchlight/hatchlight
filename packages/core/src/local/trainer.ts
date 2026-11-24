@@ -223,6 +223,8 @@ export interface TrainingRequest {
 	trigger: string;
 	pictures: { data: Uint8Array; extension: string; caption: string }[];
 	steps: number;
+	/** Who asked, on a server: the training is theirs to see. */
+	startedBy?: { userId: string; name: string };
 }
 
 export interface TrainerOptions {
@@ -858,6 +860,7 @@ export class Trainer {
 			id,
 			name,
 			trigger,
+			startedBy: request.startedBy ?? null,
 			state: "running",
 			stage: "waitingGpu",
 			step: 0,
