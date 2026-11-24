@@ -362,7 +362,7 @@ export class SqliteAccounts {
 			.run();
 	}
 
-	/** What a person spent on paid services since `since`, in dollars. */
+	/** What a person spent on the server's keys since `since`, in dollars. */
 	spentSince(userId: string, since: number): number {
 		return (
 			this.db
@@ -373,6 +373,8 @@ export class SqliteAccounts {
 				.where(
 					and(
 						eq(schema.spending.userId, userId),
+						// A person's own key is their own money.
+						eq(schema.spending.keySource, "server"),
 						gte(schema.spending.createdAt, since),
 					),
 				)

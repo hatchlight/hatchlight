@@ -134,6 +134,11 @@ export const api = {
 	providers: () => request<ProviderStatus[]>("/api/providers"),
 	setKey: (id: string, key: string) =>
 		request<void>(`/api/providers/${id}/key`, send("PUT", { key })),
+	/** A key of one's own on a server, used before the server's. */
+	setOwnKey: (id: string, key: string) =>
+		request<void>(`/api/account/keys/${id}`, send("PUT", { key })),
+	deleteOwnKey: (id: string) =>
+		request<void>(`/api/account/keys/${id}`, { method: "DELETE" }),
 	deleteKey: (id: string) =>
 		request<void>(`/api/providers/${id}/key`, { method: "DELETE" }),
 	sessions: () => request<Session[]>("/api/sessions"),

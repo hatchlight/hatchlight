@@ -44,13 +44,21 @@ function SectionHeader({ title, intro }: { title: string; intro?: string }) {
 	);
 }
 
+/**
+ * Whose keys a row shows and sets: a personal install's, a person's own
+ * on a server, or the server's.
+ */
+type KeyScope = "install" | "personal" | "server";
+
 function ProviderRow({
 	provider,
 	editable,
+	scope = "install",
 }: {
 	provider: ProviderStatus;
 	/** Only a server's owners set its keys. */
 	editable: boolean;
+	scope?: KeyScope;
 }) {
 	const { t, explain } = useI18n();
 	const client = useQueryClient();
@@ -61,13 +69,25 @@ function ProviderRow({
 		return client.invalidateQueries({ queryKey: ["providers"] });
 	};
 	const save = useMutation({
-		mutationFn: () => api.setKey(provider.id, key),
+		mutationFn: () =>
+			scope === "personal"
+				? api.setOwnKey(provider.id, key)
+				: api.setKey(provider.id, key),
 		onSuccess: done,
 	});
 	const remove = useMutation({
-		mutationFn: () => api.deleteKey(provider.id),
+		mutationFn: () =>
+			scope === "personal"
+				? api.deleteOwnKey(provider.id)
+				: api.deleteKey(provider.id),
 		onSuccess: done,
 	});
+	const hasKey =
+		scope === "personal"
+			? (provider.keys?.personal ?? false)
+			: scope === "server"
+				? (provider.keys?.server ?? false)
+				: provider.hasKey;
 	const error = save.error ?? remove.error;
 
 	return (
@@ -75,9 +95,9 @@ function ProviderRow({
 			<div className="flex items-baseline justify-between gap-4">
 				<h3 className="font-medium">{provider.name}</h3>
 				<span
-					className={`font-mono text-xs ${provider.hasKey ? "text-good" : "text-dim"}`}
+					className={`font-mono text-xs ${hasKey ? "text-good" : "text-dim"}`}
 				>
-					{provider.hasKey
+					{hasKey
 						? t("settings.keyConfigured")
 						: provider.requiresKey
 							? t("settings.noKey")
@@ -97,9 +117,7 @@ function ProviderRow({
 						value={key}
 						onChange={(event) => setKey(event.target.value)}
 						placeholder={
-							provider.hasKey
-								? t("settings.replaceKey")
-								: t("settings.pasteKey")
+							hasKey ? t("settings.replaceKey") : t("settings.pasteKey")
 						}
 						aria-label={t("settings.keyLabel", { provider: provider.name })}
 						autoComplete="off"
@@ -108,7 +126,7 @@ function ProviderRow({
 					<Button type="submit" disabled={!key.trim() || save.isPending}>
 						{t("settings.save")}
 					</Button>
-					{provider.hasKey && (
+					{hasKey && (
 						<Button
 							variant="outline"
 							onClick={() => remove.mutate()}
@@ -688,30 +706,83 @@ export function Settings() {
 				</Card>
 				<AccountSettings />
 				<Translation />
-				<Card className={SECTION}>
-					<SectionHeader
-						title={t("settings.providers")}
-						intro={
-							can.owner
-								? t("settings.providersIntro")
-								: t("settings.providersServer")
-						}
-					/>
-					<CardContent className="flex flex-col gap-3">
-						{providers.error && (
-							<p className="text-sm text-danger">{explain(providers.error)}</p>
-						)}
-						<ul className="grid gap-3 md:grid-cols-2">
-							{providers.data?.map((provider) => (
-								<ProviderRow
-									key={provider.id}
-									provider={provider}
-									editable={can.owner}
+				{server ? (
+					<>
+						{can.paid && (
+							<Card className={SECTION}>
+								<SectionHeader
+									title={t("settings.yourKeys")}
+									intro={t("settings.yourKeysIntro")}
 								/>
-							))}
-						</ul>
-					</CardContent>
-				</Card>
+								<CardContent className="flex flex-col gap-3">
+									{providers.error && (
+										<p className="text-sm text-danger">
+											{explain(providers.error)}
+										</p>
+									)}
+									<ul className="grid gap-3 md:grid-cols-2">
+										{providers.data
+											?.filter((provider) => provider.requiresKey)
+											.map((provider) => (
+												<ProviderRow
+													key={provider.id}
+													provider={provider}
+													editable
+													scope="personal"
+												/>
+											))}
+									</ul>
+								</CardContent>
+							</Card>
+						)}
+						<Card className={SECTION}>
+							<SectionHeader
+								title={t("settings.serverKeys")}
+								intro={
+									can.owner
+										? t("settings.serverKeysIntro")
+										: t("settings.providersServer")
+								}
+							/>
+							<CardContent className="flex flex-col gap-3">
+								{providers.error && (
+									<p className="text-sm text-danger">
+										{explain(providers.error)}
+									</p>
+								)}
+								<ul className="grid gap-3 md:grid-cols-2">
+									{providers.data?.map((provider) => (
+										<ProviderRow
+											key={provider.id}
+											provider={provider}
+											editable={can.owner}
+											scope="server"
+										/>
+									))}
+								</ul>
+							</CardContent>
+						</Card>
+					</>
+				) : (
+					<Card className={SECTION}>
+						<SectionHeader
+							title={t("settings.providers")}
+							intro={t("settings.providersIntro")}
+						/>
+						<CardContent className="flex flex-col gap-3">
+							{providers.error && (
+								<p className="text-sm text-danger">
+									{explain(providers.error)}
+								</p>
+							)}
+							<ul className="grid gap-3 md:grid-cols-2">
+								{providers.data?.map((provider) => (
+									<ProviderRow key={provider.id} provider={provider} editable />
+								))}
+							</ul>
+						</CardContent>
+					</Card>
+				)}
 				<UsersSettings />
 				{!server && <Agents />}
 			</div>

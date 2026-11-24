@@ -828,7 +828,11 @@ function KeyForm(props: { routes: ModelSpec[]; providers: ProviderStatus[] }) {
 	const field = useId();
 	const provider = options.find((p) => p.id === chosen) ?? options[0];
 	const save = useMutation({
-		mutationFn: () => api.setKey(provider?.id ?? chosen, key.trim()),
+		// On a server, a key typed here is the person's own unless they own it.
+		mutationFn: () =>
+			can.server && !can.owner
+				? api.setOwnKey(provider?.id ?? chosen, key.trim())
+				: api.setKey(provider?.id ?? chosen, key.trim()),
 		onSuccess: () => {
 			setKey("");
 			return client.invalidateQueries({ queryKey: ["providers"] });
@@ -836,7 +840,7 @@ function KeyForm(props: { routes: ModelSpec[]; providers: ProviderStatus[] }) {
 	});
 	if (!provider) return null;
 	// A server's keys are its owner's to add.
-	if (!can.owner) {
+	if (!can.owner && !can.paid) {
 		return <p className="text-sm text-dim">{t("settings.providersServer")}</p>;
 	}
 

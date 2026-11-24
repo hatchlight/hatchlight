@@ -9,6 +9,7 @@ import {
 	isImproveWith,
 	isTranslateWith,
 	type JobEngine,
+	type KeySource,
 	LOCAL_USER,
 	type LocalModelStore,
 	type LocalModelsView,
@@ -18,6 +19,7 @@ import {
 	type PaidRefusal,
 	paidError,
 	type ReelService,
+	SERVER_KEYS,
 	type SettingsStore,
 	TRANSLATE_WITH,
 	type Trainer,
@@ -71,7 +73,7 @@ export interface AppOptions {
 	/** The people of a server, who sign in; needed in server mode. */
 	accounts?: AccountService;
 	/** Why a person may not spend on paid models now, or null; servers only. */
-	paidRefusal?: (userId: string) => PaidRefusal | null;
+	paidRefusal?: (userId: string, source: KeySource) => PaidRefusal | null;
 	/** Maps a request to its user. Local installs have a single user. */
 	resolveUser?: (c: Context) => UserContext;
 	/** Connects AI agents to this installation; absent where it cannot. */
@@ -417,18 +419,29 @@ export function createApp(options: AppOptions): Hono {
 	}
 
 	/** Why the person asking may not spend on paid models now, if they may not. */
-	const paidRefusal = (c: Context) =>
-		server ? (options.paidRefusal?.(user(c).userId) ?? null) : null;
+	const paidRefusal = (c: Context, source: KeySource) =>
+		server ? (options.paidRefusal?.(user(c).userId, source) ?? null) : null;
 
 	app.get("/api/models", (c) => c.json(service.listModels()));
 
 	app.get("/api/providers", async (c) => {
 		const providers = await service.listProviders(user(c));
-		// A key from the environment is not theirs to use either.
+		if (!server) return c.json(providers);
+		// Usable now: their own key, or the server's while their limit allows.
+		// A key from the environment is the server's.
+		const notAllowed = paidRefusal(c, "personal") !== null;
+		const serverRefused = paidRefusal(c, "server") !== null;
 		return c.json(
-			paidRefusal(c)
-				? providers.map((p) => (p.requiresKey ? { ...p, hasKey: false } : p))
-				: providers,
+			providers.map((p) =>
+				p.requiresKey && p.keys
+					? {
+							...p,
+							hasKey:
+								!notAllowed &&
+								(p.keys.personal || (p.keys.server && !serverRefused)),
+						}
+					: p,
+			),
 		);
 	});
 
@@ -465,16 +478,39 @@ export function createApp(options: AppOptions): Hono {
 			return c.body(null, 204);
 		});
 	}
+	// On a server, these are the server's keys; on a personal install, the
+	// person's.
+	const keysOf = (c: Context) => (server ? SERVER_KEYS : user(c));
 	app.put("/api/providers/:id/key", async (c) => {
 		const { key } = await json(c);
 		if (typeof key !== "string") throw new ValidationError("Missing key");
-		await service.setProviderKey(user(c), c.req.param("id"), key);
+		await service.setProviderKey(keysOf(c), c.req.param("id"), key);
 		return c.body(null, 204);
 	});
 	app.delete("/api/providers/:id/key", async (c) => {
-		await service.deleteProviderKey(user(c), c.req.param("id"));
+		await service.deleteProviderKey(keysOf(c), c.req.param("id"));
 		return c.body(null, 204);
 	});
+	if (server) {
+		// A person's own keys, used before the server's, for those who may
+		// spend on paid models.
+		const mayHaveKeys = (c: Context) => {
+			const refusal = paidRefusal(c, "personal");
+			if (refusal) throw paidError(refusal);
+		};
+		app.put("/api/account/keys/:id", async (c) => {
+			mayHaveKeys(c);
+			const { key } = await json(c);
+			if (typeof key !== "string") throw new ValidationError("Missing key");
+			await service.setProviderKey(user(c), c.req.param("id"), key);
+			return c.body(null, 204);
+		});
+		app.delete("/api/account/keys/:id", async (c) => {
+			// Removing one's own key is always allowed.
+			await service.deleteProviderKey(user(c), c.req.param("id"));
+			return c.body(null, 204);
+		});
+	}
 
 	app.get("/api/sessions", async (c) =>
 		c.json(await service.listSessions(user(c))),
@@ -499,20 +535,22 @@ export function createApp(options: AppOptions): Hono {
 		if (body.sessionId != null && typeof body.sessionId !== "string") {
 			throw new ValidationError("sessionId must be a string");
 		}
-		const refusal = paidRefusal(c);
-		if (refusal) {
-			const paid = new Set(
-				(await service.listProviders(user(c)))
-					.filter((p) => p.requiresKey)
-					.map((p) => p.id),
+		if (server) {
+			// Each paid model is paid with the person's own key if they have
+			// one, else the server's: refused if they may not, or past their
+			// limit on the server's.
+			const providers = new Map(
+				(await service.listProviders(user(c))).map((p) => [p.id, p]),
 			);
 			const byId = new Map(service.listModels().map((m) => [m.id, m]));
-			if (
-				(body.modelIds as string[]).some((id) =>
-					paid.has(byId.get(id)?.providerId ?? ""),
-				)
-			) {
-				throw paidError(refusal);
+			for (const id of body.modelIds as string[]) {
+				const provider = providers.get(byId.get(id)?.providerId ?? "");
+				if (!provider?.requiresKey) continue;
+				const refusal = paidRefusal(
+					c,
+					provider.keys?.personal ? "personal" : "server",
+				);
+				if (refusal) throw paidError(refusal);
 			}
 		}
 		// The remaining fields are validated by the service's schema.

@@ -19,10 +19,12 @@ import {
 	FakeProvider,
 	FileKeyStore,
 	FileSettingsStore,
+	type FoundKey,
 	FsAssetStore,
 	type Hardware,
 	improvePrompt,
 	JobEngine,
+	type KeySource,
 	keysSecret,
 	type LanguageModel,
 	LOCAL_USER,
@@ -72,7 +74,7 @@ export interface Runtime {
 	/** Signs device cookies; servers only. */
 	deviceKey?: Uint8Array;
 	/** Why a person may not spend on paid models now; servers only. */
-	paidRefusal?: (userId: string) => PaidRefusal | null;
+	paidRefusal?: (userId: string, source: KeySource) => PaidRefusal | null;
 	engine: JobEngine;
 	models: LocalModelStore;
 	/** Trains LoRAs on this computer. */
@@ -551,20 +553,28 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	});
 	// A setup cut short by a crash is finished now.
 	if (options.server) await accounts.resumeAdoption();
-	// On a server, spending is for those allowed, up to their monthly limit.
-	const paidRefusal = (userId: string): PaidRefusal | null => {
+	// On a server, spending is for those allowed; on the server's keys, up
+	// to their monthly limit. Their own keys are their own money.
+	const paidRefusal = (
+		userId: string,
+		source: KeySource,
+	): PaidRefusal | null => {
 		const user = accounts.getUser(userId);
 		if (!user || user.disabledAt != null || !mayUsePaid(user)) {
 			return "paidNotAllowed";
 		}
-		return user.monthlyLimitUsd != null &&
+		return source === "server" &&
+			user.monthlyLimitUsd != null &&
 			accounts.spentThisMonth(userId) >= user.monthlyLimitUsd
 			? "monthlyLimitReached"
 			: null;
 	};
 	const refusePaid = options.server ? paidRefusal : undefined;
-	const mayPay = (userId: string) => !refusePaid?.(userId);
-	const keys = options.server ? new SharedKeyStore(fileKeys, mayPay) : fileKeys;
+	const allowedToPay = (userId: string) =>
+		refusePaid?.(userId, "personal") !== "paidNotAllowed";
+	const keys = options.server
+		? new SharedKeyStore(fileKeys, allowedToPay)
+		: fileKeys;
 	// Puts prompts into English for the models that read only English, once
 	// its model is installed.
 	const translatorModel = catalog.find((m) =>
@@ -593,30 +603,43 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	models.onLetGo(() => translator.stopAndWait());
 	// One per service and key, so the jobs of a turn share a translation.
 	const clouds = new Map<string, CloudTranslator>();
-	const keyFor = async (ctx: UserContext, service: CloudTranslatorId) => {
+	/**
+	 * The key a person's calls to a language service use, and whose it is:
+	 * their own, or the server's (one from the environment is the server's
+	 * too) while their monthly limit allows.
+	 */
+	const keyFor = async (
+		ctx: UserContext,
+		service: CloudTranslatorId,
+	): Promise<FoundKey | undefined> => {
 		const adapter = registry.adapter(service);
-		// A key from the environment is the server's too.
-		if (!mayPay(ctx.userId)) return undefined;
-		return (
-			(await keys.get(ctx, service)) ??
-			(adapter?.keyEnv ? process.env[adapter.keyEnv] : undefined)
-		);
+		const envKey = adapter?.keyEnv ? process.env[adapter.keyEnv] : undefined;
+		const found: FoundKey | undefined =
+			(await keys.find(ctx, service)) ??
+			(envKey ? { key: envKey, source: "server" } : undefined);
+		if (!found || refusePaid?.(ctx.userId, found.source)) return undefined;
+		return found;
 	};
 	/**
-	 * On a server, a call to a language service with the server's key is
-	 * checked against the person's limit first, and counted after. The
-	 * services do not all report usage, so each call counts as a
-	 * conservative estimate of what one costs.
+	 * On a server, a call to a language service is checked against what the
+	 * person may spend first, and counted after. The services do not all
+	 * report usage, so each call counts as a conservative estimate of what
+	 * one costs.
 	 */
-	const metered = async <T>(userId: string, call: () => Promise<T>) => {
+	const metered = async <T>(
+		userId: string,
+		source: KeySource,
+		call: () => Promise<T>,
+	) => {
 		if (!refusePaid) return call();
-		const refusal = refusePaid(userId);
+		const refusal = refusePaid(userId, source);
 		if (refusal) throw paidError(refusal);
 		const result = await call();
 		await repo.addSpending({
 			id: newId("spd"),
 			userId,
 			kind: "language",
+			keySource: source,
 			jobId: null,
 			costUsd: LANGUAGE_CALL_USD,
 			createdAt: Date.now(),
@@ -627,20 +650,22 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		ctx: UserContext,
 		service: CloudTranslatorId,
 	): Promise<(Translator & LanguageModel) | null> => {
-		const key = await keyFor(ctx, service);
-		if (!key) return null;
-		const id = `${service}:${key}`;
+		const found = await keyFor(ctx, service);
+		if (!found) return null;
+		const id = `${service}:${found.key}`;
 		let cloud = clouds.get(id);
 		if (!cloud) {
-			cloud = new CloudTranslator(service, key, options.fetch);
+			cloud = new CloudTranslator(service, found.key, options.fetch);
 			clouds.set(id, cloud);
 		}
 		const model = cloud;
 		return {
 			toEnglish: (prompt, signal) =>
-				metered(ctx.userId, () => model.toEnglish(prompt, signal)),
+				metered(ctx.userId, found.source, () =>
+					model.toEnglish(prompt, signal),
+				),
 			reply: (instructions, text, signal, replyOptions) =>
-				metered(ctx.userId, () =>
+				metered(ctx.userId, found.source, () =>
 					model.reply(instructions, text, signal, replyOptions),
 				),
 		};
@@ -682,19 +707,19 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		const choice = await brainChoice(ctx);
 		if (choice === "local") return translator;
 		if (!choice) return null;
-		const key = await keyFor(ctx, choice);
-		if (!key) return null;
-		const id = `${choice}:${key}`;
+		const found = await keyFor(ctx, choice);
+		if (!found) return null;
+		const id = `${choice}:${found.key}`;
 		let brain = brains.get(id);
 		if (!brain) {
-			brain = new CloudChatModel(choice, key, options.fetch);
+			brain = new CloudChatModel(choice, found.key, options.fetch);
 			brains.set(id, brain);
 		}
 		const model = brain;
 		return {
 			vision: model.vision,
 			chat: (instructions, messages, tools, signal) =>
-				metered(ctx.userId, () =>
+				metered(ctx.userId, found.source, () =>
 					model.chat(instructions, messages, tools, signal),
 				),
 		};

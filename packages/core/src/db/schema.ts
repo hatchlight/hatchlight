@@ -8,6 +8,7 @@ import {
 	uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 import type { ErrorParams } from "../errors";
+import type { KeySource } from "../keys";
 import type {
 	AssetKind,
 	AssistantEntryBody,
@@ -200,6 +201,11 @@ export const spending = sqliteTable(
 		kind: text("kind").$type<SpendingKind>().notNull(),
 		/** The job it paid for, if any; no foreign key, so it outlives the job. */
 		jobId: text("job_id"),
+		/** Whose key paid: monthly limits count the server's only. */
+		keySource: text("key_source")
+			.$type<KeySource>()
+			.notNull()
+			.default("server"),
 		costUsd: real("cost_usd").notNull(),
 		createdAt: integer("created_at").notNull(),
 	},

@@ -189,7 +189,7 @@ async function serverApp(
 	};
 	const userId = (username: string) =>
 		runtime.accounts.findUser(username)?.id as string;
-	return { call, runtime, setupOwner, invite, cookieOf, userId, root };
+	return { call, runtime, setupOwner, invite, cookieOf, userId, root, paid };
 }
 
 const errorCode = async (response: Response) =>
@@ -1498,4 +1498,91 @@ test("a sign-in whose browser left while it waited is never checked", async () =
 	// Answered quietly: a request that went away is not a server error.
 	expect(await second).not.toBe(500);
 	expect(checked).toEqual(["first password try"]);
+});
+
+test("a person's own key is used before the server's, and is not held to the limit", async () => {
+	const { call, setupOwner, invite, userId, runtime, paid } = await serverApp();
+	const owner = await setupOwner();
+	await call("/api/providers/paid/key", {
+		method: "PUT",
+		who: owner,
+		body: { key: "server-key" },
+	});
+	const member = await invite(owner, { canUsePaid: true, monthlyLimitUsd: 0 });
+	const paidTurn = () =>
+		call("/api/turns", {
+			method: "POST",
+			who: member,
+			body: { prompt: "x", modelIds: ["paid/alpha"] },
+		});
+	// The server's key is past its limit for them.
+	expect(await errorCode(await paidTurn())).toBe("monthlyLimitReached");
+	const set = await call("/api/account/keys/paid", {
+		method: "PUT",
+		who: member,
+		body: { key: "member-key" },
+	});
+	expect(set.status).toBe(204);
+	type Provider = {
+		id: string;
+		hasKey: boolean;
+		keys: { personal: boolean; server: boolean };
+	};
+	const providers = (await (
+		await call("/api/providers", { who: member })
+	).json()) as Provider[];
+	expect(providers.find((p) => p.id === "paid")).toMatchObject({
+		hasKey: true,
+		keys: { personal: true, server: true },
+	});
+	// Their own money: no limit, and their key, not the server's.
+	expect((await paidTurn()).status).toBe(201);
+	await runtime.engine.idle();
+	expect(paid.keysUsed.at(-1)).toBe("member-key");
+	// Written down as theirs, and not counted toward the limit.
+	const id = userId(member.username);
+	expect(runtime.accounts.spentThisMonth(id)).toBe(0);
+	// Others still use the server's key.
+	const other = await invite(owner, { canUsePaid: true });
+	await call("/api/turns", {
+		method: "POST",
+		who: other,
+		body: { prompt: "x", modelIds: ["paid/alpha"] },
+	});
+	await runtime.engine.idle();
+	expect(paid.keysUsed.at(-1)).toBe("server-key");
+	// Never sent back.
+	const text = await (await call("/api/providers", { who: member })).text();
+	expect(text).not.toContain("member-key");
+	expect(text).not.toContain("server-key");
+});
+
+test("only people who may spend can keep keys of their own", async () => {
+	const { call, setupOwner, invite } = await serverApp();
+	const owner = await setupOwner();
+	const member = await invite(owner);
+	const refused = await call("/api/account/keys/paid", {
+		method: "PUT",
+		who: member,
+		body: { key: "k" },
+	});
+	expect(refused.status).toBe(403);
+	expect(await errorCode(refused)).toBe("paidNotAllowed");
+	// Nor set the server's.
+	const server = await call("/api/providers/paid/key", {
+		method: "PUT",
+		who: member,
+		body: { key: "k" },
+	});
+	expect(server.status).toBe(403);
+	// An owner may keep their own too.
+	expect(
+		(
+			await call("/api/account/keys/paid", {
+				method: "PUT",
+				who: owner,
+				body: { key: "owner-own" },
+			})
+		).status,
+	).toBe(204);
 });

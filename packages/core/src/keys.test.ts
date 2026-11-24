@@ -59,16 +59,34 @@ test("the first owner of a server takes the keys of the install", async () => {
 	await keys.moveUser("local", SERVER_KEYS.userId);
 });
 
-test("a server's keys serve only those allowed to spend", async () => {
+test("a server's keys serve only those allowed to spend, after their own", async () => {
 	const inner = await store();
-	const shared = new SharedKeyStore(inner, (userId) => userId === "usr_paid");
-	await shared.set({ userId: "usr_owner" }, "fal", "fal-key");
-	expect(await shared.get({ userId: "usr_paid" }, "fal")).toBe("fal-key");
+	const shared = new SharedKeyStore(inner, (userId) => userId !== "usr_free");
+	await shared.set(SERVER_KEYS, "fal", "server-key");
+	expect(await shared.find({ userId: "usr_paid" }, "fal")).toEqual({
+		key: "server-key",
+		source: "server",
+	});
 	expect(await shared.list({ userId: "usr_paid" })).toEqual(["fal"]);
 	expect(await shared.get({ userId: "usr_free" }, "fal")).toBeUndefined();
 	expect(await shared.list({ userId: "usr_free" })).toEqual([]);
-	await shared.delete({ userId: "usr_owner" }, "fal");
+	// One's own key comes first, and is nobody else's.
+	await shared.set({ userId: "usr_paid" }, "fal", "own-key");
+	expect(await shared.find({ userId: "usr_paid" }, "fal")).toEqual({
+		key: "own-key",
+		source: "personal",
+	});
+	expect(await shared.find({ userId: "usr_other" }, "fal")).toEqual({
+		key: "server-key",
+		source: "server",
+	});
+	expect(await shared.sources({ userId: "usr_paid" })).toEqual({
+		personal: ["fal"],
+		server: ["fal"],
+	});
+	await shared.delete(SERVER_KEYS, "fal");
 	expect(await inner.list(SERVER_KEYS)).toEqual([]);
+	expect(await shared.get({ userId: "usr_paid" }, "fal")).toBe("own-key");
 });
 
 describe("keys at rest", () => {

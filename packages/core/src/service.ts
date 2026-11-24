@@ -118,6 +118,7 @@ export class ReelService {
 
 	async listProviders(ctx: UserContext): Promise<ProviderStatus[]> {
 		const stored = await this.deps.keys.list(ctx);
+		const sources = (await this.deps.keys.sources?.(ctx)) ?? null;
 		return this.deps.registry.listAdapters().map((adapter) => ({
 			id: adapter.id,
 			name: adapter.name,
@@ -125,6 +126,14 @@ export class ReelService {
 			hasKey:
 				stored.includes(adapter.id) ||
 				Boolean(adapter.keyEnv && process.env[adapter.keyEnv]),
+			...(sources && {
+				keys: {
+					personal: sources.personal.includes(adapter.id),
+					server:
+						sources.server.includes(adapter.id) ||
+						Boolean(adapter.keyEnv && process.env[adapter.keyEnv]),
+				},
+			}),
 		}));
 	}
 

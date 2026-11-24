@@ -7,7 +7,7 @@ import {
 	ValidationError,
 } from "./errors";
 import { newId } from "./ids";
-import type { KeyStore } from "./keys";
+import type { FoundKey, KeySource, KeyStore } from "./keys";
 import { sniffMime } from "./mime";
 import type {
 	ProviderAdapter,
@@ -65,7 +65,7 @@ export interface JobEngineDeps {
 	 * Why a person may not use models that need a key, which spend money, or
 	 * null when they may. Everyone may when absent, as on a personal install.
 	 */
-	paidRefusal?: (userId: string) => PaidRefusal | null;
+	paidRefusal?: (userId: string, source: KeySource) => PaidRefusal | null;
 	/** Jobs running at once per provider. Defaults to 4. */
 	concurrencyPerProvider?: number;
 	/** The wait before the first try again; it doubles each time. */
@@ -330,6 +330,8 @@ export class JobEngine {
 		const controller = new AbortController();
 		this.controllers.set(jobId, controller);
 		let providerFailed = false;
+		// Whose key paid, for the ledger.
+		let keySource: KeySource = "server";
 		const { registry, keys } = this.deps;
 		const adapter = registry.adapter(job.providerId);
 		const ctx: UserContext = { userId: job.userId };
@@ -348,13 +350,18 @@ export class JobEngine {
 					{ model: job.modelId },
 				);
 			}
+			// A person's own key first; the server's, or one from the
+			// environment, otherwise.
+			const envKey = adapter.keyEnv ? process.env[adapter.keyEnv] : undefined;
+			const found: FoundKey | undefined =
+				(await keys.find(ctx, adapter.id)) ??
+				(envKey ? { key: envKey, source: "server" } : undefined);
+			keySource = found?.source ?? "server";
 			const refusal = adapter.requiresKey
-				? this.deps.paidRefusal?.(job.userId)
+				? this.deps.paidRefusal?.(job.userId, keySource)
 				: null;
 			if (refusal) throw paidError(refusal);
-			const apiKey =
-				(await keys.get(ctx, adapter.id)) ??
-				(adapter.keyEnv ? process.env[adapter.keyEnv] : undefined);
+			const apiKey = found?.key;
 			if (adapter.requiresKey && !apiKey) {
 				throw new CodedError(
 					`No API key configured for ${adapter.name}`,
@@ -454,6 +461,7 @@ export class JobEngine {
 									id: newId("spd"),
 									userId: job.userId,
 									kind: "generation",
+									keySource,
 									jobId,
 									costUsd,
 									createdAt: Date.now(),

@@ -94,7 +94,14 @@ export class FakeProvider implements ProviderAdapter<FakeHandle> {
 		}));
 	}
 
-	async submit(request: ProviderRequest): Promise<FakeHandle> {
+	/** The key each job was sent with. */
+	keysUsed: (string | undefined)[] = [];
+
+	async submit(
+		request: ProviderRequest,
+		ctx?: ProviderContext,
+	): Promise<FakeHandle> {
+		this.keysUsed.push(ctx?.apiKey);
 		const handle = {
 			model: request.model.id,
 			prompt: request.params.prompt,

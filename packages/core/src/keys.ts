@@ -4,12 +4,24 @@ import { dirname } from "node:path";
 import { SecretError } from "./secrets";
 import type { UserContext } from "./types";
 
+/** Whose key pays: the server's, shared, or the person's own. */
+export type KeySource = "server" | "personal";
+
+export interface FoundKey {
+	key: string;
+	source: KeySource;
+}
+
 export interface KeyStore {
 	get(ctx: UserContext, providerId: string): Promise<string | undefined>;
+	/** The key a person's calls to a provider use, and whose it is. */
+	find(ctx: UserContext, providerId: string): Promise<FoundKey | undefined>;
 	set(ctx: UserContext, providerId: string, key: string): Promise<void>;
 	delete(ctx: UserContext, providerId: string): Promise<void>;
 	/** Provider ids that have a stored key. Never returns the keys themselves. */
 	list(ctx: UserContext): Promise<string[]>;
+	/** On a server: providers with a key of the person's own, and with the server's. */
+	sources?(ctx: UserContext): Promise<Record<KeySource, string[]>>;
 }
 
 type KeyFile = Record<string, Record<string, string>>;
@@ -152,6 +164,12 @@ export class FileKeyStore implements KeyStore {
 			: undefined;
 	}
 
+	/** On a personal install every key is the person's own. */
+	async find(ctx: UserContext, providerId: string) {
+		const key = await this.get(ctx, providerId);
+		return key === undefined ? undefined : { key, source: "personal" as const };
+	}
+
 	async set(ctx: UserContext, providerId: string, key: string) {
 		if (isPrototypeName(ctx.userId) || isPrototypeName(providerId)) {
 			throw new Error(`Not a provider: ${providerId}`);
@@ -192,8 +210,9 @@ export class FileKeyStore implements KeyStore {
 export const SERVER_KEYS: UserContext = { userId: "server" };
 
 /**
- * A server's keys: set by its owners, used by everyone allowed to spend on
- * paid models, and by nobody else.
+ * A server's keys: the server's own, set by its owners, and each person's
+ * own. A person's key is used before the server's. Only people allowed to
+ * spend on paid models use either.
  */
 export class SharedKeyStore implements KeyStore {
 	constructor(
@@ -202,20 +221,44 @@ export class SharedKeyStore implements KeyStore {
 	) {}
 
 	async get(ctx: UserContext, providerId: string) {
-		return this.mayUse(ctx.userId)
-			? this.inner.get(SERVER_KEYS, providerId)
-			: undefined;
+		return (await this.find(ctx, providerId))?.key;
 	}
 
-	set(_ctx: UserContext, providerId: string, key: string) {
-		return this.inner.set(SERVER_KEYS, providerId, key);
+	async find(ctx: UserContext, providerId: string) {
+		if (!this.mayUse(ctx.userId)) return undefined;
+		const own =
+			ctx.userId === SERVER_KEYS.userId
+				? undefined
+				: await this.inner.get(ctx, providerId);
+		if (own !== undefined) return { key: own, source: "personal" as const };
+		const shared = await this.inner.get(SERVER_KEYS, providerId);
+		return shared === undefined
+			? undefined
+			: { key: shared, source: "server" as const };
 	}
 
-	delete(_ctx: UserContext, providerId: string) {
-		return this.inner.delete(SERVER_KEYS, providerId);
+	/** Sets the person's own key; the server's are set as SERVER_KEYS. */
+	set(ctx: UserContext, providerId: string, key: string) {
+		return this.inner.set(ctx, providerId, key);
 	}
 
+	delete(ctx: UserContext, providerId: string) {
+		return this.inner.delete(ctx, providerId);
+	}
+
+	/** Providers the person has a key for to use, theirs or the server's. */
 	async list(ctx: UserContext) {
-		return this.mayUse(ctx.userId) ? this.inner.list(SERVER_KEYS) : [];
+		if (!this.mayUse(ctx.userId)) return [];
+		const { personal, server } = await this.sources(ctx);
+		return [...new Set([...personal, ...server])];
+	}
+
+	/** Which providers have a key of the person's own, and which the server's. */
+	async sources(ctx: UserContext): Promise<Record<KeySource, string[]>> {
+		return {
+			personal:
+				ctx.userId === SERVER_KEYS.userId ? [] : await this.inner.list(ctx),
+			server: await this.inner.list(SERVER_KEYS),
+		};
 	}
 }

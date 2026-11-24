@@ -1,0 +1,1 @@
+ALTER TABLE `spending` ADD `key_source` text DEFAULT 'server' NOT NULL;
