@@ -95,7 +95,7 @@
 	"bestFor.text": "Texto na imagem",
 	"chat.askedInChat": "pedida no chat",
 	"chat.eyebrow": "Nova sessão",
-	"chat.heading": "Um prompt, todos os modelos.",
+	"chat.heading": "Um prompt, vários modelos.",
 	"chat.intro": "Escolha um modelo para ir refinando uma imagem, ou vários para ver como cada um responde ao mesmo prompt. Qualquer imagem pode virar a referência do próximo prompt, ou o primeiro quadro de um vídeo.",
 	"chat.turn": "Vez {number}",
 	"checkpoints.add": "Adicionar um modelo",
