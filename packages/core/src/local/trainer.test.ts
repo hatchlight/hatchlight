@@ -43,9 +43,10 @@ describe("reading the trainer's output", () => {
 	});
 
 	test("a line full of steps bars is read quickly", () => {
-		const line = `${"steps:".repeat(50_000)}|`;
 		const started = performance.now();
-		expect(trainingProgress(line)).toBeNull();
+		expect(trainingProgress(`${"steps:".repeat(50_000)}|`)).toBeNull();
+		expect(trainingProgress(`steps: |${"9".repeat(100_000)}`)).toBeNull();
+		expect(trainingProgress(`steps: | 1/2 [${"9".repeat(100_000)}`)).toBeNull();
 		expect(performance.now() - started).toBeLessThan(500);
 		expect(
 			trainingProgress(
