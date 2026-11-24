@@ -565,7 +565,12 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	if (fake) {
 		const fakeProvider = new FakeProvider();
 		fakeProvider.delayMs = 1500;
-		providers.push(fakeProvider);
+		// One that needs a key (any will do), to try paid models, their
+		// permissions and limits without paying.
+		const fakePaid = new FakeProvider("fake-paid", ["gamma"]);
+		fakePaid.requiresKey = true;
+		fakePaid.delayMs = 1500;
+		providers.push(fakeProvider, fakePaid);
 	}
 	const catalog = options.localModels ?? builtinLocalModels();
 	const models = new LocalModelStore({
