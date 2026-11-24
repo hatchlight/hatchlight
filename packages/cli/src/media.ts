@@ -180,6 +180,7 @@ const STAGES: Record<ProgressStage, string> = {
 	waitingGpu: "waiting for the graphics card",
 	starting: "starting",
 	loading: "loading the model",
+	lowMemory: "low on graphics memory",
 	generating: "generating",
 };
 

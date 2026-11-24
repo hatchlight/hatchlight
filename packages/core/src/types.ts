@@ -10,6 +10,7 @@ export type ProgressStage =
 	| "translating"
 	| "waitingGpu"
 	| "starting"
+	| "lowMemory"
 	| "loading"
 	| "generating";
 export type Operation = "generate" | "edit";

@@ -213,6 +213,7 @@ async function setup(
 		root?: string;
 		engines?: LocalEngineSpec[];
 		enginesDir?: string;
+		gpuMemory?: () => Promise<{ freeBytes: number; totalBytes: number } | null>;
 	} = {},
 ) {
 	// A second store on an existing root reopens it, as after a restart.
@@ -229,6 +230,7 @@ async function setup(
 		hardware: async () => hardware,
 		checkEngine: options.checkEngine ?? (async () => null),
 		enginesDir: options.enginesDir,
+		gpuMemory: options.gpuMemory,
 	});
 	const events: LocalModelEvent[] = [];
 	store.subscribe((event) => events.push(event));
@@ -311,6 +313,34 @@ test("a variant whose files are already here is proposed when it runs as well", 
 	await store.install("a");
 	await store.idle();
 	expect(await status("a")).toMatchObject({ installed: true, variant: "full" });
+});
+
+test("free graphics memory is read only for the models view, once in a while", async () => {
+	let reads = 0;
+	let finish: (() => void) | undefined;
+	const { store } = await setup({
+		hardware: machine(12),
+		gpuMemory: async () => {
+			reads++;
+			await new Promise<void>((resolve) => {
+				finish = resolve;
+			});
+			return { freeBytes: 3 * GB, totalBytes: 12 * GB };
+		},
+	});
+	// The list install progress and assistant turns call never reads it.
+	await store.list();
+	await store.list();
+	expect(reads).toBe(0);
+	// Views asked at once share one reading, and a later one reuses it.
+	const both = Promise.all([store.listWithMemory(), store.listWithMemory()]);
+	await until(() => reads === 1);
+	finish?.();
+	const [one, two] = await both;
+	expect(one.hardware.gpus[0]?.freeBytes).toBe(3 * GB);
+	expect(two.hardware.gpus[0]?.freeBytes).toBe(3 * GB);
+	await store.listWithMemory();
+	expect(reads).toBe(1);
 });
 
 test("a smaller card gets the smaller variant, and says what the larger needs", async () => {

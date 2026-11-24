@@ -779,7 +779,7 @@ export function createApp(options: AppOptions): Hono {
 	const seesFolders = (c: Context) =>
 		!server || ["owner", "admin"].includes(c.get("viewer").user.role);
 	app.get("/api/local-models", async (c) => {
-		const view = await models.list();
+		const view = await models.listWithMemory();
 		if (seesFolders(c)) return c.json(view);
 		// The server's folders are none of a member's business.
 		return c.json({

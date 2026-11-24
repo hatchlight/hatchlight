@@ -462,7 +462,7 @@ function describeProgress(
 						? i18n.t("progress.waitingGpu")
 						: progress.stage === "starting"
 							? i18n.t("progress.starting")
-							: progress.stage === "loading"
+							: progress.stage === "loading" || progress.stage === "lowMemory"
 								? i18n.t("progress.loading")
 								: progress.stage === "generating"
 									? i18n.t("progress.generating")

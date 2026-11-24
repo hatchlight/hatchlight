@@ -126,6 +126,17 @@ export class GpuLock {
 		}
 	}
 
+	/** Bytes other Hatchlights sharing the folder have reserved, as far as known. */
+	othersReserved(): number {
+		try {
+			mkdirSync(this.dir, { recursive: true });
+			const { others } = this.look(this.now(), false);
+			return Number.isFinite(others) ? others : 0;
+		} catch {
+			return 0;
+		}
+	}
+
 	/** Bytes this process has reserved. */
 	get reserved(): number {
 		let bytes = 0;

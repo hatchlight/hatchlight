@@ -66,6 +66,7 @@ describe("catalogs", () => {
 			"waitingGpu",
 			"starting",
 			"loading",
+			"lowMemory",
 			"generating",
 		];
 		expect(stages.filter((stage) => !(`progress.${stage}` in en))).toEqual([]);

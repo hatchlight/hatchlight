@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -573,9 +573,47 @@ describe("running", () => {
 		expect(events[0]).toEqual({
 			type: "progress",
 			message: "Other programs are using graphics memory, so this may be slow",
+			stage: "lowMemory",
 			busyBytes: 12 * GB,
 		});
 		expect(events.some((e) => e.type === "completed")).toBe(true);
+	});
+
+	test("memory held by this process's other jobs is not counted as free", async () => {
+		const { provider, fake, store } = await setup();
+		const signal = new AbortController().signal;
+		const other = store.gpu.acquire(2 ** 30, signal);
+		let step = await other.next();
+		while (!step.done) step = await other.next();
+		const events = await run(
+			provider(fake([]), async () => ({ freeBytes: 0, totalBytes: 2 ** 34 })),
+		);
+		expect(events.some((e) => "busyBytes" in e)).toBe(true);
+		step.value.release();
+	});
+
+	test("memory another Hatchlight reserves is not other programs'", async () => {
+		const { provider, fake, gpuRoot } = await setup();
+		await mkdir(join(gpuRoot, "gpu"), { recursive: true });
+		await Bun.write(join(gpuRoot, "gpu", "another"), String(2 ** 30));
+		const events = await run(
+			provider(fake([]), async () => ({ freeBytes: 0, totalBytes: 2 ** 34 })),
+		);
+		expect(events.some((e) => "busyBytes" in e)).toBe(false);
+	});
+
+	test("a cancel while the free memory is read ends the job at once", async () => {
+		const { provider, fake } = await setup();
+		const controller = new AbortController();
+		setTimeout(() => controller.abort(new Error("canceled")), 20);
+		const started = Date.now();
+		await expect(
+			run(
+				provider(fake([]), () => new Promise(() => {})),
+				controller.signal,
+			),
+		).rejects.toThrow("canceled");
+		expect(Date.now() - started).toBeLessThan(1000);
 	});
 
 	test("a job with enough free graphics memory, or an unknown amount, says nothing", async () => {

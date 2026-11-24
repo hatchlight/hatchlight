@@ -346,6 +346,8 @@ const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
  */
 /** The part of the GPU's memory local models may plan on using together. */
 const GPU_SHARE = 0.9;
+/** How long a reading of the GPU's free memory is reused. */
+const MEMORY_CACHE_MS = 3_000;
 
 export class LocalModelStore {
 	private root: string;
@@ -354,6 +356,8 @@ export class LocalModelStore {
 	private fetch: Fetch;
 	private detect: () => Promise<Hardware>;
 	private gpuMemory: () => Promise<GpuMemory | null>;
+	private memoryRead: { at: number; memory: Promise<GpuMemory | null> } | null =
+		null;
 	private hardware: Promise<Hardware> | null = null;
 	private checkEngine: (executable: string) => Promise<string | null>;
 	/** Builds that were installed here and did not run. */
@@ -452,18 +456,40 @@ export class LocalModelStore {
 		return this.hardware;
 	}
 
-	/** The hardware with the first NVIDIA card's free memory, as it is now. */
-	private async withFreeMemory(hardware: Hardware): Promise<Hardware> {
-		const first = hardware.gpus[0];
-		if (first?.vendor !== "nvidia") return hardware;
-		const memory = await this.gpuMemory().catch(() => null);
-		if (!memory) return hardware;
+	/**
+	 * The free memory of the first NVIDIA card, read at most once every few
+	 * seconds and never twice at once: each read starts nvidia-smi.
+	 */
+	private freeMemory(): Promise<GpuMemory | null> {
+		const now = Date.now();
+		if (!this.memoryRead || now - this.memoryRead.at > MEMORY_CACHE_MS) {
+			this.memoryRead = {
+				at: now,
+				memory: this.gpuMemory().catch(() => null),
+			};
+		}
+		return this.memoryRead.memory;
+	}
+
+	/**
+	 * What `list` says, with the first NVIDIA card's free memory. Kept apart
+	 * from `list`, which install progress and every assistant turn call.
+	 */
+	async listWithMemory(): Promise<LocalModelsView> {
+		const view = await this.list();
+		const first = view.hardware.gpus[0];
+		if (first?.vendor !== "nvidia") return view;
+		const memory = await this.freeMemory();
+		if (!memory) return view;
 		return {
-			...hardware,
-			gpus: [
-				{ ...first, freeBytes: memory.freeBytes },
-				...hardware.gpus.slice(1),
-			],
+			...view,
+			hardware: {
+				...view.hardware,
+				gpus: [
+					{ ...first, freeBytes: memory.freeBytes },
+					...view.hardware.gpus.slice(1),
+				],
+			},
 		};
 	}
 
@@ -799,7 +825,7 @@ export class LocalModelStore {
 		}
 		this.lastReady = ready;
 		return {
-			hardware: await this.withFreeMemory(hardware),
+			hardware,
 			engines,
 			models,
 			disk: {
