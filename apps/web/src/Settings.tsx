@@ -7,11 +7,19 @@ import type {
 } from "@hatchlight/core/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { AccountSettings, UsersSettings, useCan } from "./Accounts";
 import { type AgentPolicy, api, useServerMode } from "./api";
 import { useI18n } from "./i18n";
 import { useModelProgress } from "./live";
 
-function ProviderRow({ provider }: { provider: ProviderStatus }) {
+function ProviderRow({
+	provider,
+	editable,
+}: {
+	provider: ProviderStatus;
+	/** Only a server's owners set its keys. */
+	editable: boolean;
+}) {
 	const { t, explain } = useI18n();
 	const client = useQueryClient();
 	const [key, setKey] = useState("");
@@ -44,7 +52,7 @@ function ProviderRow({ provider }: { provider: ProviderStatus }) {
 							: t("settings.noKeyNeeded")}
 				</span>
 			</div>
-			{provider.requiresKey && (
+			{provider.requiresKey && editable && (
 				<form
 					className="mt-3 flex gap-2"
 					onSubmit={(event) => {
@@ -608,6 +616,7 @@ export function Settings() {
 	const { t, explain, language, setLanguage, languages } = useI18n();
 	// Agents are set up on the machine that runs Hatchlight.
 	const server = useServerMode();
+	const can = useCan();
 	const providers = useQuery({
 		queryKey: ["providers"],
 		queryFn: api.providers,
@@ -632,19 +641,27 @@ export function Settings() {
 					))}
 				</select>
 			</section>
+			<AccountSettings />
 			<Translation />
 			<h2 className="mt-10 font-medium">{t("settings.providers")}</h2>
 			<p className="mt-2 text-sm leading-relaxed text-dim">
-				{t("settings.providersIntro")}
+				{can.owner
+					? t("settings.providersIntro")
+					: t("settings.providersServer")}
 			</p>
 			{providers.error && (
 				<p className="mt-6 text-sm text-danger">{explain(providers.error)}</p>
 			)}
 			<ul className="mt-6 flex flex-col gap-3">
 				{providers.data?.map((provider) => (
-					<ProviderRow key={provider.id} provider={provider} />
+					<ProviderRow
+						key={provider.id}
+						provider={provider}
+						editable={can.owner}
+					/>
 				))}
 			</ul>
+			<UsersSettings />
 			{!server && <Agents />}
 		</div>
 	);

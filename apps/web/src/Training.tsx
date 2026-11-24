@@ -13,6 +13,7 @@ import {
 	useQueryClient,
 } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { useCan } from "./Accounts";
 import { api, assetUrl, GALLERY_PAGE, sampleUrl } from "./api";
 import { remaining } from "./format";
 import { type I18n, useI18n } from "./i18n";
@@ -772,6 +773,7 @@ function Remove() {
 /** Training a LoRA from the person's own pictures. */
 export function TrainPanel() {
 	const { t, explain } = useI18n();
+	const can = useCan();
 	const status = useQuery({ queryKey: ["trainer"], queryFn: api.trainer });
 	const data = status.data;
 	return (
@@ -787,13 +789,16 @@ export function TrainPanel() {
 			{status.error && (
 				<p className="text-sm text-danger">{explain(status.error)}</p>
 			)}
-			{data && data.state !== "ready" && <Install status={data} />}
+			{data && data.state !== "ready" && can.admin && <Install status={data} />}
+			{data && data.state !== "ready" && !can.admin && (
+				<p className="text-sm text-dim">{t("training.askAdmin")}</p>
+			)}
 			{data?.state === "ready" && (
 				<>
 					{data.training && <Progress training={data.training} />}
 					{/* Kept while it trains: after a failure the pictures are still here. */}
 					<Form hidden={data.training?.state === "running"} />
-					{data.training?.state !== "running" && <Remove />}
+					{data.training?.state !== "running" && can.admin && <Remove />}
 				</>
 			)}
 		</section>

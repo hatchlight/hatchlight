@@ -8,6 +8,7 @@ import type {
 } from "@hatchlight/core/types";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { useCan } from "./Accounts";
 import { api, demoUrl, useServerMode } from "./api";
 import { CheckpointShelf } from "./Checkpoints";
 import { remaining } from "./format";
@@ -329,6 +330,7 @@ function ModelCard({
 	});
 	const cancel = useMutation({ mutationFn: () => api.cancelModel(model.id) });
 	const remove = useMutation({ mutationFn: () => api.deleteModel(model.id) });
+	const can = useCan();
 	const error = install.error ?? cancel.error ?? remove.error;
 
 	const installed = model.state === "installed";
@@ -474,16 +476,19 @@ function ModelCard({
 												{other.id === model.variant &&
 													` · ${installed ? t("models.variantInstalled") : t("models.recommended")}`}
 											</span>
-											{!installed && !active && others.includes(other) && (
-												<button
-													type="button"
-													onClick={() => install.mutate(other.id)}
-													disabled={install.isPending}
-													className="rounded border border-line px-2 py-0.5 hover:border-dim hover:text-ink"
-												>
-													{t("models.installVersion")}
-												</button>
-											)}
+											{can.admin &&
+												!installed &&
+												!active &&
+												others.includes(other) && (
+													<button
+														type="button"
+														onClick={() => install.mutate(other.id)}
+														disabled={install.isPending}
+														className="rounded border border-line px-2 py-0.5 hover:border-dim hover:text-ink"
+													>
+														{t("models.installVersion")}
+													</button>
+												)}
 										</li>
 									))}
 								</ul>
@@ -519,7 +524,14 @@ function ModelCard({
 					</p>
 				)}
 
-				<div className="mt-auto flex flex-wrap gap-2 pt-1 text-sm">
+				{!can.admin && !installed && !active && (
+					<p className="mt-auto pt-1 text-sm text-dim">
+						{t("models.askAdmin")}
+					</p>
+				)}
+				<div
+					className={`mt-auto flex flex-wrap gap-2 pt-1 text-sm ${can.admin ? "" : "hidden"}`}
+				>
 					{installed && !model.ready && !active && (
 						<button
 							type="button"
