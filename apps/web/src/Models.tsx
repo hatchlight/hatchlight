@@ -8,7 +8,7 @@ import type {
 } from "@hatchlight/core/types";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { api, demoUrl } from "./api";
+import { api, demoUrl, useServerMode } from "./api";
 import { CheckpointShelf } from "./Checkpoints";
 import { remaining } from "./format";
 import { type I18n, isMessageKey, useI18n } from "./i18n";
@@ -802,6 +802,9 @@ function Catalog({ view }: { view: LocalModelsView }) {
 function Folder({ disk }: { disk: LocalModelsView["disk"] }) {
 	const { t, bytes, explain } = useI18n();
 	const live = useFolderMove();
+	// A path typed in a browser would name a folder on the server.
+	const server = useServerMode();
+	const changeable = disk.changeable && !server;
 	const moving = live ?? disk.moving;
 	const [editing, setEditing] = useState(false);
 	const [path, setPath] = useState(disk.path);
@@ -891,7 +894,7 @@ function Folder({ disk }: { disk: LocalModelsView["disk"] }) {
 						<span className="truncate font-mono text-sm" title={disk.path}>
 							{disk.path}
 						</span>
-						{disk.changeable && (
+						{changeable && (
 							<button
 								type="button"
 								onClick={() => {

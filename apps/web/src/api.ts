@@ -14,6 +14,7 @@ import type {
 	TrainingView,
 	TurnView,
 } from "@hatchlight/core/types";
+import { useQuery } from "@tanstack/react-query";
 
 /** What the assistant thinks with: this computer, a service, or nothing. */
 export type AssistantBrain =
@@ -59,6 +60,16 @@ export class ApiError extends Error {
 	) {
 		super(message);
 	}
+}
+
+/** True when Hatchlight runs as a server, where machine settings are left out. */
+export function useServerMode(): boolean {
+	const server = useQuery({
+		queryKey: ["server"],
+		queryFn: api.server,
+		staleTime: Number.POSITIVE_INFINITY,
+	});
+	return server.data?.mode === "server";
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -139,6 +150,8 @@ export const api = {
 		),
 	cancelJob: (id: string) =>
 		request<void>(`/api/jobs/${id}/cancel`, { method: "POST" }),
+	/** Whether this is a personal install or a server reached over the network. */
+	server: () => request<{ mode: "personal" | "server" }>("/api/server"),
 	agents: () => request<AgentsStatus>("/api/agents"),
 	connectClaudeDesktop: (policy: AgentPolicy) =>
 		request<void>("/api/agents/claude-desktop", send("PUT", policy)),

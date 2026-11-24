@@ -7,7 +7,7 @@ import type {
 } from "@hatchlight/core/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { type AgentPolicy, api } from "./api";
+import { type AgentPolicy, api, useServerMode } from "./api";
 import { useI18n } from "./i18n";
 import { useModelProgress } from "./live";
 
@@ -606,6 +606,8 @@ function Agents() {
 
 export function Settings() {
 	const { t, explain, language, setLanguage, languages } = useI18n();
+	// Agents are set up on the machine that runs Hatchlight.
+	const server = useServerMode();
 	const providers = useQuery({
 		queryKey: ["providers"],
 		queryFn: api.providers,
@@ -643,7 +645,7 @@ export function Settings() {
 					<ProviderRow key={provider.id} provider={provider} />
 				))}
 			</ul>
-			<Agents />
+			{!server && <Agents />}
 		</div>
 	);
 }
