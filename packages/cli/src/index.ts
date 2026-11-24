@@ -15,6 +15,7 @@ import {
 	SecretError,
 	writeServerInfo,
 } from "@hatchlight/core";
+import { mcpOverHttp } from "@hatchlight/mcp";
 import {
 	Agents,
 	agentsSetup,
@@ -26,7 +27,6 @@ import {
 	serverConfig,
 	serveWeb,
 } from "@hatchlight/server";
-
 import { COMMANDS, commandList } from "./commands";
 import { openInBrowser } from "./launcher";
 
@@ -180,10 +180,21 @@ const runtime = await createRuntime({
 	console.error(`${error.message}.`);
 	process.exit(1);
 });
+/** The largest MCP request read: tool calls are small JSON. */
+const MAX_MCP_BODY_BYTES = 1024 * 1024;
 const app = createApp({
 	...runtime,
 	allowedOrigins: values.dev ? ["http://localhost:5173"] : [],
 	server: server ?? undefined,
+	// Agents with a token reach a server at /mcp; each of their tool calls
+	// goes through this server's own API, as that token.
+	mcp: server
+		? mcpOverHttp({
+				fetch: (request) =>
+					Promise.resolve(app.fetch(request, { peer: "127.0.0.1" })),
+				maxBodyBytes: MAX_MCP_BODY_BYTES,
+			})
+		: undefined,
 	loraQuota: config.loraQuota ?? undefined,
 	agents: new Agents(() =>
 		agentsSetup({ dataDir: values["data-dir"], resources }),

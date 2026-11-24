@@ -10,6 +10,7 @@ export {
 	type ServerEvent,
 } from "./client";
 export { type Connection, connect, running } from "./connect";
+export { type McpCaller, type McpHttpOptions, mcpOverHttp } from "./http";
 export { createMcpServer, type McpOptions } from "./tools";
 
 export interface RunOptions extends McpOptions {

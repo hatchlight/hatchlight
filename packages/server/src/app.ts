@@ -15,6 +15,7 @@ import {
 	type LocalModelsView,
 	MAX_CHECKPOINT_BYTES,
 	MAX_LORA_BYTES,
+	mayUsePaid,
 	NotFoundError,
 	type PaidRefusal,
 	paidError,
@@ -37,6 +38,7 @@ import { mountAccounts } from "./accounts-routes";
 import type { Agents } from "./agents";
 import { requireAccess } from "./auth";
 import { DeviceCookies } from "./devices";
+import { Limiter } from "./limiter";
 import type { AssistantBrain, ImproveRequest } from "./runtime";
 import {
 	DEFAULT_LORA_QUOTA,
@@ -88,6 +90,14 @@ export interface AppOptions {
 	trainer?: Trainer;
 	/** Captions training pictures; absent where no model can see. */
 	captioner?: Captioner;
+	/**
+	 * Answers MCP over HTTP at /mcp, for agents with an API token; servers
+	 * only. Given the request and who it is from, once checked here.
+	 */
+	mcp?: (
+		request: Request,
+		caller: { token: string; origin: string; allowPaid: boolean },
+	) => Promise<Response>;
 	/** Makes and changes pictures by talking; absent where it cannot. */
 	assistant?: Assistant;
 	/** What a person's assistant thinks with now. */
@@ -131,6 +141,8 @@ const TRAINING_TYPES: Record<string, string> = {
 
 /** More than any JSON request the interface sends. */
 const MAX_JSON_BYTES = 1024 * 1024;
+/** MCP calls one API token may have under way at once. */
+const MAX_MCP_CALLS = 4;
 
 function hostname(host: string): string {
 	return host.replace(/:\d+$/, "");
@@ -380,6 +392,80 @@ export function createApp(options: AppOptions): Hono {
 			onError: (c) => c.json({ error: "The request is too large" }, 413),
 		})(c, next);
 	});
+
+	if (accounts && options.mcp && server) {
+		const answer = options.mcp;
+		// Wrong tokens slow down, per address; a token runs a few calls at once.
+		const failures = new Limiter({ freeTries: 10 });
+		const running = new Map<string, number>();
+		app.all(
+			"/mcp",
+			bodyLimit({
+				maxSize: MAX_JSON_BYTES,
+				onError: (c) => c.json({ error: "The request is too large" }, 413),
+			}),
+			async (c) => {
+				// Without sessions, there is no stream to open or session to end.
+				if (c.req.method !== "POST") {
+					return c.json({ error: "Use POST" }, 405, { allow: "POST" });
+				}
+				const address = c.get("client") ?? peerOf(c) ?? "unknown";
+				const wait = failures.wait(address);
+				if (wait > 0) {
+					throw new AccessError(
+						"Too many wrong tokens. Try again later",
+						"tooManyAttempts",
+						429,
+						{ seconds: Math.ceil(wait / 1000) },
+					);
+				}
+				// A token only: a browser's cookie never opens this.
+				const token = c.req
+					.header("authorization")
+					?.match(/^Bearer\s+(\S+)$/i)?.[1];
+				const seen = token ? accounts.resolveApiToken(token) : null;
+				if (!token || !seen?.apiToken) {
+					failures.fail(address);
+					c.header("www-authenticate", 'Bearer realm="hatchlight"');
+					throw new AccessError(
+						"An API token is needed: Authorization: Bearer <token>",
+						"signInRequired",
+						401,
+					);
+				}
+				if (seen.user.mustChangePassword) {
+					throw new AccessError(
+						"Choose a new password before going on",
+						"passwordChangeRequired",
+						403,
+					);
+				}
+				const ref = seen.apiToken.ref ?? seen.apiToken.id;
+				const busy = running.get(ref) ?? 0;
+				if (busy >= MAX_MCP_CALLS) {
+					throw new AccessError(
+						"This token has too many calls under way. Try again shortly",
+						"tooManyAttempts",
+						429,
+						{ seconds: 5 },
+					);
+				}
+				running.set(ref, busy + 1);
+				try {
+					return await answer(c.req.raw, {
+						token,
+						origin: server.publicOrigin,
+						allowPaid:
+							seen.apiToken.scopes.includes("paid") && mayUsePaid(seen.user),
+					});
+				} finally {
+					const left = (running.get(ref) ?? 1) - 1;
+					if (left > 0) running.set(ref, left);
+					else running.delete(ref);
+				}
+			},
+		);
+	}
 
 	app.onError((error, c) => {
 		// The browser went away: nobody to answer, nothing to log.
