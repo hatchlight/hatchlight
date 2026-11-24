@@ -3,7 +3,12 @@ import { HatchlightClient } from "./client";
 import { connect } from "./connect";
 import { createMcpServer, type McpOptions } from "./tools";
 
-export { HatchlightClient, ServerError } from "./client";
+export {
+	type Fetch,
+	HatchlightClient,
+	ServerError,
+	type ServerEvent,
+} from "./client";
 export { type Connection, connect, running } from "./connect";
 export { createMcpServer, type McpOptions } from "./tools";
 

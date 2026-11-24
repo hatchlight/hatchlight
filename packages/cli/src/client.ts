@@ -1,16 +1,82 @@
+import { createInterface } from "node:readline";
+import { Writable } from "node:stream";
 import { defaultDataDir } from "@hatchlight/core";
 import {
 	type Connection,
 	connect,
-	HatchlightClient,
 	running,
 	ServerError,
 } from "@hatchlight/mcp";
-import { COMMANDS, EXIT, type Io, parse, UsageError } from "./commands";
+import { Api } from "./api";
+import {
+	COMMANDS,
+	type Command,
+	EXIT,
+	type Io,
+	parse,
+	UsageError,
+} from "./commands";
 import { launcher, openInBrowser, serverArgs } from "./launcher";
 
-/** Standard output and error, with a status line where a person watches. */
-function terminal(signal: AbortSignal): Io {
+/** A line typed at the terminal, shown as typed or not at all. */
+function ask(prompt: string, shown: boolean): Promise<string | null> {
+	return new Promise((done) => {
+		if (!shown) process.stderr.write(prompt);
+		const lines = createInterface({
+			input: process.stdin,
+			// What is typed goes nowhere when it must not be seen.
+			output: shown
+				? process.stderr
+				: new Writable({ write: (_chunk, _encoding, next) => next() }),
+			terminal: true,
+		});
+		let answer: string | null = null;
+		lines.on("SIGINT", () => lines.close());
+		lines.on("close", () => {
+			if (!shown) process.stderr.write("\n");
+			done(answer);
+		});
+		lines.question(shown ? prompt : "", (line) => {
+			answer = line;
+			lines.close();
+		});
+	});
+}
+
+/** Waits for Ctrl+C as the command asks to take it. */
+class Interrupts {
+	/** The first Ctrl+C, for "once". */
+	readonly first = new AbortController();
+	/** What waits on the next one, for "repeat". */
+	private waiting: AbortController | null = null;
+	/** How the running command takes Ctrl+C; unset until it runs. */
+	mode: Command["interruptible"] | null = null;
+
+	next(): AbortSignal {
+		this.waiting = new AbortController();
+		return this.waiting.signal;
+	}
+
+	/** One Ctrl+C: stops what is waited on, or the program. */
+	take(): void {
+		if (this.mode === "once" && !this.first.signal.aborted) {
+			this.first.abort();
+			return;
+		}
+		if (
+			this.mode === "repeat" &&
+			this.waiting &&
+			!this.waiting.signal.aborted
+		) {
+			this.waiting.abort();
+			return;
+		}
+		process.exit(EXIT.interrupted);
+	}
+}
+
+/** Standard input, output and error, as a person or a script uses them. */
+function terminal(interrupts: Interrupts): Io {
 	const tty = process.stderr.isTTY === true;
 	let shown = false;
 	const clear = () => {
@@ -36,8 +102,19 @@ function terminal(signal: AbortSignal): Io {
 			shown = true;
 		},
 		cwd: process.cwd(),
-		signal,
+		signal: interrupts.first.signal,
+		nextInterrupt: () => interrupts.next(),
 		open: openInBrowser,
+		interactive: process.stdin.isTTY === true,
+		readLine: (prompt) => {
+			clear();
+			return ask(prompt, true);
+		},
+		readSecret: (prompt) => {
+			clear();
+			return ask(prompt, false);
+		},
+		readAll: () => Bun.stdin.text(),
 	};
 }
 
@@ -48,18 +125,10 @@ export async function runCommand(
 ): Promise<number> {
 	const command = COMMANDS[name];
 	if (!command) throw new Error(`No command ${name}`);
-	const stop = new AbortController();
-	// Only once the command runs: connecting is ended at once.
-	let interruptible = false;
-	process.on("SIGINT", () => {
-		// While a generation is waited on, once asks to stop waiting and twice
-		// means now. Anything else ends at once.
-		if (!interruptible || stop.signal.aborted) {
-			process.exit(EXIT.interrupted);
-		}
-		stop.abort();
-	});
-	const io = terminal(stop.signal);
+	const interrupts = new Interrupts();
+	// Connecting, and commands that do not wait, end at once.
+	process.on("SIGINT", () => interrupts.take());
+	const io = terminal(interrupts);
 	try {
 		const { values, positionals } = parse(command, args);
 		if (values.help) {
@@ -69,7 +138,9 @@ export async function runCommand(
 		const dataDir =
 			(values["data-dir"] as string | undefined) ?? defaultDataDir();
 		let connection: Connection;
-		if (command.local) {
+		if (command.offline) {
+			connection = { url: "", started: false };
+		} else if (command.local) {
 			const url = await running(dataDir);
 			if (!url) {
 				io.err("Hatchlight is not running. Start it with `hatchlight`.");
@@ -85,11 +156,12 @@ export async function runCommand(
 			);
 			io.status(null);
 		}
-		interruptible = command.interruptible === true;
+		interrupts.mode = command.interruptible;
 		return await command.run(values, positionals, {
-			api: new HatchlightClient(connection.url),
+			api: new Api(connection.url),
 			io,
 			url: connection.url,
+			dataDir,
 			startedServer: connection.started,
 		});
 	} catch (error) {

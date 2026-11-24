@@ -129,6 +129,8 @@ bun run start generate "the same, at night" -r out/first.png --seed 7
 bun run start upscale ast_… -o big.png
 bun run start gallery lighthouse             # find what was made before
 bun run start get ast_… -o lighthouse.png
+bun run start generate --batch prompts.txt -o out/   # one prompt per line
+bun run start chat "a poster of a lighthouse, then make it warmer"
 ```
 
 `generate` waits and shows how each model is doing. With the app open, Ctrl+C
@@ -136,6 +138,21 @@ stops waiting while the job goes on, to follow with `status <session>`. Compare 
 repeating `-m`. Every command takes `--json` for scripts and has `--help`.
 Like agents, it uses the Hatchlight already running or starts one for the
 command, and only models on your computer unless you pass `--allow-paid`.
+
+Setting up works from the terminal too:
+
+```sh
+bun run start doctor                 # the GPU, disk, models and what is missing
+bun run start catalog                # models to download, and how they fit
+bun run start install sdxl-turbo     # download one and wait until it is ready
+bun run start keys set fal           # asks for the key without showing it
+bun run start loras add style.safetensors
+bun run start trainer install        # then train a LoRA from your pictures:
+bun run start train photos/ --name "My dog" --trigger qzxdog --consent --samples out/
+```
+
+`bun run start completions zsh` (or `bash`, `fish`) prints tab completion for
+your shell; its `--help` says where to put it.
 
 ## Use it from an AI agent
 
