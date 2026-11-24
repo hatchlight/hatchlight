@@ -329,6 +329,7 @@ export class SqliteAccounts {
 				schema.jobs,
 				schema.assets,
 				schema.messages,
+				schema.assetUsage,
 			]) {
 				tx.update(table)
 					.set({ userId: user.id })
@@ -360,6 +361,26 @@ export class SqliteAccounts {
 			.delete(schema.loraUploads)
 			.where(eq(schema.loraUploads.loraId, loraId))
 			.run();
+	}
+
+	/** Counts a new file of a person's in their usage. */
+	addAssetBytes(userId: string, bytes: number): void {
+		this.sqlite
+			.prepare(
+				"insert into asset_usage (user_id, bytes) values (?, ?) on conflict(user_id) do update set bytes = bytes + excluded.bytes",
+			)
+			.run(userId, bytes);
+	}
+
+	/** What a person's pictures and videos take on disk. */
+	assetBytes(userId: string): number {
+		return (
+			this.db
+				.select({ bytes: schema.assetUsage.bytes })
+				.from(schema.assetUsage)
+				.where(eq(schema.assetUsage.userId, userId))
+				.get()?.bytes ?? 0
+		);
 	}
 
 	/** What a person spent on the server's keys since `since`, in dollars. */

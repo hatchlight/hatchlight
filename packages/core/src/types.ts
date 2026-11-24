@@ -53,6 +53,8 @@ export interface AccountView {
 	 * a link someone else gave.
 	 */
 	resetNotice: { by: string; at: number } | null;
+	/** What their pictures and videos take, and the most they may (null: no limit). */
+	storage: { usedBytes: number; quotaBytes: number | null };
 }
 
 /** A browser someone is signed in on. */

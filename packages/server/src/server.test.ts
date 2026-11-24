@@ -65,9 +65,19 @@ async function serverApp(
 	// Holds the key the cloud language services use.
 	const openai = new FakeProvider("openai", []);
 	openai.requiresKey = true;
+	const { transport, loraQuota, assetQuotaBytes } = serverConfig(
+		{ mode: "server" },
+		{
+			HATCHLIGHT_PUBLIC_URL: "http://nas.example",
+			HATCHLIGHT_ALLOWED_HOSTS: "192.168.1.20",
+			HATCHLIGHT_TRUSTED_PROXIES: "10.0.0.0/8",
+			...options.env,
+		},
+	);
 	const runtime = await createRuntime({
 		dataDir: root,
 		providers: [new FakeProvider(), paid, openai],
+		assetQuotaBytes,
 		localModels: [],
 		engines: [],
 		server: true,
@@ -95,15 +105,6 @@ async function serverApp(
 		await rm(root, { recursive: true });
 	});
 	await runtime.start();
-	const { transport, loraQuota } = serverConfig(
-		{ mode: "server" },
-		{
-			HATCHLIGHT_PUBLIC_URL: "http://nas.example",
-			HATCHLIGHT_ALLOWED_HOSTS: "192.168.1.20",
-			HATCHLIGHT_TRUSTED_PROXIES: "10.0.0.0/8",
-			...options.env,
-		},
-	);
 	const app = createApp({
 		...runtime,
 		trainer: options.trainer ?? runtime.trainer,
@@ -1585,4 +1586,46 @@ test("only people who may spend can keep keys of their own", async () => {
 			})
 		).status,
 	).toBe(204);
+});
+
+test("a member past their room starts no new pictures, but those under way finish", async () => {
+	const { call, setupOwner, invite, runtime } = await serverApp({
+		// About a hundred bytes: one small picture fills it.
+		env: { HATCHLIGHT_ASSET_GB_PER_PERSON: String(100 / 1024 ** 3) },
+	});
+	const owner = await setupOwner();
+	const member = await invite(owner);
+	const turn = (who: Who) =>
+		call("/api/turns", {
+			method: "POST",
+			who,
+			body: { prompt: "x", modelIds: ["fake/alpha"] },
+		});
+	type Me = { storage: { usedBytes: number; quotaBytes: number | null } };
+	const me = async (who: Who) =>
+		((await (await call("/api/account", { who })).json()) as Me).storage;
+	expect(await me(member)).toEqual({ usedBytes: 0, quotaBytes: 100 });
+	// The first one goes past the room, and still finishes.
+	expect((await turn(member)).status).toBe(201);
+	await runtime.engine.idle();
+	const gallery = (await (
+		await call("/api/gallery", { who: member })
+	).json()) as unknown[];
+	expect(gallery).toHaveLength(1);
+	const used = (await me(member)).usedBytes;
+	expect(used).toBeGreaterThan(100);
+	// Now new pictures, and uploads, wait for room.
+	const refused = await turn(member);
+	expect(refused.status).toBe(403);
+	expect(await errorCode(refused)).toBe("storageFull");
+	const upload = await call("/api/assets", {
+		method: "POST",
+		who: member,
+		body: PNG,
+		headers: { "content-type": "image/png" },
+	});
+	expect(await errorCode(upload)).toBe("storageFull");
+	// Owners and admins have no such limit.
+	expect((await turn(owner)).status).toBe(201);
+	expect((await me(owner)).quotaBytes).toBeNull();
 });

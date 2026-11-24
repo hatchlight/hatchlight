@@ -28,3 +28,21 @@ test("a server's first owner takes the files of the install", async () => {
 	// Nothing to move is fine.
 	await store.moveUser("local", owner.userId);
 });
+
+test("only a file new on disk counts toward its person's usage", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "hatchlight-assets-"));
+	dirs.push(dir);
+	const counted: [string, number][] = [];
+	const store = new FsAssetStore(dir, (userId, bytes) =>
+		counted.push([userId, bytes]),
+	);
+	const ana = { userId: "usr_ana" };
+	expect((await store.put(ana, new Uint8Array([1, 2, 3]))).added).toBe(true);
+	// The same picture again is stored once.
+	expect((await store.put(ana, new Uint8Array([1, 2, 3]))).added).toBe(false);
+	await store.put({ userId: "usr_bia" }, new Uint8Array([1, 2, 3]));
+	expect(counted).toEqual([
+		["usr_ana", 3],
+		["usr_bia", 3],
+	]);
+});

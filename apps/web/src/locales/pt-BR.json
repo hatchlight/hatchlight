@@ -19,6 +19,9 @@
 	"account.signOutThere": "Desconectar",
 	"account.signOutThereQuestion": "Desconectar {browser}? Ele vai pedir a senha de novo.",
 	"account.signedInAs": "Conectado como {name}.",
+	"account.storage": "Suas imagens e vídeos ocupam {used}.",
+	"account.storageOf": "Suas imagens e vídeos ocupam {used} dos {quota} que você tem.",
+	"account.storageTitle": "Imagens e vídeos",
 	"account.thisBrowser": "Este navegador",
 	"account.title": "Conta",
 	"account.twoStep": "Entrada em duas etapas",
@@ -251,6 +254,7 @@
 	"errors.serverBusy": "O servidor está ocupado. Tente de novo em alguns segundos.",
 	"errors.sessionNotFound": "Essa sessão não existe mais.",
 	"errors.signInRequired": "Entre para continuar.",
+	"errors.storageFull": "Suas imagens ocupam todo o espaço que você tem neste servidor ({maxBytes}). As imagens em andamento terminam; peça mais espaço a um admin.",
 	"errors.tooManyAttempts": "Tentativas demais. Espere {seconds} segundos e tente de novo.",
 	"errors.tooManyLoras": "Dá para usar no máximo {max} LoRAs de uma vez.",
 	"errors.tooManyReferences": {

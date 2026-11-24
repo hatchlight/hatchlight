@@ -28,7 +28,7 @@ import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { ApiError, api, type InviteTerms, whenSignedOut } from "./api";
 import { type I18n, useI18n } from "./i18n";
-import { ConfirmButton, LABEL, SECTION } from "./Training";
+import { Bar, ConfirmButton, LABEL, SECTION } from "./Training";
 
 const MIN_PASSWORD = 10;
 
@@ -783,8 +783,9 @@ function SectionHeader({ title, intro }: { title: string; intro: string }) {
 /** Settings > Account: password, two-step sign-in, and where one is signed in. */
 export function AccountSettings() {
 	const account = useAccount();
-	const { t } = useI18n();
+	const { t, bytes } = useI18n();
 	if (!account) return null;
+	const { usedBytes, quotaBytes } = account.storage;
 	return (
 		<Card className={SECTION}>
 			<SectionHeader
@@ -792,6 +793,23 @@ export function AccountSettings() {
 				intro={t("account.signedInAs", { name: account.username })}
 			/>
 			<CardContent className="flex flex-col gap-3">
+				<div className={cn(PANEL, "flex flex-col gap-3")}>
+					<h3 className={PANEL_TITLE}>{t("account.storageTitle")}</h3>
+					<p className="text-sm text-dim">
+						{quotaBytes == null
+							? t("account.storage", { used: bytes(usedBytes) })
+							: t("account.storageOf", {
+									used: bytes(usedBytes),
+									quota: bytes(quotaBytes),
+								})}
+					</p>
+					{quotaBytes != null && quotaBytes > 0 && (
+						<Bar
+							value={Math.min((usedBytes / quotaBytes) * 100, 100)}
+							label={t("account.storageTitle")}
+						/>
+					)}
+				</div>
 				<div className="grid items-start gap-3 md:grid-cols-2">
 					<div className={PANEL}>
 						<h3 className={cn(PANEL_TITLE, "mb-4")}>

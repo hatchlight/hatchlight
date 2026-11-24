@@ -138,6 +138,7 @@ export function accountView(user: UserRow): AccountView {
 		createdAt: user.createdAt,
 		lastReset: null,
 		resetNotice: null,
+		storage: { usedBytes: 0, quotaBytes: null },
 	};
 }
 
@@ -176,6 +177,8 @@ export interface AccountServiceOptions {
 	 * a cheaper one so slow machines finish them in time.
 	 */
 	hasher?: PasswordHasher;
+	/** The most a member's pictures and videos may take; unset, no limit. */
+	assetQuotaBytes?: number | null;
 	/**
 	 * Gives the first owner what was made before accounts: files outside the
 	 * database, such as settings. The database rows move with the owner.
@@ -594,7 +597,34 @@ export class AccountService {
 			...accountView(user),
 			lastReset: last,
 			resetNotice: own && reset && reset.noticedAt == null ? last : null,
+			storage: {
+				usedBytes: this.repo.assetBytes(user.id),
+				quotaBytes: this.assetQuota(user),
+			},
 		};
+	}
+
+	/** The most a person's pictures may take: members only, when set. */
+	private assetQuota(user: UserRow): number | null {
+		return user.role === "member"
+			? (this.options.assetQuotaBytes ?? null)
+			: null;
+	}
+
+	/**
+	 * Why a person may not start new pictures now: their pictures already
+	 * take all the room they have. Pictures under way still finish.
+	 */
+	storageRefusal(userId: string): AccessError | null {
+		const user = this.repo.getUser(userId);
+		const quota = user ? this.assetQuota(user) : null;
+		if (quota == null || this.repo.assetBytes(userId) < quota) return null;
+		return new AccessError(
+			"Your pictures take all the room you have on this server",
+			"storageFull",
+			403,
+			{ maxBytes: quota },
+		);
 	}
 
 	/** The person saw the notice of their reset. */

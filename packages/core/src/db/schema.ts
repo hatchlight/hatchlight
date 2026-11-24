@@ -242,3 +242,12 @@ export const loraUploads = sqliteTable(
 	},
 	(t) => [index("lora_uploads_user").on(t.userId)],
 );
+
+/**
+ * How much each person's pictures and videos take on disk, kept as they
+ * are added so a quota never needs the disk scanned.
+ */
+export const assetUsage = sqliteTable("asset_usage", {
+	userId: text("user_id").primaryKey(),
+	bytes: integer("bytes").notNull(),
+});

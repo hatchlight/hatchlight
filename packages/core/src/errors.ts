@@ -86,6 +86,7 @@ export const ERROR_CODES = [
 	"serverBusy",
 	"sessionNotFound",
 	"signInRequired",
+	"storageFull",
 	"tooManyAttempts",
 	"tooManyLoras",
 	"tooManyReferences",

@@ -70,3 +70,43 @@ test("what jobs cost before the ledger is carried into it", async () => {
 	expect(repo.accounts().spentSince("usr_1", 0)).toBeCloseTo(0.25);
 	repo.close();
 });
+
+test("what pictures take already is counted when usage starts being kept", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "hatchlight-usage-"));
+	dirs.push(dir);
+	const before = join(dir, "drizzle");
+	await cp(MIGRATIONS_DIR, before, { recursive: true });
+	const journal = Bun.file(join(before, "meta", "_journal.json"));
+	const entries = await journal.json();
+	entries.entries = entries.entries.filter(
+		(e: { tag: string }) => e.tag < "0009",
+	);
+	await Bun.write(journal, JSON.stringify(entries));
+	const path = join(dir, "db.sqlite");
+	const old = new SqliteRepository(path, before);
+	const asset = (id: string, userId: string, hash: string, size: number) =>
+		old.createAsset({
+			id,
+			userId,
+			kind: "upload",
+			jobId: null,
+			hash,
+			mime: "image/png",
+			size,
+			prompt: null,
+			modelId: null,
+			params: null,
+			createdAt: 1,
+		});
+	// The same file twice is on disk once.
+	await asset("ast_1", "usr_1", "a".repeat(64), 100);
+	await asset("ast_2", "usr_1", "a".repeat(64), 100);
+	await asset("ast_3", "usr_1", "b".repeat(64), 50);
+	await asset("ast_4", "usr_2", "a".repeat(64), 100);
+	old.close();
+	const repo = new SqliteRepository(path);
+	expect(repo.accounts().assetBytes("usr_1")).toBe(150);
+	expect(repo.accounts().assetBytes("usr_2")).toBe(100);
+	expect(repo.accounts().assetBytes("usr_3")).toBe(0);
+	repo.close();
+});

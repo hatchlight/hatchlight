@@ -74,7 +74,9 @@ Options for serve:
                    HATCHLIGHT_PUBLIC_URL, and reads HATCHLIGHT_ALLOWED_HOSTS,
                    HATCHLIGHT_TRUSTED_PROXIES, and the LoRAs each member
                    may add: HATCHLIGHT_LORA_FILES_PER_PERSON (default 20)
-                   and HATCHLIGHT_LORA_GB_PER_PERSON (default 10)
+                   and HATCHLIGHT_LORA_GB_PER_PERSON (default 10), and the
+                   room each member's pictures may take:
+                   HATCHLIGHT_ASSET_GB_PER_PERSON (unset: no limit)
   --host <a>       Address to listen on (default 127.0.0.1, or 0.0.0.0 in
                    server mode)
   --data-dir <p>   Where sessions, images and keys are stored
@@ -161,6 +163,7 @@ const runtime = await createRuntime({
 		: undefined,
 	migrationsDir,
 	server: server != null,
+	assetQuotaBytes: config.assetQuotaBytes,
 }).catch((error) => {
 	// Said plainly: another server on the folder, or keys under another secret.
 	if (!(error instanceof DataDirInUseError || error instanceof SecretError)) {

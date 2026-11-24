@@ -19,6 +19,9 @@
 	"account.signOutThere": "Sign out",
 	"account.signOutThereQuestion": "Sign out of {browser}? It will ask for the password again.",
 	"account.signedInAs": "Signed in as {name}.",
+	"account.storage": "Your pictures and videos take {used}.",
+	"account.storageOf": "Your pictures and videos take {used} of the {quota} you have.",
+	"account.storageTitle": "Pictures and videos",
 	"account.thisBrowser": "This browser",
 	"account.title": "Account",
 	"account.twoStep": "Two-step sign-in",
@@ -251,6 +254,7 @@
 	"errors.serverBusy": "The server is busy. Try again in a few seconds.",
 	"errors.sessionNotFound": "That session no longer exists.",
 	"errors.signInRequired": "Sign in to go on.",
+	"errors.storageFull": "Your pictures take all the room you have on this server ({maxBytes}). Pictures under way still finish; ask an admin for more room.",
 	"errors.tooManyAttempts": "Too many tries. Wait {seconds} seconds and try again.",
 	"errors.tooManyLoras": "At most {max} LoRAs can be used at once.",
 	"errors.tooManyReferences": {

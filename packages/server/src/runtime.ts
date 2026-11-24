@@ -114,13 +114,28 @@ export interface ImproveRequest {
 export type AssistantBrain = "local" | CloudTranslatorId | null;
 
 /** Hatchlight as a person sees it, for the assistant in this process. */
-export function localReel(service: ReelService, ctx: UserContext): Reel {
+export function localReel(
+	service: ReelService,
+	ctx: UserContext,
+	/** Why new pictures cannot start now, on a server: their room is full. */
+	refuse: () => Error | null = () => null,
+): Reel {
+	const check = () => {
+		const refusal = refuse();
+		if (refusal) throw refusal;
+	};
 	return {
 		models: async () => service.listModels(),
 		providers: () => service.listProviders(ctx),
 		session: (id) => service.getSession(ctx, id),
-		createTurn: (input) => service.createTurn(ctx, input),
-		upload: (data) => service.uploadAsset(ctx, data),
+		createTurn: (input) => {
+			check();
+			return service.createTurn(ctx, input);
+		},
+		upload: (data) => {
+			check();
+			return service.uploadAsset(ctx, data);
+		},
 		gallery: ({ query, limit }) =>
 			service.listGallery(ctx, { query, limit: limit ?? 20 }),
 		async asset(id) {
@@ -446,6 +461,8 @@ export interface RuntimeOptions {
 	 * those allowed may spend them.
 	 */
 	server?: boolean;
+	/** The most a member's pictures and videos may take on a server; unset, no limit. */
+	assetQuotaBytes?: number | null;
 	/** How passwords are hashed; argon2id with its default cost unless a test says. */
 	passwordHasher?: PasswordHasher;
 	/** Stand-ins for the trainer's downloads and programs, in tests. */
@@ -523,7 +540,12 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		databaseFile(options.dataDir),
 		options.migrationsDir,
 	);
-	const assets = new FsAssetStore(join(options.dataDir, "assets"));
+	const accountsRepo = repo.accounts();
+	// Each new file is counted as it is written, for storage quotas.
+	const assets = new FsAssetStore(
+		join(options.dataDir, "assets"),
+		(userId, bytes) => accountsRepo.addAssetBytes(userId, bytes),
+	);
 	// Keys are encrypted at rest; those saved before are encrypted now.
 	const fileKeys = await (async () => {
 		try {
@@ -542,8 +564,9 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	const settings = new FileSettingsStore(
 		join(options.dataDir, "settings.json"),
 	);
-	const accounts = new AccountService(repo.accounts(), {
+	const accounts = new AccountService(accountsRepo, {
 		hasher: options.passwordHasher,
+		assetQuotaBytes: options.server ? options.assetQuotaBytes : null,
 		// What the install had becomes the first owner's; its keys, the server's.
 		adoptLocal: async (ownerId) => {
 			await settings.moveUser(LOCAL_USER.userId, ownerId);
@@ -746,7 +769,10 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 			update: (ctx, id, body) => repo.updateEntry(ctx, id, body),
 			list: (ctx, sessionId) => repo.listEntries(ctx, sessionId),
 		},
-		reel: (ctx) => localReel(service, ctx),
+		reel: (ctx) =>
+			localReel(service, ctx, () =>
+				options.server ? accounts.storageRefusal(ctx.userId) : null,
+			),
 		eyes: async () => (eyes && (await eyes.ready()) ? eyes : null),
 		brain: async (ctx) =>
 			options.assistantModel ??
