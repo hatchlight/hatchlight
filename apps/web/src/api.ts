@@ -1,5 +1,6 @@
 import type {
 	AccountView,
+	ApiTokenView,
 	Asset,
 	AssistantView,
 	AuthSessionView,
@@ -13,6 +14,8 @@ import type {
 	ProviderStatus,
 	Session,
 	Settings,
+	TokenExpiryDays,
+	TokenScope,
 	TrainerStatus,
 	TrainingView,
 	TurnView,
@@ -219,6 +222,26 @@ export const api = {
 		request<void>(`/api/account/sessions/${id}`, { method: "DELETE" }),
 	revokeOtherSessions: () =>
 		request<void>("/api/account/sessions", { method: "DELETE" }),
+	/** The person's API tokens, for agents and programs. */
+	tokens: () => request<ApiTokenView[]>("/api/account/tokens"),
+	/** A new token: the answer is the only time it is shown. */
+	createToken: (input: {
+		name: string;
+		scopes: TokenScope[];
+		spendLimitUsd: number | null;
+		expiresInDays: TokenExpiryDays;
+	}) =>
+		request<ApiTokenView & { token: string }>(
+			"/api/account/tokens",
+			send("POST", input),
+		),
+	revokeToken: (id: string) =>
+		request<void>(`/api/account/tokens/${id}`, { method: "DELETE" }),
+	/** Another person's tokens, for those who manage them. */
+	userTokens: (userId: string) =>
+		request<ApiTokenView[]>(`/api/users/${userId}/tokens`),
+	revokeUserToken: (userId: string, id: string) =>
+		request<void>(`/api/users/${userId}/tokens/${id}`, { method: "DELETE" }),
 	startTotp: () =>
 		request<{ secret: string; uri: string }>("/api/account/totp", {
 			method: "POST",

@@ -1,9 +1,13 @@
-import type {
-	Settings as Choices,
-	ImproveWith,
-	LocalModelStatus,
-	ProviderStatus,
-	TranslateWith,
+import {
+	type ApiTokenView,
+	type Settings as Choices,
+	type ImproveWith,
+	type LocalModelStatus,
+	type ProviderStatus,
+	TOKEN_EXPIRY_DAYS,
+	type TokenExpiryDays,
+	type TokenScope,
+	type TranslateWith,
 } from "@hatchlight/core/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
@@ -24,10 +28,11 @@ import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { AccountSettings, UsersSettings, useCan } from "./Accounts";
 import { type AgentPolicy, api, useServerMode } from "./api";
-import { useI18n } from "./i18n";
+import { type I18n, useI18n } from "./i18n";
 import { useModelProgress } from "./live";
 import { PageHeader } from "./Models";
-import { Bar, LABEL, SECTION } from "./Training";
+import { Bar, ConfirmButton, LABEL, SECTION } from "./Training";
+import { scopeText, TokenFacts } from "./tokens";
 
 /** A panel inside a section: one provider, one model, one agent. */
 const PANEL = "rounded-xl border border-line bg-bg/60 p-4";
@@ -434,7 +439,7 @@ function CopyLine({ text }: { text: string }) {
 	const [copied, setCopied] = useState(false);
 	return (
 		<div className="mt-3 flex items-start gap-2">
-			<code className="min-w-0 flex-1 rounded-lg border border-line bg-bg px-3 py-2.5 font-mono text-xs leading-relaxed break-all">
+			<code className="min-w-0 flex-1 rounded-lg border border-line bg-bg px-3 py-2.5 font-mono text-xs leading-relaxed break-all whitespace-pre-wrap">
 				{text}
 			</code>
 			<Button
@@ -794,8 +799,271 @@ export function Settings() {
 					</Card>
 				)}
 				<UsersSettings />
-				{!server && <Agents />}
+				{server ? <AgentTokens /> : <Agents />}
 			</div>
 		</div>
+	);
+}
+
+/** What an agent's configuration takes, for this server and a new token. */
+function snippets(origin: string, token: string, paid: boolean) {
+	const local = ["mcp", ...(paid ? ["--allow-paid"] : [])];
+	return {
+		claudeCode: `claude mcp add --transport http hatchlight ${origin}/mcp --header "Authorization: Bearer ${token}"`,
+		claudeDesktop: JSON.stringify(
+			{
+				mcpServers: {
+					hatchlight: {
+						command: "hatchlight",
+						args: local,
+						env: { HATCHLIGHT_URL: origin, HATCHLIGHT_TOKEN: token },
+					},
+				},
+			},
+			null,
+			2,
+		),
+		stdio: `hatchlight ${local.join(" ")} --url ${origin} --token ${token}`,
+	};
+}
+
+/** A token just made: shown once, with what agents take. */
+function NewToken({
+	made,
+	onDone,
+}: {
+	made: ApiTokenView & { token: string };
+	onDone(): void;
+}) {
+	const { t } = useI18n();
+	const lines = snippets(
+		window.location.origin,
+		made.token,
+		made.scopes.includes("paid"),
+	);
+	return (
+		<div className={PANEL} role="status">
+			<h3 className="font-medium">{t("tokens.made", { name: made.name })}</h3>
+			<p className="mt-1 text-sm text-warn">{t("tokens.once")}</p>
+			<CopyLine text={made.token} />
+			<h4 className="mt-5 text-sm font-medium">Claude Code</h4>
+			<p className="mt-1 text-sm text-dim">{t("tokens.claudeCode")}</p>
+			<CopyLine text={lines.claudeCode} />
+			<h4 className="mt-5 text-sm font-medium">Claude Desktop</h4>
+			<p className="mt-1 text-sm text-dim">{t("tokens.claudeDesktop")}</p>
+			<CopyLine text={lines.claudeDesktop} />
+			<h4 className="mt-5 text-sm font-medium">{t("tokens.stdioTitle")}</h4>
+			<p className="mt-1 text-sm text-dim">{t("tokens.stdio")}</p>
+			<CopyLine text={lines.stdio} />
+			<Button variant="outline" onClick={onDone} className="mt-5">
+				{t("tokens.done")}
+			</Button>
+		</div>
+	);
+}
+
+const expiryText = (t: I18n["t"], days: TokenExpiryDays) =>
+	days === null ? t("tokens.never") : t("tokens.days", { days });
+
+/**
+ * Settings > Use with AI agents, on a server: tokens that let an agent use
+ * Hatchlight as this person, within what each token allows.
+ */
+export function AgentTokens() {
+	const { t, explain } = useI18n();
+	const can = useCan();
+	const id = useId();
+	const client = useQueryClient();
+	const tokens = useQuery({ queryKey: ["tokens"], queryFn: api.tokens });
+	const [name, setName] = useState("");
+	const [scopes, setScopes] = useState<TokenScope[]>(["read", "generate"]);
+	const [limit, setLimit] = useState("");
+	const [days, setDays] = useState<TokenExpiryDays>(90);
+	const [made, setMade] = useState<(ApiTokenView & { token: string }) | null>(
+		null,
+	);
+	const offered: TokenScope[] = [
+		"read",
+		"generate",
+		...(can.paid ? (["paid"] as const) : []),
+		...(can.train ? (["train"] as const) : []),
+	];
+	const limitUsd = limit.trim() === "" ? null : Number(limit);
+	const validLimit =
+		limitUsd === null || (Number.isFinite(limitUsd) && limitUsd >= 0);
+	const refresh = () => client.invalidateQueries({ queryKey: ["tokens"] });
+	const create = useMutation({
+		mutationFn: () =>
+			api.createToken({
+				name: name.trim(),
+				scopes,
+				spendLimitUsd: scopes.includes("paid") ? limitUsd : null,
+				expiresInDays: days,
+			}),
+		onSuccess: (token) => {
+			setMade(token);
+			setName("");
+			return refresh();
+		},
+	});
+	const revoke = useMutation({
+		mutationFn: api.revokeToken,
+		onSuccess: refresh,
+	});
+	const error = create.error ?? revoke.error ?? tokens.error;
+	const expiryItems = TOKEN_EXPIRY_DAYS.map((value) => ({
+		value: String(value),
+		label: expiryText(t, value),
+	}));
+
+	return (
+		<Card className={SECTION}>
+			<SectionHeader title={t("settings.agents")} intro={t("tokens.intro")} />
+			<CardContent className="flex flex-col gap-5">
+				{made ? (
+					<NewToken made={made} onDone={() => setMade(null)} />
+				) : (
+					<form
+						className={`${PANEL} flex flex-col gap-4`}
+						onSubmit={(event) => {
+							event.preventDefault();
+							create.mutate();
+						}}
+					>
+						<h3 className="font-medium">{t("tokens.new")}</h3>
+						<div className="flex flex-col gap-2">
+							<Label htmlFor={`${id}-name`} className="font-normal text-dim">
+								{t("tokens.name")}
+							</Label>
+							<Input
+								id={`${id}-name`}
+								value={name}
+								maxLength={64}
+								placeholder={t("tokens.namePlaceholder")}
+								onChange={(event) => setName(event.target.value)}
+								className="h-10 max-w-sm"
+							/>
+						</div>
+						<fieldset className="flex flex-col gap-1">
+							<legend className="mb-1 text-sm text-dim">
+								{t("tokens.scopes")}
+							</legend>
+							{offered.map((scope) => (
+								<Label key={scope} className="min-h-9 gap-3 font-normal">
+									<Checkbox
+										checked={scopes.includes(scope)}
+										onCheckedChange={(checked) =>
+											setScopes((current) =>
+												checked
+													? [...current, scope]
+													: current.filter((s) => s !== scope),
+											)
+										}
+									/>
+									{scopeText(t, scope)}
+								</Label>
+							))}
+						</fieldset>
+						<div className="flex flex-wrap items-end gap-4">
+							{scopes.includes("paid") && (
+								<div className="flex flex-col gap-2">
+									<Label
+										htmlFor={`${id}-limit`}
+										className="font-normal text-dim"
+									>
+										{t("tokens.limit")}
+									</Label>
+									<Input
+										id={`${id}-limit`}
+										type="number"
+										min={0}
+										step="any"
+										value={limit}
+										placeholder={t("tokens.noLimit")}
+										onChange={(event) => setLimit(event.target.value)}
+										aria-invalid={!validLimit}
+										className="h-10 w-32 font-mono"
+									/>
+								</div>
+							)}
+							<div className="flex flex-col gap-2">
+								<Label
+									htmlFor={`${id}-expiry`}
+									className="font-normal text-dim"
+								>
+									{t("tokens.expiry")}
+								</Label>
+								<Select
+									items={expiryItems}
+									value={String(days)}
+									onValueChange={(value: string | null) => {
+										if (value !== null) {
+											setDays(
+												value === "null"
+													? null
+													: (Number(value) as TokenExpiryDays),
+											);
+										}
+									}}
+								>
+									<SelectTrigger
+										id={`${id}-expiry`}
+										className="min-w-40 data-[size=default]:h-10"
+									>
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										{expiryItems.map((item) => (
+											<SelectItem key={item.value} value={item.value}>
+												{item.label}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</div>
+						</div>
+						<Button
+							type="submit"
+							variant="aurora"
+							disabled={
+								!name.trim() ||
+								scopes.length === 0 ||
+								!validLimit ||
+								create.isPending
+							}
+							className="self-start"
+						>
+							{t("tokens.create")}
+						</Button>
+					</form>
+				)}
+				{(tokens.data?.length ?? 0) > 0 && (
+					<div className={PANEL}>
+						<h3 className="font-medium">{t("tokens.yours")}</h3>
+						<ul className="mt-2 flex flex-col divide-y divide-line">
+							{tokens.data?.map((token) => (
+								<li
+									key={token.id}
+									className="flex flex-wrap items-center justify-between gap-3 py-3"
+								>
+									<span className="flex min-w-0 flex-col gap-1">
+										<span className="font-medium break-all">{token.name}</span>
+										<TokenFacts token={token} />
+									</span>
+									<ConfirmButton
+										label={t("tokens.revoke")}
+										question={t("tokens.revokeQuestion", { name: token.name })}
+										confirm={t("tokens.revoke")}
+										disabled={revoke.isPending}
+										onConfirm={() => revoke.mutate(token.id)}
+									/>
+								</li>
+							))}
+						</ul>
+					</div>
+				)}
+				{error && <p className="text-sm text-danger">{explain(error)}</p>}
+			</CardContent>
+		</Card>
 	);
 }
