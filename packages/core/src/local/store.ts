@@ -38,6 +38,7 @@ import { GpuLock } from "./gpu";
 import { detectHardware } from "./hardware";
 import { LoraShelf } from "./loras";
 import { cleanUp, type Mirror, mirrorInto, treeSize, undo } from "./move";
+import { extractTarGz } from "./tar";
 import { extractZip } from "./zip";
 
 /** What moves with the models folder; the rest only matters for a moment. */
@@ -1237,7 +1238,10 @@ export class LocalModelStore {
 		try {
 			for (const file of build.files) {
 				install.controller.signal.throwIfAborted();
-				await extractZip(this.blob(file.sha256), tmp).catch(
+				const extract = /\.(tar\.gz|tgz)$/.test(file.name)
+					? extractTarGz
+					: extractZip;
+				await extract(this.blob(file.sha256), tmp).catch(
 					(error: unknown) => {
 						throw new CodedError(
 							error instanceof Error ? error.message : String(error),
