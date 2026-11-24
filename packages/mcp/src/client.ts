@@ -3,12 +3,21 @@ import type {
 	CreateTurnInput,
 	EngineEvent,
 	GalleryItem,
+	LocalModelEvent,
 	ModelSpec,
 	ProviderStatus,
 	Session,
+	TrainerEvent,
 	TurnView,
 } from "@hatchlight/core/types";
-import type { Reel, SessionDetail } from "@hatchlight/tools";
+import type { AssistantEvent, Reel, SessionDetail } from "@hatchlight/tools";
+
+/** What the server tells of: jobs, models, the trainer and the assistant. */
+export type ServerEvent =
+	| EngineEvent
+	| LocalModelEvent
+	| TrainerEvent
+	| AssistantEvent;
 
 /** An error the Hatchlight server answered with. */
 export class ServerError extends Error {
@@ -28,10 +37,10 @@ export class HatchlightClient implements Reel {
 	constructor(
 		readonly baseUrl: string,
 		// The global one: inside these parameters, `fetch` names this one.
-		private fetch: Fetch = (url, init) => globalThis.fetch(url, init),
+		protected fetch: Fetch = (url, init) => globalThis.fetch(url, init),
 	) {}
 
-	private async request<T>(path: string, init?: RequestInit): Promise<T> {
+	protected async request<T>(path: string, init?: RequestInit): Promise<T> {
 		const response = await this.fetch(`${this.baseUrl}${path}`, init);
 		if (!response.ok) {
 			const body = (await response.json().catch(() => null)) as {
@@ -44,11 +53,13 @@ export class HatchlightClient implements Reel {
 				body?.code ?? null,
 			);
 		}
-		if (response.status === 204) return undefined as T;
-		return (await response.json()) as T;
+		// Some answers carry nothing, such as 202 Accepted and 204 No Content.
+		const text = await response.text();
+		return (text ? JSON.parse(text) : undefined) as T;
 	}
 
-	private post = (path: string) => this.request<void>(path, { method: "POST" });
+	protected post = (path: string) =>
+		this.request<void>(path, { method: "POST" });
 
 	models = () => this.request<ModelSpec[]>("/api/models");
 	providers = () => this.request<ProviderStatus[]>("/api/providers");
@@ -96,7 +107,7 @@ export class HatchlightClient implements Reel {
 		this.post(`/api/jobs/${encodeURIComponent(id)}/retry`);
 
 	/** How jobs move, as the server tells it, until `signal` stops it. */
-	async *events(signal: AbortSignal): AsyncGenerator<EngineEvent> {
+	async *events(signal: AbortSignal): AsyncGenerator<ServerEvent> {
 		const response = await this.fetch(`${this.baseUrl}/api/events`, {
 			signal,
 		});
@@ -120,7 +131,8 @@ export class HatchlightClient implements Reel {
 						.join("\n");
 					if (!data) continue;
 					const event = JSON.parse(data) as { type?: string };
-					if (event.type?.startsWith("job.")) yield event as EngineEvent;
+					// The stream's own greetings carry no type.
+					if (typeof event.type === "string") yield event as ServerEvent;
 				}
 			}
 		} catch (error) {

@@ -1,83 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { FakeProvider } from "@hatchlight/core";
 import { picture } from "@hatchlight/core/testing";
-import { HatchlightClient } from "@hatchlight/mcp";
-import { createApp, createRuntime } from "@hatchlight/server";
 import { COMMANDS, EXIT, extension, parse, UsageError } from "./commands";
+import { cleanups, idsIn, terminal } from "./testing";
 
-const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
 	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
-
-/** A person at a terminal, using a real Hatchlight whose models are fakes. */
-async function terminal(options: { startedServer?: boolean } = {}) {
-	const dir = await mkdtemp(join(tmpdir(), "hatchlight-cli-"));
-	const provider = new FakeProvider();
-	const runtime = await createRuntime({
-		dataDir: join(dir, "data"),
-		providers: [provider],
-		localModels: [],
-		engines: [],
-	});
-	await runtime.start();
-	const app = createApp(runtime);
-	const url = "http://127.0.0.1:4096";
-	const api = new HatchlightClient(url, (target, init) =>
-		Promise.resolve(app.fetch(new Request(target, init))),
-	);
-	let stop = new AbortController();
-	const out: string[] = [];
-	const err: string[] = [];
-	const opened: string[] = [];
-	cleanups.push(async () => {
-		provider.gate = null;
-		await runtime.engine.idle();
-		runtime.close();
-		await rm(dir, { recursive: true });
-	});
-	const run = async (name: string, args: string[] = []) => {
-		out.length = 0;
-		err.length = 0;
-		const command = COMMANDS[name];
-		if (!command) throw new Error(`no ${name}`);
-		const { values, positionals } = parse(command, args);
-		return command.run(values, positionals, {
-			api,
-			url,
-			startedServer: options.startedServer ?? false,
-			pollMs: 5,
-			io: {
-				out: (line) => out.push(line),
-				err: (line) => err.push(line),
-				status: () => {},
-				cwd: dir,
-				signal: stop.signal,
-				open: (target) => opened.push(target),
-			},
-		});
-	};
-	const json = () => JSON.parse(out.join("\n"));
-	return {
-		run,
-		json,
-		out,
-		err,
-		opened,
-		dir,
-		provider,
-		interrupt: () => stop.abort(),
-		resetInterrupt: () => {
-			stop = new AbortController();
-		},
-	};
-}
-
-const idsIn = (lines: string[], prefix: string) =>
-	lines.join("\n").match(new RegExp(`${prefix}_[A-Za-z0-9_-]+`, "g")) ?? [];
 
 describe("models", () => {
 	test("lists what can be used, with what it costs", async () => {
