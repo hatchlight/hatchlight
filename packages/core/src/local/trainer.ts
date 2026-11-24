@@ -258,18 +258,68 @@ function seconds(text: string): number | null {
 	return parts.reduce((total, n) => total * 60 + n, 0);
 }
 
+/** The end of the run of `allowed` characters that starts at `from`. */
+function runEnd(line: string, from: number, allowed: string): number {
+	let end = from;
+	while (end < line.length && allowed.includes(line[end] ?? "")) end++;
+	return end;
+}
+
+const DIGITS = "0123456789";
+
+/**
+ * Reads " 80/800 [01:00<09:00" right after a "|": the step, the steps and the
+ * time left. Scanned by hand, so a long line cannot make it slow.
+ */
+function countsAt(
+	line: string,
+	from: number,
+): [step: string, steps: string, left: string] | null {
+	let at = runEnd(line, from, " \t");
+	const stepEnd = runEnd(line, at, DIGITS);
+	if (stepEnd === at || line[stepEnd] !== "/") return null;
+	const step = line.slice(at, stepEnd);
+	at = stepEnd + 1;
+	const stepsEnd = runEnd(line, at, DIGITS);
+	if (stepsEnd === at) return null;
+	const steps = line.slice(at, stepsEnd);
+	at = runEnd(line, stepsEnd, " \t");
+	if (line[at] !== "[") return null;
+	const spentEnd = runEnd(line, at + 1, `${DIGITS}:`);
+	if (spentEnd === at + 1 || line[spentEnd] !== "<") return null;
+	const leftEnd = runEnd(line, spentEnd + 1, `${DIGITS}:?`);
+	if (leftEnd === spentEnd + 1) return null;
+	return [step, steps, line.slice(spentEnd + 1, leftEnd)];
+}
+
+/** The counts after the first "steps:", trying each "|" in turn. */
+function stepsBar(line: string): [string, string, string] | null {
+	const start = line.indexOf("steps:");
+	if (start < 0) return null;
+	for (
+		let bar = line.indexOf("|", start);
+		bar >= 0;
+		bar = line.indexOf("|", bar + 1)
+	) {
+		const counts = countsAt(line, bar + 1);
+		if (counts) return counts;
+	}
+	return null;
+}
+
 /** Reads "steps:  10%|█  | 80/800 [01:00<09:00, 1.33it/s, …]". */
 export function trainingProgress(
 	line: string,
 ): { step: number; steps: number; secondsLeft: number | null } | null {
-	const match = line.match(/steps:.*?\|\s*(\d+)\/(\d+)\s*\[[\d:]+<([\d:?]+)/);
-	if (!match) return null;
-	const steps = Number(match[2]);
+	const bar = stepsBar(line);
+	if (!bar) return null;
+	const [step, total, left] = bar;
+	const steps = Number(total);
 	if (!(steps > 0)) return null;
 	return {
-		step: Math.min(Number(match[1]), steps),
+		step: Math.min(Number(step), steps),
 		steps,
-		secondsLeft: match[3]?.includes("?") ? null : seconds(match[3] ?? ""),
+		secondsLeft: left.includes("?") ? null : seconds(left),
 	};
 }
 

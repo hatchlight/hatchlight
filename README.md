@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/hatchlight/hatchlight/actions/workflows/ci.yml/badge.svg)](https://github.com/hatchlight/hatchlight/actions/workflows/ci.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/hatchlight/hatchlight/badge)](https://scorecard.dev/viewer/?uri=github.com/hatchlight/hatchlight)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/16935/badge)](https://www.bestpractices.dev/projects/16935)
 
 One interface for many image and video generation models. Open source, runs on
 your computer, and uses your own API keys or models that run on your own
