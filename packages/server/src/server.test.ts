@@ -1153,6 +1153,79 @@ test("signing out elsewhere can end the API tokens too", async () => {
 	expect((await call("/api/account", { who: owner })).status).toBe(200);
 });
 
+test("paid jobs hold their cost while they run, so limits hold against jobs at once", async () => {
+	const { call, setupOwner, invite, runtime, paid, userId } = await serverApp();
+	const owner = await setupOwner();
+	await call("/api/providers/paid/key", {
+		method: "PUT",
+		who: owner,
+		body: { key: "server-key" },
+	});
+	// Jobs run side by side, each for a while.
+	paid.maxConcurrency = 8;
+	paid.delayMs = 50;
+	const turns = (who: Who, n: number) =>
+		Promise.all(
+			Array.from({ length: n }, () =>
+				call("/api/turns", {
+					method: "POST",
+					who,
+					headers: "token" in who ? { origin: "" } : {},
+					body: { prompt: "x", modelIds: ["paid/alpha"] },
+				}),
+			),
+		);
+	/** What the jobs of `limited` ended with. */
+	const codes = async () => {
+		const sessions = (await (
+			await call("/api/sessions", { who: limited })
+		).json()) as { id: string }[];
+		const jobs = [];
+		for (const session of sessions) {
+			const detail = (await (
+				await call(`/api/sessions/${session.id}`, { who: limited })
+			).json()) as { turns: { jobs: { errorCode: string | null }[] }[] };
+			jobs.push(...detail.turns.flatMap((t) => t.jobs));
+		}
+		return jobs.map((j) => j.errorCode);
+	};
+
+	// A token with a 2.5 cent limit, five pictures at a cent at once: each
+	// that starts holds its cent, so three run and two are refused.
+	const limited = await invite(owner, { canUsePaid: true });
+	const { token, view } = runtime.accounts.createApiToken(
+		userId(limited.username),
+		{ name: "agent", scopes: ["generate", "paid"], spendLimitUsd: 0.025 },
+	);
+	await turns({ token }, 5);
+	await runtime.engine.idle();
+	expect(runtime.accounts.spentByToken(view.id)).toBeCloseTo(0.03);
+	expect((await codes()).filter((c) => c === "tokenLimitReached").length).toBe(
+		2,
+	);
+
+	// The same for a person's monthly limit, in a browser.
+	const monthly = await invite(owner, {
+		canUsePaid: true,
+		monthlyLimitUsd: 0.015,
+	});
+	await turns(monthly, 4);
+	await runtime.engine.idle();
+	expect(runtime.accounts.spentThisMonth(userId(monthly.username))).toBeCloseTo(
+		0.02,
+	);
+
+	// What fails lets go of what it held.
+	const other = runtime.accounts.createApiToken(userId(limited.username), {
+		name: "other",
+		scopes: ["generate", "paid"],
+	});
+	paid.failWith = "down";
+	await turns({ token: other.token }, 2);
+	await runtime.engine.idle();
+	expect(runtime.accounts.spentByToken(other.view.id)).toBe(0);
+});
+
 /** Who may call a route, by its access, signed in with a browser. */
 const MAY: Record<Access, string[]> = {
 	public: ["anonymous", "member", "trainer", "admin", "owner"],

@@ -210,6 +210,11 @@ export const spending = sqliteTable(
 		jobId: text("job_id"),
 		/** The API token it was spent through (its `ref`), if any. */
 		tokenId: text("token_id"),
+		/**
+		 * Held for a paid job or call under way, at its estimated cost: it
+		 * counts against limits until settled to what it cost, or released.
+		 */
+		pending: integer("pending", { mode: "boolean" }).notNull().default(false),
 		/** Whose key paid: monthly limits count the server's only. */
 		keySource: text("key_source")
 			.$type<KeySource>()

@@ -37,6 +37,12 @@ function isResumable(adapter: ProviderAdapter, handle: unknown): boolean {
 	return adapter.isResumable?.(handle) ?? adapter.resumable;
 }
 
+/**
+ * What a paid job or language call is held at while under way when its
+ * price is unknown: about what a picture or a long assistant step costs.
+ */
+export const DEFAULT_PAID_ESTIMATE_USD = 0.01;
+
 /** What a job cost going by the model's list price, when it has one. */
 function estimateCost(
 	model: ModelSpec,
@@ -215,6 +221,8 @@ export class JobEngine {
 
 	/** Picks up jobs left unfinished by a previous process. */
 	async start(): Promise<void> {
+		// What jobs held before a restart: those that go on hold it again.
+		await this.deps.repo.releasePendingSpending();
 		for (const job of await this.deps.repo.listUnfinishedJobs()) {
 			const adapter = this.deps.registry.adapter(job.providerId);
 			const canContinue =
@@ -393,6 +401,8 @@ export class JobEngine {
 		const adapter = registry.adapter(job.providerId);
 		const ctx: UserContext = { userId: job.userId };
 		let handle = job.handle;
+		// What a paid job holds of the limits while it runs.
+		let reservation: string | null = null;
 		let pctx = {
 			apiKey: undefined as string | undefined,
 			signal: controller.signal,
@@ -421,6 +431,24 @@ export class JobEngine {
 					)
 				: null;
 			if (refusal) throw paidError(refusal);
+			if (adapter.requiresKey) {
+				// Held at once, before anything else can start: jobs started
+				// together see each other's cost, so none goes far past a limit.
+				reservation = newId("spd");
+				await this.deps.repo.addSpending({
+					id: reservation,
+					userId: job.userId,
+					kind: "generation",
+					keySource,
+					tokenId: job.tokenId ?? null,
+					jobId,
+					costUsd:
+						estimateCost(model, job.params, job.params.count ?? 1) ??
+						DEFAULT_PAID_ESTIMATE_USD,
+					pending: true,
+					createdAt: Date.now(),
+				});
+			}
 			const apiKey = found?.key;
 			if (adapter.requiresKey && !apiKey) {
 				throw new CodedError(
@@ -516,7 +544,10 @@ export class JobEngine {
 								costUsd,
 							});
 							// Kept apart from the job, which can be deleted.
-							if (costUsd != null && costUsd > 0) {
+							if (reservation) {
+								await this.deps.repo.settleSpending(reservation, costUsd ?? 0);
+								reservation = null;
+							} else if (costUsd != null && costUsd > 0) {
 								await this.deps.repo.addSpending({
 									id: newId("spd"),
 									userId: job.userId,
@@ -590,6 +621,10 @@ export class JobEngine {
 				});
 			}
 		} finally {
+			// Failed or canceled: what it held is let go.
+			if (reservation) {
+				await this.deps.repo.releaseSpending(reservation).catch(() => {});
+			}
 			// Only this run's: a job tried again may already have its own.
 			if (this.controllers.get(jobId) === controller) {
 				this.controllers.delete(jobId);

@@ -16,6 +16,7 @@ import {
 	type ChatMessage,
 	type ChatModel,
 	type ChatReply,
+	DEFAULT_PAID_ESTIMATE_USD,
 	FakeProvider,
 	FileKeyStore,
 	FileSettingsStore,
@@ -182,7 +183,7 @@ class FakeChatModel implements ChatModel {
  * limit: more than a translation or a prompt costs, and about what a long
  * assistant step costs on the larger models.
  */
-export const LANGUAGE_CALL_USD = 0.01;
+export const LANGUAGE_CALL_USD = DEFAULT_PAID_ESTIMATE_USD;
 
 /** Another Hatchlight process is already using the data directory. */
 export class DataDirInUseError extends Error {}
@@ -764,18 +765,27 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		if (!refusePaid) return call();
 		const refusal = refusePaid(who, source);
 		if (refusal) throw paidError(refusal);
-		const result = await call();
+		// Held before the call, so calls made together see each other.
+		const id = newId("spd");
 		await repo.addSpending({
-			id: newId("spd"),
+			id,
 			userId: who.userId,
 			tokenId: who.tokenId ?? null,
 			kind: "language",
 			keySource: source,
 			jobId: null,
 			costUsd: LANGUAGE_CALL_USD,
+			pending: true,
 			createdAt: Date.now(),
 		});
-		return result;
+		try {
+			const result = await call();
+			await repo.settleSpending(id, LANGUAGE_CALL_USD);
+			return result;
+		} catch (error) {
+			await repo.releaseSpending(id);
+			throw error;
+		}
 	};
 	const cloudFor = async (
 		ctx: UserContext,
