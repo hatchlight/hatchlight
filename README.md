@@ -17,7 +17,7 @@
   <a href="https://www.bestpractices.dev/projects/16935"><img src="https://www.bestpractices.dev/projects/16935/badge" alt="OpenSSF Best Practices"></a>
 </p>
 
-![Hatchlight: a chat with the assistant, showing three takes of a fox in the snow from three models on this computer](.github/assets/chat.webp)
+![Hatchlight: one prompt sent to SDXL Turbo and Z-Image Turbo on this computer, both pictures forming side by side, each with its time (waits sped up)](.github/assets/compare.gif)
 
 Make pictures and videos with many AI models, side by side. Run them on your
 own graphics card for free, or use the services you already pay for with your
@@ -75,6 +75,8 @@ shows the same session with every setting. It asks before anything paid and
 keeps to a spend limit. Write in your own language: each model gets the prompt
 in the words it understands, and **Improve prompt** turns a short idea into a
 detailed one.
+
+![Hatchlight: a chat with the assistant, showing three takes of a fox in the snow from three models on this computer](.github/assets/chat.webp)
 
 ![The Advanced view: next-prompt settings on the left, results per model in the middle, the chosen picture on the right](.github/assets/advanced.webp)
 
