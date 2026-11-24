@@ -56,6 +56,11 @@ export interface JobEngineDeps {
 	assets: AssetStore;
 	registry: ProviderRegistry;
 	keys: KeyStore;
+	/**
+	 * Whether a person may use models that need a key, which spend money.
+	 * Everyone may when absent, as on a personal install.
+	 */
+	mayUsePaid?: (userId: string) => boolean;
 	/** Jobs running at once per provider. Defaults to 4. */
 	concurrencyPerProvider?: number;
 	/** The wait before the first try again; it doubles each time. */
@@ -323,6 +328,13 @@ export class JobEngine {
 					`Model is not available: ${job.modelId}`,
 					"modelUnavailable",
 					{ model: job.modelId },
+				);
+			}
+			if (adapter.requiresKey && this.deps.mayUsePaid?.(job.userId) === false) {
+				throw new CodedError(
+					`Paid models are not allowed for this account: ${adapter.name}`,
+					"paidNotAllowed",
+					{ provider: adapter.name },
 				);
 			}
 			const apiKey =

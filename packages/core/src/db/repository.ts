@@ -16,6 +16,7 @@ import {
 	type TurnView,
 	type UserContext,
 } from "../types";
+import { SqliteAccounts } from "./accounts";
 import * as schema from "./schema";
 
 export type JobPatch = Partial<
@@ -83,6 +84,11 @@ export class SqliteRepository implements Repository {
 
 	close(): void {
 		this.sqlite.close();
+	}
+
+	/** The accounts of a server, kept in the same database. */
+	accounts(): SqliteAccounts {
+		return new SqliteAccounts(this.sqlite);
 	}
 
 	async createSession(session: Session) {

@@ -63,4 +63,20 @@ export class FileSettingsStore implements SettingsStore {
 		this.pending = next.catch(() => {});
 		return next;
 	}
+
+	/** Gives `from`'s choices to `to`, unless `to` already made some. */
+	moveUser(from: string, to: string): Promise<void> {
+		const next = this.pending.then(async () => {
+			const data = await this.read();
+			if (!Object.hasOwn(data, from) || Object.hasOwn(data, to)) return;
+			data[to] = data[from] as Partial<Settings>;
+			delete data[from];
+			await mkdir(dirname(this.path), { recursive: true });
+			const tmp = `${this.path}.${crypto.randomUUID()}.tmp`;
+			await writeFile(tmp, JSON.stringify(data, null, 2));
+			await rename(tmp, this.path);
+		});
+		this.pending = next.catch(() => {});
+		return next;
+	}
 }

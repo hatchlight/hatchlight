@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { hostname as osHostname } from "node:os";
 import { join, resolve } from "node:path";
 import {
+	AccountService,
 	appEnv,
 	assistantChoice,
 	type Captioner,
@@ -17,6 +18,7 @@ import {
 	improvePrompt,
 	JobEngine,
 	type LanguageModel,
+	LOCAL_USER,
 	type LocalEngineSpec,
 	LocalEyes,
 	type LocalModelSpec,
@@ -24,11 +26,14 @@ import {
 	LocalProvider,
 	LocalTranslator,
 	legacyName,
+	mayUsePaid,
 	type ProviderAdapter,
 	ProviderRegistry,
 	promptStyle,
 	ReelService,
+	SERVER_KEYS,
 	type SettingsStore,
+	SharedKeyStore,
 	SqliteRepository,
 	Trainer,
 	type TrainerOptions,
@@ -48,6 +53,8 @@ import { Assistant, type Reel } from "@hatchlight/tools";
 
 export interface Runtime {
 	service: ReelService;
+	/** The people of a server; unused on a personal install. */
+	accounts: AccountService;
 	engine: JobEngine;
 	models: LocalModelStore;
 	/** Trains LoRAs on this computer. */
@@ -317,6 +324,11 @@ export interface RuntimeOptions {
 	checkEngine?: (executable: string) => Promise<string | null>;
 	/** Where the LoRA trainer is installed. Defaults to `trainer` in the data directory. */
 	trainerDir?: string;
+	/**
+	 * Several people share this server: keys become the server's, and only
+	 * those allowed may spend them.
+	 */
+	server?: boolean;
 	/** Stand-ins for the trainer's downloads and programs, in tests. */
 	trainerOptions?: Partial<
 		Pick<TrainerOptions, "fetch" | "run" | "freeMemory">
@@ -393,7 +405,25 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		options.migrationsDir,
 	);
 	const assets = new FsAssetStore(join(options.dataDir, "assets"));
-	const keys = new FileKeyStore(join(options.dataDir, "auth.json"));
+	const fileKeys = new FileKeyStore(join(options.dataDir, "auth.json"));
+	const settings = new FileSettingsStore(
+		join(options.dataDir, "settings.json"),
+	);
+	const accounts = new AccountService(repo.accounts(), {
+		// What the install had becomes the first owner's; its keys, the server's.
+		adoptLocal: async (ownerId) => {
+			await settings.moveUser(LOCAL_USER.userId, ownerId);
+			await fileKeys.moveUser(LOCAL_USER.userId, SERVER_KEYS.userId);
+		},
+	});
+	const paidAllowed = (userId: string) => {
+		const user = accounts.getUser(userId);
+		return user != null && user.disabledAt == null && mayUsePaid(user);
+	};
+	const mayPay = options.server ? paidAllowed : undefined;
+	const keys = options.server
+		? new SharedKeyStore(fileKeys, paidAllowed)
+		: fileKeys;
 	// Puts prompts into English for the models that read only English, once
 	// its model is installed.
 	const translatorModel = catalog.find((m) =>
@@ -420,13 +450,12 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	// moved: Windows does neither to an open file.
 	models.onLetGo(() => local.unloadIdle());
 	models.onLetGo(() => translator.stopAndWait());
-	const settings = new FileSettingsStore(
-		join(options.dataDir, "settings.json"),
-	);
 	// One per service and key, so the jobs of a turn share a translation.
 	const clouds = new Map<string, CloudTranslator>();
 	const keyFor = async (ctx: UserContext, service: CloudTranslatorId) => {
 		const adapter = registry.adapter(service);
+		// A key from the environment is the server's too.
+		if (mayPay?.(ctx.userId) === false) return undefined;
 		return (
 			(await keys.get(ctx, service)) ??
 			(adapter?.keyEnv ? process.env[adapter.keyEnv] : undefined)
@@ -498,6 +527,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		assets,
 		registry,
 		keys,
+		mayUsePaid: mayPay,
 		translator: translatorFor,
 	});
 	const service = new ReelService({ repo, assets, registry, keys, engine });
@@ -524,6 +554,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	});
 	return {
 		service,
+		accounts,
 		engine,
 		models,
 		trainer,

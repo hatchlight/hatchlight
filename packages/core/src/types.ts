@@ -21,6 +21,53 @@ export interface UserContext {
 
 export const LOCAL_USER: UserContext = { userId: "local" };
 
+/** What a person may do on a server: everything, run it, or use it. */
+export const USER_ROLES = ["owner", "admin", "member"] as const;
+export type UserRole = (typeof USER_ROLES)[number];
+
+/** A person's account on a server, as the interface sees it. */
+export interface AccountView {
+	id: string;
+	username: string;
+	displayName: string;
+	role: UserRole;
+	/** May spend on paid models with the server's keys. */
+	canUsePaid: boolean;
+	/** May train LoRAs and add them. */
+	canTrain: boolean;
+	/** Most they may spend in a month, in dollars; null for no limit. */
+	monthlyLimitUsd: number | null;
+	/** Signs in with a code from an authenticator app too. */
+	totp: boolean;
+	/** Signed in with a temporary password, which must be changed first. */
+	mustChangePassword: boolean;
+	disabled: boolean;
+	createdAt: number;
+}
+
+/** A browser someone is signed in on. */
+export interface AuthSessionView {
+	id: string;
+	createdAt: number;
+	lastSeenAt: number;
+	userAgent: string | null;
+	ip: string | null;
+	/** The browser asking. */
+	current: boolean;
+}
+
+/** A link that lets someone make an account. */
+export interface InviteView {
+	id: string;
+	role: UserRole;
+	canUsePaid: boolean;
+	canTrain: boolean;
+	monthlyLimitUsd: number | null;
+	expiresAt: number;
+	createdAt: number;
+	usedAt: number | null;
+}
+
 /** How much a redrawn picture changes when nobody said. */
 export const DEFAULT_STRENGTH = 0.7;
 /**

@@ -82,4 +82,46 @@ export class FileKeyStore implements KeyStore {
 			? Object.keys(data[ctx.userId] ?? {})
 			: [];
 	}
+
+	/** Gives `from`'s keys to `to`, keeping any `to` already has. */
+	async moveUser(from: string, to: string): Promise<void> {
+		if (isPrototypeName(from) || isPrototypeName(to)) return;
+		await this.change((data) => {
+			if (!Object.hasOwn(data, from)) return;
+			data[to] = { ...data[from], ...data[to] };
+			delete data[from];
+		});
+	}
+}
+
+/** Where a server keeps its keys: they are the server's, not one person's. */
+export const SERVER_KEYS: UserContext = { userId: "server" };
+
+/**
+ * A server's keys: set by its owners, used by everyone allowed to spend on
+ * paid models, and by nobody else.
+ */
+export class SharedKeyStore implements KeyStore {
+	constructor(
+		private inner: KeyStore,
+		private mayUse: (userId: string) => boolean,
+	) {}
+
+	async get(ctx: UserContext, providerId: string) {
+		return this.mayUse(ctx.userId)
+			? this.inner.get(SERVER_KEYS, providerId)
+			: undefined;
+	}
+
+	set(_ctx: UserContext, providerId: string, key: string) {
+		return this.inner.set(SERVER_KEYS, providerId, key);
+	}
+
+	delete(_ctx: UserContext, providerId: string) {
+		return this.inner.delete(SERVER_KEYS, providerId);
+	}
+
+	async list(ctx: UserContext) {
+		return this.mayUse(ctx.userId) ? this.inner.list(SERVER_KEYS) : [];
+	}
 }

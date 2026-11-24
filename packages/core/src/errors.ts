@@ -7,6 +7,10 @@ export type ErrorParams = Record<string, string | number>;
 export const ERROR_CODES = [
 	"assetNotFound",
 	"assistantBusy",
+	"badCredentials",
+	"badPassword",
+	"badSetupCode",
+	"badTotp",
 	"captionNeedsModel",
 	"checkpointMissing",
 	"checkpointNeedsEngine",
@@ -32,11 +36,14 @@ export const ERROR_CODES = [
 	"folderNotAbsolute",
 	"folderNotShared",
 	"folderNotWritable",
+	"forbidden",
 	"hashMismatch",
 	"improveFailed",
 	"interrupted",
+	"inviteInvalid",
 	"jobNotFound",
 	"jobNotRetryable",
+	"lastOwner",
 	"localAssistantUnavailable",
 	"loraMissing",
 	"loraTooLarge",
@@ -51,6 +58,7 @@ export const ERROR_CODES = [
 	"modelsMoveLeftCopies",
 	"modelsMoving",
 	"modelUnavailable",
+	"monthlyLimitReached",
 	"needsPicture",
 	"noApiKey",
 	"noConnection",
@@ -62,6 +70,9 @@ export const ERROR_CODES = [
 	"notEnoughDisk",
 	"notInstalled",
 	"notOnServer",
+	"paidNotAllowed",
+	"passwordChangeRequired",
+	"passwordTooShort",
 	"providerBusy",
 	"referenceNotFound",
 	"referenceNotImage",
@@ -70,8 +81,11 @@ export const ERROR_CODES = [
 	"resultNotHttps",
 	"resultTooLarge",
 	"sessionNotFound",
+	"signInRequired",
+	"tooManyAttempts",
 	"tooManyLoras",
 	"tooManyReferences",
+	"totpRequired",
 	"trainerBusy",
 	"trainerInstallFailed",
 	"trainerMissing",
@@ -90,6 +104,8 @@ export const ERROR_CODES = [
 	"unknownProvider",
 	"unknownVariant",
 	"uploadType",
+	"usernameInvalid",
+	"usernameTaken",
 	"variantDoesNotRun",
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -128,6 +144,21 @@ export interface Retry {
 export class ValidationError extends CodedError {}
 
 export class NotFoundError extends CodedError {}
+
+/**
+ * Who is asking may not: 401 when nobody is signed in or the sign-in failed,
+ * 403 when the person may not do this, 429 when they tried too often.
+ */
+export class AccessError extends CodedError {
+	constructor(
+		message: string,
+		code: ErrorCode,
+		readonly status: 401 | 403 | 429,
+		params: ErrorParams = {},
+	) {
+		super(message, code, params);
+	}
+}
 
 /** What to tell a person about an error: its message, and a code when known. */
 export function describeError(error: unknown): {

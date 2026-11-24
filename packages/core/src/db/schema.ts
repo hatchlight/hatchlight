@@ -1,9 +1,11 @@
+import { sql } from "drizzle-orm";
 import {
 	index,
 	integer,
 	real,
 	sqliteTable,
 	text,
+	uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 import type { ErrorParams } from "../errors";
 import type {
@@ -11,6 +13,7 @@ import type {
 	AssistantEntryBody,
 	GenerationParams,
 	JobStatus,
+	UserRole,
 } from "../types";
 
 export const sessions = sqliteTable(
@@ -104,4 +107,78 @@ export const messages = sqliteTable(
 		createdAt: integer("created_at").notNull(),
 	},
 	(t) => [index("messages_session_created").on(t.sessionId, t.createdAt)],
+);
+
+/** People who may use a server. A personal install has none. */
+export const users = sqliteTable(
+	"users",
+	{
+		id: text("id").primaryKey(),
+		username: text("username").notNull(),
+		displayName: text("display_name").notNull(),
+		passwordHash: text("password_hash").notNull(),
+		role: text("role").$type<UserRole>().notNull(),
+		canUsePaid: integer("can_use_paid", { mode: "boolean" }).notNull(),
+		canTrain: integer("can_train", { mode: "boolean" }).notNull(),
+		monthlyLimitUsd: real("monthly_limit_usd"),
+		totpSecret: text("totp_secret"),
+		/** Set by a reset: the next sign-in must choose a new password. */
+		mustChangePassword: integer("must_change_password", { mode: "boolean" })
+			.notNull()
+			.default(false),
+		disabledAt: integer("disabled_at"),
+		createdAt: integer("created_at").notNull(),
+	},
+	(t) => [uniqueIndex("users_username").on(sql`lower(${t.username})`)],
+);
+
+/** Signed-in browsers. The id is the SHA-256 of the cookie's token. */
+export const authSessions = sqliteTable(
+	"auth_sessions",
+	{
+		id: text("id").primaryKey(),
+		userId: text("user_id")
+			.notNull()
+			.references(() => users.id, { onDelete: "cascade" }),
+		createdAt: integer("created_at").notNull(),
+		lastSeenAt: integer("last_seen_at").notNull(),
+		expiresAt: integer("expires_at").notNull(),
+		userAgent: text("user_agent"),
+		ip: text("ip"),
+	},
+	(t) => [index("auth_sessions_user").on(t.userId)],
+);
+
+/** Links that let someone make an account. The id is the token's SHA-256. */
+export const invites = sqliteTable("invites", {
+	id: text("id").primaryKey(),
+	role: text("role").$type<UserRole>().notNull(),
+	canUsePaid: integer("can_use_paid", { mode: "boolean" }).notNull(),
+	canTrain: integer("can_train", { mode: "boolean" }).notNull(),
+	monthlyLimitUsd: real("monthly_limit_usd"),
+	expiresAt: integer("expires_at").notNull(),
+	createdBy: text("created_by")
+		.notNull()
+		.references(() => users.id, { onDelete: "cascade" }),
+	createdAt: integer("created_at").notNull(),
+	usedBy: text("used_by").references(() => users.id, { onDelete: "set null" }),
+	usedAt: integer("used_at"),
+});
+
+/** Tokens programs use instead of a browser session. The id is the SHA-256. */
+export const apiTokens = sqliteTable(
+	"api_tokens",
+	{
+		id: text("id").primaryKey(),
+		userId: text("user_id")
+			.notNull()
+			.references(() => users.id, { onDelete: "cascade" }),
+		name: text("name").notNull(),
+		scopes: text("scopes", { mode: "json" }).$type<string[]>().notNull(),
+		spendLimitUsd: real("spend_limit_usd"),
+		createdAt: integer("created_at").notNull(),
+		lastUsedAt: integer("last_used_at"),
+		expiresAt: integer("expires_at"),
+	},
+	(t) => [index("api_tokens_user").on(t.userId)],
 );
