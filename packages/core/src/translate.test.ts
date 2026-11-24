@@ -26,6 +26,8 @@ describe("a prompt plainly in English", () => {
 			"een kat of een hond",
 			"en katt under bordet",
 			"kot to zwierze",
+			"gatto nero in cucina a mezzanotte",
+			"cachorro correndo a praia, estilo anime, by pixar",
 			"",
 		]) {
 			expect(plainlyEnglish(other)).toBe(false);

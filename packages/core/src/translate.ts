@@ -49,6 +49,18 @@ const ENGLISH_GLUE = new Set(
 );
 
 /**
+ * The connecting words no other language of prompts uses: "a", "in", "no",
+ * "as" or "by" also read as Italian or Portuguese, or sit in a prompt as a
+ * style tag ("by pixar"), so one of these must be there too.
+ */
+const ONLY_ENGLISH = new Set(
+	(
+		"the of with and from into onto through across between while behind " +
+		"above below their this that these those wearing holding"
+	).split(" "),
+);
+
+/**
  * Words of up to three letters that English prompts use. A short word not
  * here is most often another language's ("sob", "het", "een", "bir", "sa"),
  * so the prompt goes to the translator.
@@ -82,8 +94,8 @@ const OTHER_WORDS = new Set(
 /**
  * Whether a prompt is plainly in English already, so it needs no translator.
  * Its words of up to three letters must all be English, at least two of its
- * words must be English's small connecting words, and they must be a fair
- * share of it. When unsure it says no, and the translator decides: sending
+ * words must be English's small connecting words, a fair share of it, and
+ * one of those must be a word no other language uses. When unsure it says no, and the translator decides: sending
  * another language to a model that reads only English is the costly mistake.
  */
 export function plainlyEnglish(prompt: string): boolean {
@@ -96,7 +108,11 @@ export function plainlyEnglish(prompt: string): boolean {
 	if (words.some((w) => w.length <= 3 && !ENGLISH_SHORT.has(w))) return false;
 	if (words.some((w) => OTHER_WORDS.has(w))) return false;
 	const glue = words.filter((w) => ENGLISH_GLUE.has(w)).length;
-	return glue >= 2 && glue / words.length >= 0.2;
+	return (
+		glue >= 2 &&
+		glue / words.length >= 0.2 &&
+		words.some((w) => ONLY_ENGLISH.has(w))
+	);
 }
 
 /**
