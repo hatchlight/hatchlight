@@ -190,7 +190,15 @@ your shell; its `--help` says where to put it.
 or Claude Desktop, make pictures and videos with your models: list them,
 generate and compare, redraw a picture, upscale it, and search and save from
 your gallery. In the app, **Settings → Use with AI agents** connects Claude
-Desktop for you and shows the command for Claude Code. From a source checkout:
+Desktop for you and shows the command for Claude Code. Without the app, the
+[npm package](https://www.npmjs.com/package/hatchlight) runs on
+[Bun](https://bun.sh):
+
+```sh
+claude mcp add hatchlight -- bunx hatchlight mcp
+```
+
+From a source checkout:
 
 ```sh
 claude mcp add hatchlight -- bun "$PWD/packages/cli/src/index.ts" mcp

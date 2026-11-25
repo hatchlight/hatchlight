@@ -452,21 +452,33 @@ export async function agentsSetup(options: {
 	home?: string;
 	/** The program that runs Hatchlight; this one by default. */
 	program?: string;
+	/**
+	 * Set when this is the npm package. bunx runs it from a temporary folder
+	 * that can be cleared, so agents start it with bunx too, by this name.
+	 */
+	npmPackage?: string;
 }): Promise<AgentsSetup> {
 	const env = options.env ?? process.env;
 	const platform = options.platform ?? process.platform;
 	const home = options.home ?? env.HOME ?? env.USERPROFILE ?? "";
 	const compiled = /\$bunfs|~BUN/.test(Bun.main);
 	// Agents start it from anywhere: every path is made whole.
-	const code: Launch = {
-		command: options.program ?? process.execPath,
-		args: [
-			...(compiled ? [] : [Bun.main]),
-			"mcp",
-			...(options.dataDir ? ["--data-dir", resolve(options.dataDir)] : []),
-			...(options.resources ? ["--resources", resolve(options.resources)] : []),
-		],
-	};
+	const dataDir = options.dataDir
+		? ["--data-dir", resolve(options.dataDir)]
+		: [];
+	const code: Launch = options.npmPackage
+		? { command: "bunx", args: [options.npmPackage, "mcp", ...dataDir] }
+		: {
+				command: options.program ?? process.execPath,
+				args: [
+					...(compiled ? [] : [Bun.main]),
+					"mcp",
+					...dataDir,
+					...(options.resources
+						? ["--resources", resolve(options.resources)]
+						: []),
+				],
+			};
 	// The places it was told to keep things go with it, under the new
 	// names even when they were set under the old ones.
 	const kept = Object.fromEntries(

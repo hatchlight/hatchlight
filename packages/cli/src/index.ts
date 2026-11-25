@@ -11,7 +11,6 @@ import {
 	defaultTrainerDir,
 	MAX_CHECKPOINT_BYTES,
 	modelsLocationFile,
-	plainPath,
 	SecretError,
 	writeServerInfo,
 } from "@hatchlight/core";
@@ -29,6 +28,7 @@ import {
 } from "@hatchlight/server";
 import { COMMANDS, commandList } from "./commands";
 import { openInBrowser } from "./launcher";
+import { resourcesDir } from "./resources";
 
 const [first, ...rest] = process.argv.slice(2);
 
@@ -143,7 +143,7 @@ if (parentPid != null && !(Number.isInteger(parentPid) && parentPid > 0)) {
 	process.exit(1);
 }
 
-const resources = values.resources ? plainPath(values.resources) : undefined;
+const resources = resourcesDir(values.resources);
 
 // A compiled binary has no source tree around it, so it is told where things are.
 const WEB_DIST = resources
@@ -197,7 +197,12 @@ const app = createApp({
 		: undefined,
 	loraQuota: config.loraQuota ?? undefined,
 	agents: new Agents(() =>
-		agentsSetup({ dataDir: values["data-dir"], resources }),
+		agentsSetup(
+			// The npm package finds its own resources; agents run it by name.
+			!values.resources && resources
+				? { dataDir: values["data-dir"], npmPackage: "hatchlight" }
+				: { dataDir: values["data-dir"], resources },
+		),
 	),
 });
 
