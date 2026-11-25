@@ -402,6 +402,8 @@ export interface LocalProviderOptions {
 
 /** How long a job waits for the reading of free graphics memory. */
 const MEMORY_READ_MS = 1_500;
+/** Readings of free graphics memory tried while Hatchlight's own changes. */
+const MEMORY_READINGS = 2;
 
 /** `promise`'s value, null after `ms`, or a throw of the reason when aborted. */
 function withinMs<T>(
@@ -915,8 +917,11 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 			try {
 				// A model kept loaded may have been unloaded for this job: until
 				// its engine exits, its memory is Hatchlight's, not other programs'.
-				const released = this.warm ? await this.warm.unloading(ctx.signal) : 0;
-				yield* this.warnIfSlow(runtime, ctx.signal, released);
+				const warm = this.warm;
+				if (warm) await warm.unloading(ctx.signal);
+				yield* this.warnIfSlow(runtime, ctx.signal, () =>
+					warm ? warm.unloadedBytes : 0,
+				);
 				yield* this.once(runtime, handle, ctx, output, path, references, mask);
 			} finally {
 				hold.release();
@@ -930,36 +935,44 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 	 * Says so when other programs leave too little graphics memory for the
 	 * model, which would then spill over to the computer's and run many times
 	 * slower. Called once the job holds the GPU, so what Hatchlight's own jobs
-	 * use is accounted for: another Hatchlight's reservations, and the model
-	 * this process unloaded and whose engine is still exiting (`released`),
-	 * are not other programs; this process's other holds are in use and not
-	 * counted as free. A reservation that cannot be read gives no warning. The reading
-	 * is given a moment and ends with a cancel; it never delays a job longer.
+	 * use is accounted for: another Hatchlight's reservations, and the models
+	 * this process unloaded whose engines are still exiting (`released`), are
+	 * not other programs; this process's other holds are in use and not
+	 * counted as free. When an engine exits during a reading, the reading may
+	 * or may not show its memory freed, so it is read again; a reading that
+	 * stays unsure, like a reservation that cannot be read, gives no warning.
+	 * Each reading is given a moment and ends with a cancel.
 	 */
 	private async *warnIfSlow(
 		runtime: LocalRuntime,
 		signal: AbortSignal,
-		released: number,
+		released: () => number = () => 0,
 	): AsyncIterable<ProviderEvent> {
 		if (runtime.fit !== "gpu") return;
-		const memory = await withinMs(
-			this.freeMemory().catch(() => null),
-			signal,
-			MEMORY_READ_MS,
-		);
-		const busyBytes = busyGpuMemory(
-			memory,
-			runtime.variant.memoryBytes,
-			released + (await this.store.gpu.othersReserved()),
-		);
-		if (busyBytes != null) {
-			yield {
-				type: "progress",
-				message:
-					"Other programs are using graphics memory, so this may be slow",
-				stage: "lowMemory",
-				busyBytes,
-			};
+		for (let reading = 1; reading <= MEMORY_READINGS; reading++) {
+			const before = released();
+			const memory = await withinMs(
+				this.freeMemory().catch(() => null),
+				signal,
+				MEMORY_READ_MS,
+			);
+			const own = released();
+			if (own !== before) continue;
+			const busyBytes = busyGpuMemory(
+				memory,
+				runtime.variant.memoryBytes,
+				own + (await this.store.gpu.othersReserved()),
+			);
+			if (busyBytes != null) {
+				yield {
+					type: "progress",
+					message:
+						"Other programs are using graphics memory, so this may be slow",
+					stage: "lowMemory",
+					busyBytes,
+				};
+			}
+			return;
 		}
 	}
 

@@ -238,8 +238,8 @@ describe("warm engines", () => {
 		const signal = new AbortController().signal;
 		const seen: [string, number, number][] = [];
 		const acquired = (name: string) =>
-			async function* (released: number): AsyncIterable<ProviderEvent> {
-				seen.push([name, released, gpu.reserved]);
+			async function* (released: () => number): AsyncIterable<ProviderEvent> {
+				seen.push([name, released(), gpu.reserved]);
 				yield { type: "progress", message: name };
 			};
 		await collect(
@@ -285,7 +285,7 @@ describe("warm engines", () => {
 				signal,
 				5 * GB,
 				async function* (released) {
-					seen.push([released, servers.started.length]);
+					seen.push([released(), servers.started.length]);
 					yield { type: "progress", message: "loading" };
 				},
 			),
@@ -320,7 +320,7 @@ describe("warm engines", () => {
 				signal,
 				5 * GB,
 				async function* (released) {
-					seen.push(released);
+					seen.push(released());
 					yield { type: "progress", message: "loading" };
 				},
 			),
@@ -377,6 +377,52 @@ describe("warm engines", () => {
 		warm.stop();
 		await Bun.sleep(60);
 		expect(await warm.unloading()).toBe(0);
+		gpu.close();
+	});
+
+	test("an unloaded model's memory stays reserved until its engine exits", async () => {
+		const root = await mkdtemp(join(tmpdir(), "hatchlight-gpu-"));
+		roots.push(root);
+		const GB = 2 ** 30;
+		const gpu = new GpuLock({ root, capacity: async () => 12 * GB });
+		const warm = new WarmEngines({
+			spawn: fakeServers({ exitMs: 50 }).spawn,
+			fetch: fakeApi().fetch,
+			freePort: async () => 4242,
+			idleMs: 60_000,
+			gpu,
+		});
+		const signal = new AbortController().signal;
+		await collect(warm.run("a", ["sd-server"], request, signal, 4 * GB));
+		warm.stop();
+		expect(warm.loaded).toBeNull();
+		expect(gpu.reserved).toBe(4 * GB);
+		await Bun.sleep(60);
+		expect(gpu.reserved).toBe(0);
+		gpu.close();
+	});
+
+	test("an engine that does not exit gives its reservation back after a moment", async () => {
+		const root = await mkdtemp(join(tmpdir(), "hatchlight-gpu-"));
+		roots.push(root);
+		const GB = 2 ** 30;
+		const gpu = new GpuLock({ root, capacity: async () => 12 * GB });
+		const warm = new WarmEngines({
+			spawn: fakeServers({ exitMs: Infinity }).spawn,
+			fetch: fakeApi().fetch,
+			freePort: async () => 4242,
+			idleMs: 60_000,
+			exitWaitMs: 20,
+			gpu,
+		});
+		const signal = new AbortController().signal;
+		await collect(warm.run("a", ["sd-server"], request, signal, 4 * GB));
+		warm.stop();
+		expect(gpu.reserved).toBe(4 * GB);
+		await Bun.sleep(40);
+		expect(gpu.reserved).toBe(0);
+		// Still counted as taken: the engine has not exited.
+		expect(warm.unloadedBytes).toBe(4 * GB);
 		gpu.close();
 	});
 

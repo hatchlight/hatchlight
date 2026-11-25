@@ -201,20 +201,34 @@ export class WarmEngines {
 		return { key, url, stop: () => child.kill(), exited: child.exited };
 	}
 
-	/** Unloads the model, freeing the GPU's memory. */
+	/**
+	 * Unloads the model, freeing the GPU's memory. Its reservation stays until
+	 * the engine has exited, or for a moment at most, so that no job loads its
+	 * model into memory still taken.
+	 */
 	stop(): void {
 		clearTimeout(this.idle);
+		const hold = this.hold;
 		if (this.running) {
 			const { exited } = this.running;
 			this.exiting.set(exited, this.held);
+			const release = () => {
+				clearTimeout(timer);
+				hold?.release();
+			};
+			const timer = setTimeout(release, this.exitWaitMs);
+			// Giving it back never keeps Hatchlight running.
+			timer.unref?.();
 			void exited.then(() => {
 				this.exiting.delete(exited);
 				this.overdue.delete(exited);
+				release();
 			});
 			this.running.stop();
+		} else {
+			hold?.release();
 		}
 		this.running = null;
-		this.hold?.release();
 		this.hold = null;
 		this.held = 0;
 	}
@@ -250,7 +264,7 @@ export class WarmEngines {
 	}
 
 	/** The GPU memory engines of unloaded models hold until they exit. */
-	private get unloadedBytes(): number {
+	get unloadedBytes(): number {
 		let bytes = 0;
 		for (const held of this.exiting.values()) bytes += held;
 		return bytes;
@@ -276,9 +290,9 @@ export class WarmEngines {
 		bytes = 0,
 		/**
 		 * Runs once this job holds the GPU's memory and is about to load its
-		 * model, given the bytes the model unloaded for it was holding.
+		 * model, given how to tell the bytes models unloaded for it still hold.
 		 */
-		acquired?: (released: number) => AsyncIterable<ProviderEvent>,
+		acquired?: (released: () => number) => AsyncIterable<ProviderEvent>,
 	): AsyncIterable<ProviderEvent> {
 		clearTimeout(this.idle);
 		this.busy++;
@@ -299,8 +313,8 @@ export class WarmEngines {
 					});
 					this.held = bytes;
 				}
-				// Counted again: an engine may have exited while this job waited.
-				if (acquired) yield* acquired(this.unloadedBytes);
+				// Counted when asked: an engine may exit at any time.
+				if (acquired) yield* acquired(() => this.unloadedBytes);
 				yield {
 					type: "progress",
 					message: "Loading the model",
