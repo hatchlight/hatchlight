@@ -8,12 +8,12 @@
 		"url": "https://github.com/hatchlight/hatchlight",
 		"source": "github"
 	},
-	"version": "0.5.0",
+	"version": "0.6.0",
 	"packages": [
 		{
 			"registryType": "npm",
 			"identifier": "hatchlight",
-			"version": "0.5.0",
+			"version": "0.6.0",
 			"runtimeHint": "bunx",
 			"transport": { "type": "stdio" },
 			"packageArguments": [{ "type": "positional", "value": "mcp" }]
