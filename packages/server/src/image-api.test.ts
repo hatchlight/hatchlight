@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { crc32, deflateSync } from "node:zlib";
@@ -109,7 +109,7 @@ async function setup() {
 			headers: { "content-type": "application/json", ...headers },
 			body: typeof body === "string" ? body : JSON.stringify(body),
 		});
-	return { app, call, post, runtime, fake, paid };
+	return { app, call, post, runtime, fake, paid, root };
 }
 
 test("an OpenAI client makes pictures, as PNG, in a session for its app", async () => {
@@ -329,6 +329,15 @@ test("img2img redraws a picture, with a mask read either way round", async () =>
 	// The mid-grey mask reads as white; inverted, all of it is kept.
 	const mask = await maskPixels(fake.submitted[0]?.mask ?? new Uint8Array());
 	expect(mask.white.some(Boolean)).toBe(false);
+	// Clients send the flag as true as well as 1.
+	await post("/sdapi/v1/img2img", {
+		prompt: "make it gold",
+		init_images: [image],
+		mask: Buffer.from(picture(8, 4)).toString("base64"),
+		inpainting_mask_invert: true,
+	});
+	const again = await maskPixels(fake.submitted[1]?.mask ?? new Uint8Array());
+	expect(again.white.some(Boolean)).toBe(false);
 
 	expect(
 		(await post("/sdapi/v1/img2img", { prompt: "x", init_images: [] })).status,
@@ -417,7 +426,7 @@ test("paid models are refused until the person lets other apps use them", async 
 	expect(
 		(await post("/sdapi/v1/options", { sd_model_checkpoint: "paid/alpha" }))
 			.status,
-	).toBe(403);
+	).toBe(400);
 
 	const turnedOn = await call("/api/settings", {
 		method: "PUT",
@@ -533,4 +542,197 @@ test("sizes map to the nearest ratio a model offers", () => {
 	expect(nearestRatio(ratios, 1536, 1024)).toBe("4:3");
 	expect(nearestRatio([], 1024, 1024)).toBeUndefined();
 	expect(nearestRatio(ratios, undefined, undefined)).toBeUndefined();
+});
+
+test("requests at once are counted before any of them waits", async () => {
+	const { call, post, fake } = await setup();
+	fake.gate = new Promise(() => {});
+	const asks = Array.from({ length: 17 }, () =>
+		post("/v1/images/generations", { prompt: "a crowd" }),
+	);
+	// Sixteen wait on your own computer; the one more is refused at once.
+	const refused = await Promise.race(asks);
+	expect(refused.status).toBe(429);
+	// Jobs under way, whether running or queued behind the ones running.
+	const count = async () =>
+		(
+			(await (await call("/sdapi/v1/progress")).json()) as {
+				state: { job_count: number };
+			}
+		).state.job_count;
+	while ((await count()) < 16) await Bun.sleep(5);
+	expect(fake.submitted.length).toBeGreaterThan(0);
+	expect((await post("/sdapi/v1/interrupt", {})).status).toBe(200);
+	const statuses = (await Promise.all(asks)).map((r) => r.status).sort();
+	expect(statuses).toEqual([429, ...Array(16).fill(502)]);
+	expect(await (await call("/sdapi/v1/progress")).json()).toMatchObject({
+		state: { job_count: 0 },
+	});
+});
+
+test("pictures and masks larger than models make are refused before decoding", async () => {
+	const { call } = await setup();
+	const edit = (image: Uint8Array, mask?: Uint8Array) => {
+		const form = new FormData();
+		form.append("image", new Blob([image]), "a.png");
+		if (mask) form.append("mask", new Blob([mask]), "mask.png");
+		form.append("prompt", "x");
+		return call("/v1/images/edits", { method: "POST", body: form });
+	};
+	for (const response of [
+		await edit(picture(8, 4), halfTransparent(4097, 1)),
+		await edit(picture(4097, 1)),
+	]) {
+		expect(response.status).toBe(400);
+		expect(
+			((await response.json()) as { error: { message: string } }).error.message,
+		).toBe("A picture may be at most 4096 pixels on a side");
+	}
+});
+
+test("a mask is never dropped silently", async () => {
+	const { call } = await setup();
+	const edit = (model: string | null, images: number) => {
+		const form = new FormData();
+		for (let i = 0; i < images; i++) {
+			form.append("image[]", new Blob([picture(8, 4)]), `${i}.png`);
+		}
+		form.append("mask", new Blob([halfTransparent(8, 4)]), "mask.png");
+		form.append("prompt", "x");
+		if (model) form.append("model", model);
+		return call("/v1/images/edits", { method: "POST", body: form });
+	};
+	const code = async (response: Response) =>
+		((await response.json()) as { error: { code: string } }).error.code;
+	const unmasked = await edit("fake/beta", 1);
+	expect(unmasked.status).toBe(400);
+	expect(await code(unmasked)).toBe("noMask");
+	const several = await edit(null, 2);
+	expect(several.status).toBe(400);
+	expect(await code(several)).toBe("maskWithoutReference");
+});
+
+test("a saved paid model is never the default, even with paid models on", async () => {
+	const { call, post, fake, paid } = await setup();
+	const put = (body: unknown) =>
+		call("/api/settings", {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		});
+	await call("/api/providers/paid/key", {
+		method: "PUT",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ key: "k" }),
+	});
+	expect(
+		(await put({ otherAppsPaid: true, otherAppsModel: "paid/alpha" })).status,
+	).toBe(200);
+	await post("/v1/images/generations", { prompt: "x", model: "dall-e-3" });
+	expect(paid.submitted).toHaveLength(0);
+	expect(fake.submitted.map((s) => s.model)).toEqual(["fake/alpha"]);
+	// It can be set back to automatic, and only to a model that exists.
+	expect(await (await put({ otherAppsModel: null })).json()).toMatchObject({
+		otherAppsModel: null,
+	});
+	expect((await put({ otherAppsModel: "nope/x" })).status).toBe(400);
+});
+
+test("seeds wrap at 32 bits, and A1111's info says only what was used", async () => {
+	const { post, runtime } = await setup();
+	await post("/v1/images/generations", {
+		prompt: "x",
+		n: 3,
+		seed: 2 ** 32 - 1,
+	});
+	const [session] = await runtime.service.listSessions({ userId: "local" });
+	const detail = await runtime.service.getSession(
+		{ userId: "local" },
+		session?.id ?? "",
+	);
+	expect(detail.turns.map((t) => t.jobs[0]?.params.seed)).toEqual([
+		2 ** 32 - 1,
+		1,
+	]);
+
+	const made = await post("/sdapi/v1/txt2img", {
+		prompt: "y",
+		width: 1024,
+		height: 576,
+		steps: 30,
+		cfg_scale: 9,
+	});
+	const info = JSON.parse(((await made.json()) as { info: string }).info) as {
+		steps: unknown;
+		cfg_scale: unknown;
+		sampler_name: unknown;
+		width: number;
+		height: number;
+	};
+	expect([info.steps, info.cfg_scale, info.sampler_name]).toEqual([
+		null,
+		null,
+		null,
+	]);
+	// The fake makes small pictures: the size made, not the size asked.
+	expect(info.width / info.height).toBeCloseTo(16 / 9, 1);
+	expect(info.width).toBeLessThan(1024);
+});
+
+test("apps share one session past twenty, and a deleted one is made again", async () => {
+	const { call, post } = await setup();
+	for (let i = 0; i < 21; i++) {
+		await post(
+			"/v1/images/generations",
+			{ prompt: "x" },
+			{ "user-agent": `app${i}/1.0` },
+		);
+	}
+	const titles = async () =>
+		(await (await call("/api/sessions")).json()) as {
+			id: string;
+			title: string;
+		}[];
+	const listed = await titles();
+	expect(listed.filter((s) => s.title.startsWith("Image API: "))).toHaveLength(
+		20,
+	);
+	expect(listed.filter((s) => s.title === "Image API")).toHaveLength(1);
+
+	const app0 = listed.find((s) => s.title === "Image API: app0");
+	await call(`/api/sessions/${app0?.id}`, { method: "DELETE" });
+	await post(
+		"/v1/images/generations",
+		{ prompt: "x" },
+		{ "user-agent": "app0/1.0" },
+	);
+	const again = (await titles()).find((s) => s.title === "Image API: app0");
+	expect(again?.id).toBeDefined();
+	expect(again?.id).not.toBe(app0?.id);
+});
+
+test("pictures uploaded for a turn that could not be made are removed", async () => {
+	const { call, root } = await setup();
+	const files = async () =>
+		(
+			await readdir(join(root, "assets"), { recursive: true }).catch(() => [])
+		).filter((name) => /(^|\/)[0-9a-f]{64}$/.test(String(name))).length;
+	const before = await files();
+	const form = new FormData();
+	form.append("image", new Blob([picture(8, 4)]), "a.png");
+	form.append("prompt", "x");
+	// This model takes no pictures: the turn is refused after the upload.
+	form.append("model", "fake/beta");
+	const refused = await call("/v1/images/edits", {
+		method: "POST",
+		body: form,
+	});
+	expect(refused.status).toBe(400);
+	expect(await files()).toBe(before);
+	// What is counted: one that works keeps its picture and what it made.
+	form.set("model", "fake/alpha");
+	expect(
+		(await call("/v1/images/edits", { method: "POST", body: form })).status,
+	).toBe(200);
+	expect(await files()).toBeGreaterThan(before);
 });

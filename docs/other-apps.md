@@ -44,22 +44,30 @@ text there, such as `hatchlight`.
 4. Set the **model** to a Hatchlight model id, such as `local/sdxl-turbo`, or
    leave what is there: an unknown model gets the [default](#models).
 
-If Open WebUI runs in Docker on the same computer, `localhost` is the
-container itself: Hatchlight on your own computer cannot be reached from
-there, because it answers only this computer. Run Hatchlight
-[as a server](self-hosting.md) to share it with containers and other
-machines.
+Open WebUI usually runs in Docker. A container reaches the computer it runs
+on from another address (`host.docker.internal` or the Docker bridge), and
+Hatchlight on your own computer refuses every address but this computer's
+own. Either:
+
+- run the Open WebUI container with `--network=host`, so it shares this
+  computer's network, and use `http://localhost:4096/v1`; or
+- run Hatchlight [as a server](self-hosting.md), which takes requests from
+  other addresses, and give Open WebUI a [token](#on-a-server) as its key.
+
+The same goes for any app in a container, SillyTavern included.
 
 ## SillyTavern
 
 1. Open **Extensions > Image Generation**.
 2. Choose **Stable Diffusion WebUI (AUTOMATIC1111)** as the source.
 3. Set the URL to the AUTOMATIC1111 address, without `/v1`, and connect.
-4. Choose a model from the list: it is kept as the default for every app.
+4. Choose a model from the list: a free one is kept as the default for every
+   app. A paid one cannot be the default: see [Models](#models).
 
-Samplers, steps and the CFG scale that SillyTavern shows are accepted and
-left to Hatchlight, which sets them for each model. A negative prompt is
-ignored: Hatchlight's models take only what to make.
+The sampler, steps and CFG scale SillyTavern sends are ignored: each model
+runs with its own settings, the ones it was made for (or, for a model you
+added, the ones set in **Models**). A negative prompt is ignored too:
+Hatchlight's models take only what to make.
 
 ## LibreChat
 
@@ -114,10 +122,16 @@ model may also be named without `local/`, or by its name, when only one
 matches.
 
 When an app names no model, or one Hatchlight does not have (such as
-`dall-e-3`), it gets the default: the model last chosen through
-AUTOMATIC1111's options (as SillyTavern's model list does), or else the best
-free model installed for the job. The default is always free; a paid model is
-used only when an app names it.
+`dall-e-3`, which Open WebUI sends unless told otherwise), it gets the
+default: the free model last chosen through AUTOMATIC1111's options (as
+SillyTavern's model list does), or else the best free model installed for the
+job. **Settings > Use with other apps** shows which, and sets it back to the
+best free model.
+
+The default is always free. A paid model is used only when the request names
+it: `model` in OpenAI's API, `override_settings.sd_model_checkpoint` in
+AUTOMATIC1111's. Choosing a paid model through `POST /sdapi/v1/options` is
+refused, since requests that name no model never spend.
 
 Sizes such as `1792x1024` become the nearest shape the model makes, here
 16:9: models make pictures at the sizes they were trained for.
@@ -129,10 +143,10 @@ are left in the prompt as they are.
 ## Paid models
 
 Other apps use only free models until you turn on **Also let them use
-paid models, on your keys** in **Settings > Use with other apps**. Then a paid
-model is used when an app names it, and costs what it costs in the app. On a
-server, the monthly limit set for each person and the token's own spending
-limit apply too.
+paid models** in **Settings > Use with other apps**. Then a paid model is used
+when a request names it, and costs what it costs in the app. On a server,
+your own key pays if you have one, else the server's, and the monthly limit
+set for each person and the token's own spending limit apply too.
 
 ## On a server
 
@@ -149,6 +163,10 @@ ask for an API key. A token needs:
 Wrong tokens are slowed down, as on `/mcp`. What a token makes lands in its
 person's gallery, within their storage.
 
+With `response_format: "url"`, the link points to the picture on the server,
+which answers only with a token too: fetch it with the same
+`Authorization: Bearer <token>` header, from a token with the **read** scope.
+
 ## What is answered, and the limits
 
 OpenAI's API:
@@ -158,15 +176,18 @@ OpenAI's API:
   on this Hatchlight), and `seed`, which OpenAI does not have. `quality` and
   `style` are ignored.
 - `POST /v1/images/edits`: the same, as a form with one or more `image` files
-  and an optional `mask` (transparent where to change), for models that can.
+  and an optional `mask` (transparent where to change). A mask needs one
+  picture and a model that redraws only part of one; otherwise the request
+  is refused, rather than redrawing all of it.
 - `GET /v1/models`.
 
 AUTOMATIC1111's API:
 
 - `POST /sdapi/v1/txt2img` and `POST /sdapi/v1/img2img` (with `init_images`,
   `mask`, `inpainting_mask_invert` and `denoising_strength`), which answer
-  `images`, `parameters` and `info` with the seed used. `seed: -1` is a new
-  seed each time.
+  `images`, `parameters` and `info` with the seed used and the size made.
+  `seed: -1` is a new seed each time. `steps`, `cfg_scale` and
+  `sampler_name` are ignored, and `info` gives them as `null`.
 - `GET /sdapi/v1/sd-models`, `GET` and `POST /sdapi/v1/options` (only
   `sd_model_checkpoint` is kept), `GET /sdapi/v1/loras`, `/samplers`,
   `/schedulers`, `/upscalers`, `/sd-vae`, `GET /sdapi/v1/progress` and
@@ -174,9 +195,14 @@ AUTOMATIC1111's API:
 
 Limits:
 
-- A local model makes one picture at a time: requests from several apps wait
-  their turn, and each waits up to 15 minutes for its pictures. An app that
-  gives up cancels what it asked for.
-- Each picture sent may be up to 20 MB.
+- A local model makes one picture at a time: requests wait their turn, and
+  each waits up to 15 minutes for its pictures. An app that gives up cancels
+  what it asked for.
+- At most 16 requests wait at once on your own computer, from all apps
+  together; on a server, 4 for each token. One more is refused with
+  `429 Too Many Requests` until one ends.
+- Each picture sent may be up to 20 MB and 4096 pixels on a side.
+- Each app gets its own session, up to 20 apps; the rest share one called
+  "Image API".
 - Paid models are off for other apps until you turn them on.
 - On a server, every call needs a token.

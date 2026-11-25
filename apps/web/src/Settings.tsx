@@ -672,12 +672,17 @@ function OtherApps() {
 	const server = useServerMode();
 	const client = useQueryClient();
 	const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
+	const models = useQuery({ queryKey: ["models"], queryFn: api.models });
 	const choose = useMutation({
-		mutationFn: (otherAppsPaid: boolean) => api.saveSettings({ otherAppsPaid }),
+		mutationFn: (change: Partial<Choices>) => api.saveSettings(change),
 		onSuccess: (saved) => client.setQueryData(["settings"], saved),
 	});
 	const origin = window.location.origin;
 	const error = choose.error ?? settings.error;
+	const chosen = settings.data?.otherAppsModel ?? null;
+	const chosenName = chosen
+		? (models.data?.find((m) => m.id === chosen)?.name ?? chosen)
+		: null;
 	return (
 		<Card className={SECTION}>
 			<SectionHeader
@@ -689,10 +694,30 @@ function OtherApps() {
 					<Switch
 						checked={settings.data?.otherAppsPaid ?? false}
 						disabled={!settings.data || choose.isPending}
-						onCheckedChange={(checked) => choose.mutate(checked)}
+						onCheckedChange={(checked) =>
+							choose.mutate({ otherAppsPaid: checked })
+						}
 					/>
-					{t("settings.otherAppsPaid")}
+					{server
+						? t("settings.otherAppsPaidServer")
+						: t("settings.otherAppsPaid")}
 				</Label>
+				<div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+					<span className="text-dim">
+						{chosenName
+							? t("settings.otherAppsModel", { name: chosenName })
+							: t("settings.otherAppsModelAuto")}
+					</span>
+					{chosen && (
+						<Button
+							variant="outline"
+							disabled={choose.isPending}
+							onClick={() => choose.mutate({ otherAppsModel: null })}
+						>
+							{t("settings.otherAppsModelReset")}
+						</Button>
+					)}
+				</div>
 				<div className="grid gap-3 md:grid-cols-2">
 					<div className={PANEL}>
 						<h3 className="font-medium">{t("settings.otherAppsOpenAi")}</h3>
@@ -714,6 +739,9 @@ function OtherApps() {
 						? t("settings.otherAppsKeyServer")
 						: t("settings.otherAppsKeyLocal")}
 				</p>
+				{!server && (
+					<p className="text-sm text-dim">{t("settings.otherAppsDocker")}</p>
+				)}
 				{error && <p className="text-sm text-danger">{explain(error)}</p>}
 			</CardContent>
 		</Card>

@@ -1,8 +1,12 @@
 import { crc32, deflateSync, inflateSync } from "node:zlib";
 import { ValidationError } from "@hatchlight/core";
 
-/** Larger than any picture a model makes, small enough to decode safely. */
-const MAX_PIXELS = 64 * 1024 * 1024;
+/**
+ * The longest side a picture given to the image APIs may have: more than
+ * the models make (SDXL and FLUX make 1024 to 2048), and at most 64 MB of
+ * pixels once decoded.
+ */
+export const MAX_SIDE = 4096;
 
 const SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
@@ -60,12 +64,24 @@ function unfilter(data: Uint8Array, stride: number, height: number) {
 	return out;
 }
 
+/**
+ * Refuses a picture larger than MAX_SIDE, from its header alone, before
+ * anything decodes it. One that cannot be read is left to whoever reads it.
+ */
+export async function assertPictureSize(data: Uint8Array): Promise<void> {
+	const size = await new Bun.Image(data).metadata().catch(() => null);
+	if (size && (size.width > MAX_SIDE || size.height > MAX_SIDE)) {
+		throw new ValidationError(
+			`A picture may be at most ${MAX_SIDE} pixels on a side`,
+		);
+	}
+}
+
 /** Reads any picture Bun can open, through PNG, as 8-bit RGBA pixels. */
 async function pixels(data: Uint8Array): Promise<Pixels> {
+	await assertPictureSize(data);
 	let png: Uint8Array;
 	try {
-		const size = await new Bun.Image(data).metadata();
-		if (size.width * size.height > MAX_PIXELS) throw unreadable();
 		// Bun writes every PNG as 8-bit RGBA, not interlaced.
 		png = await new Bun.Image(data).png().bytes();
 	} catch (error) {

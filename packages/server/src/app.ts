@@ -1120,6 +1120,18 @@ export function createApp(options: AppOptions): Hono {
 		) {
 			throw new ValidationError("otherAppsPaid must be true or false");
 		}
+		const { otherAppsModel } = body;
+		if (
+			otherAppsModel !== undefined &&
+			otherAppsModel !== null &&
+			!service
+				.listModels()
+				.some((m) => m.id === otherAppsModel && m.media === "image")
+		) {
+			throw new ValidationError(
+				"otherAppsModel must be an image model's id, or null",
+			);
+		}
 		if (body.improveWith !== undefined && !isImproveWith(body.improveWith)) {
 			throw new ValidationError(
 				`improveWith must be one of ${IMPROVE_WITH.join(", ")}`,
@@ -1146,6 +1158,9 @@ export function createApp(options: AppOptions): Hono {
 				}),
 				...(typeof body.otherAppsPaid === "boolean" && {
 					otherAppsPaid: body.otherAppsPaid,
+				}),
+				...(otherAppsModel !== undefined && {
+					otherAppsModel: otherAppsModel as string | null,
 				}),
 			}),
 		);

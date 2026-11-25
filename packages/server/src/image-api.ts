@@ -3,6 +3,7 @@ import {
 	type AccountService,
 	type Asset,
 	type JobEngine,
+	type JobView,
 	type KeySource,
 	type LocalModelStore,
 	MAX_LORAS,
@@ -15,7 +16,6 @@ import {
 	type Settings,
 	type SettingsStore,
 	TERMINAL_STATUSES,
-	type TurnView,
 	type UserContext,
 	ValidationError,
 } from "@hatchlight/core";
@@ -26,7 +26,7 @@ import { matchedRoutes } from "hono/route";
 import { routeAccess, routeScope } from "./access";
 import { allows } from "./auth";
 import type { Limiter } from "./limiter";
-import { hatchlightMask } from "./masks";
+import { assertPictureSize, hatchlightMask } from "./masks";
 import type { ServerTransport } from "./transport";
 
 /** The largest picture one may give, as for uploads in the app. */
@@ -41,8 +41,14 @@ const MAX_PROMPT_LENGTH = 32_000;
 const MAX_COUNT = 8;
 /** OpenAI takes up to 16 pictures to edit. */
 const MAX_PICTURES = 16;
-/** Requests one caller may have waiting at once. */
+/** Requests one API token may have waiting at once, on a server. */
 const MAX_WAITING = 4;
+/** On a personal install every app asks as the one person: room for several. */
+const MAX_WAITING_PERSONAL = 16;
+/** Apps that get a session of their own; more share the generic one. */
+const MAX_APP_SESSIONS = 20;
+/** Seeds are 32-bit: one past the last wraps around to 0. */
+const SEEDS = 2 ** 32;
 /** A video model takes minutes; a picture should never take this long. */
 const WAIT_MS = 15 * 60_000;
 
@@ -145,10 +151,17 @@ export function nearestRatio(
 /** A `<lora:name:weight>` tag, as AUTOMATIC1111 prompts carry them. */
 const LORA_TAG = /<lora:([^:<>]{1,100})(?::([^:<>]{0,20}))?>/gi;
 
+/**
+ * What sessions made through these APIs are called: a product label, like
+ * an app's name, and so the same in every language, as the session titles
+ * people write are.
+ */
+const SESSION_TITLE = "Image API";
+
 /** The session pictures from an app land in, named after the app. */
 function sessionTitle(agent: string | undefined): string {
 	const app = agent?.match(/^[A-Za-z][\w.-]{0,39}/)?.[0];
-	return app ? `Image API: ${app}` : "Image API";
+	return app ? `${SESSION_TITLE}: ${app}` : SESSION_TITLE;
 }
 
 const openAiError = (status: number, message: string, code: string | null) => ({
@@ -338,7 +351,8 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 
 	/**
 	 * The model to use: the one named, if Hatchlight has it; else the one
-	 * chosen for other apps; else the best free one installed that can.
+	 * chosen for other apps, if it is free; else the best free one installed
+	 * that can. A paid model is used only when the request names it.
 	 */
 	async function choose(
 		c: Context,
@@ -360,29 +374,25 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 			await assertMayPay(c, ctx, asked);
 			return asked.model;
 		}
-		// The one chosen for other apps, while it can still be used.
-		const saved = (await settingsOf(ctx)).otherAppsModel;
-		const kept = saved ? named(await usable(c, ctx), saved) : undefined;
-		if (kept && fits(kept.model, pictures)) {
-			await assertMayPay(c, ctx, kept);
-			return kept.model;
-		}
-		// Otherwise only free models: an app never spends unless told to.
+		const can = (m: ModelSpec) =>
+			fits(m, pictures) && (!masked || m.capabilities.mask != null);
+		// Unnamed, only free models: Open WebUI, for one, sends "dall-e-3"
+		// whatever the person meant, and must never spend by it.
 		const free = all
 			.filter((e) => ready(e.provider) && !e.provider.requiresKey)
-			.map((e) => e.model)
-			.filter((m) => fits(m, pictures));
-		const withMask = free.filter((m) => m.capabilities.mask != null);
-		const best =
-			(masked ? bestLocalModel(withMask, pictures) : undefined) ??
-			bestLocalModel(free, pictures) ??
-			(masked ? withMask[0] : undefined) ??
-			free[0];
+			.map((e) => e.model);
+		const saved = (await settingsOf(ctx)).otherAppsModel;
+		const kept = saved ? free.find((m) => m.id === saved) : undefined;
+		if (kept && can(kept)) return kept;
+		const fitting = free.filter(can);
+		const best = bestLocalModel(fitting, pictures) ?? fitting[0];
 		if (!best) {
 			throw new ValidationError(
-				pictures > 0
-					? "No installed model can start from a picture. Install one in Hatchlight"
-					: "No model is installed. Install one in Hatchlight's Models",
+				masked
+					? "No installed model can redraw only part of a picture. Install one in Hatchlight"
+					: pictures > 0
+						? "No installed model can start from a picture. Install one in Hatchlight"
+						: "No model is installed. Install one in Hatchlight's Models",
 				"noModel",
 			);
 		}
@@ -422,20 +432,29 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 	/** Each app's session, by person and title, once found or made. */
 	const sessions = new Map<string, Promise<string>>();
 	async function sessionFor(c: Context, ctx: UserContext): Promise<string> {
-		const title = sessionTitle(c.req.header("user-agent"));
-		const key = `${ctx.userId}\n${title}`;
+		const wanted = sessionTitle(c.req.header("user-agent"));
+		const key = `${ctx.userId}\n${wanted}`;
 		const known = sessions.get(key);
 		if (known) {
 			const id = await known.catch(() => null);
 			// The person may have deleted it since.
-			if (id && (await service.getSession(ctx, id).then(Boolean, () => false)))
-				return id;
+			if (id && (await service.hasSession(ctx, id))) return id;
 		}
 		const found = (async () => {
-			const old = (await service.listSessions(ctx)).find(
-				(s) => s.title === title,
-			);
-			return old?.id ?? (await service.startSession(ctx, title)).id;
+			const all = await service.listSessions(ctx);
+			const old = all.find((s) => s.title === wanted);
+			if (old) return old.id;
+			// Any program can call itself anything: past so many apps, the
+			// rest share one session instead of filling the list.
+			const apps = all.filter((s) =>
+				s.title.startsWith(`${SESSION_TITLE}: `),
+			).length;
+			const title =
+				wanted !== SESSION_TITLE && apps >= MAX_APP_SESSIONS
+					? SESSION_TITLE
+					: wanted;
+			const shared = all.find((s) => s.title === title);
+			return shared?.id ?? (await service.startSession(ctx, title)).id;
 		})();
 		sessions.set(key, found);
 		return found;
@@ -445,15 +464,15 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 	const working = new Map<string, { jobs: Set<string>; waiting: number }>();
 	const callerOf = (ctx: UserContext) => `${ctx.userId}\n${ctx.tokenId ?? ""}`;
 
-	/** Waits until these turns end, the client goes away, or too long passes. */
+	/** Waits until these jobs end, the client goes away, or too long passes. */
 	function settled(
 		ctx: UserContext,
-		sessionId: string,
-		turnIds: string[],
-		jobIds: Set<string>,
+		jobIds: string[],
 		signal: AbortSignal,
-	): Promise<TurnView[] | "aborted" | "timeout"> {
+	): Promise<JobView[] | "aborted" | "timeout"> {
 		return new Promise((resolve, reject) => {
+			// Each job as last seen, from its events.
+			const seen = new Map<string, JobView>();
 			let over = false;
 			const stop = () => {
 				over = true;
@@ -461,43 +480,52 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 				unsubscribe();
 				signal.removeEventListener("abort", onAbort);
 			};
-			const end = (value: TurnView[] | "aborted" | "timeout") => {
+			const end = (value: JobView[] | "aborted" | "timeout") => {
 				if (over) return;
 				stop();
 				resolve(value);
 			};
-			const look = async () => {
-				try {
-					const { turns } = await service.getSession(ctx, sessionId);
-					const mine = turns.filter((t) => turnIds.includes(t.id));
-					if (
-						mine.length === turnIds.length &&
-						mine.every((t) => t.jobs.every((j) => isTerminal(j.status)))
-					) {
-						end(mine);
-					}
-				} catch (error) {
-					if (over) return;
-					stop();
-					reject(error);
+			const check = () => {
+				const jobs = jobIds.flatMap((id) => seen.get(id) ?? []);
+				if (
+					jobs.length === jobIds.length &&
+					jobs.every((j) => isTerminal(j.status))
+				) {
+					end(jobs);
 				}
 			};
 			const unsubscribe = engine.subscribe((target, event) => {
 				if (
 					target === ctx.userId &&
 					event.type === "job.updated" &&
-					jobIds.has(event.job.id) &&
-					isTerminal(event.job.status)
+					jobIds.includes(event.job.id)
 				) {
-					void look();
+					seen.set(event.job.id, event.job);
+					check();
 				}
 			});
 			const onAbort = () => end("aborted");
 			signal.addEventListener("abort", onAbort);
 			const timer = setTimeout(() => end("timeout"), waitMs);
-			if (signal.aborted) onAbort();
-			// What ended before the subscription is seen here.
-			else void look();
+			if (signal.aborted) {
+				onAbort();
+				return;
+			}
+			// What ended before the subscription is seen here, once.
+			void Promise.all(jobIds.map((id) => service.getJob(ctx, id))).then(
+				(jobs) => {
+					for (const job of jobs) {
+						const later = seen.get(job.id);
+						if (!later || !isTerminal(later.status)) seen.set(job.id, job);
+					}
+					check();
+				},
+				(error) => {
+					if (over) return;
+					stop();
+					reject(error);
+				},
+			);
 		});
 	}
 
@@ -505,8 +533,9 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 	async function make(c: Context, ask: Ask): Promise<Made | Response> {
 		const ctx = user(c);
 		const caller = callerOf(ctx);
-		const mine = working.get(caller) ?? { jobs: new Set(), waiting: 0 };
-		if (mine.waiting >= MAX_WAITING) {
+		// Counted before anything waits, so requests at once see each other.
+		const mine = working.get(caller) ?? { jobs: new Set<string>(), waiting: 0 };
+		if (mine.waiting >= (accounts ? MAX_WAITING : MAX_WAITING_PERSONAL)) {
 			throw new AccessError(
 				"Too many pictures under way for this app. Try again shortly",
 				"tooManyAttempts",
@@ -514,6 +543,27 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 				{ seconds: 5 },
 			);
 		}
+		mine.waiting++;
+		working.set(caller, mine);
+		const jobIds: string[] = [];
+		try {
+			return await makeCounted(c, ctx, ask, mine, jobIds);
+		} finally {
+			mine.waiting--;
+			for (const id of jobIds) mine.jobs.delete(id);
+			if (mine.waiting === 0 && working.get(caller) === mine) {
+				working.delete(caller);
+			}
+		}
+	}
+
+	async function makeCounted(
+		c: Context,
+		ctx: UserContext,
+		ask: Ask,
+		mine: { jobs: Set<string> },
+		jobIds: string[],
+	): Promise<Made | Response> {
 		const model = await choose(
 			c,
 			ctx,
@@ -521,111 +571,115 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 			ask.pictures.length,
 			ask.mask != null,
 		);
+		// A mask marks one picture, for a model that redraws only part.
+		if (ask.mask && model.capabilities.mask == null) {
+			throw new ValidationError(
+				`${model.name} cannot redraw only part of a picture`,
+				"noMask",
+				{ model: model.name },
+			);
+		}
+		if (ask.mask && ask.pictures.length !== 1) {
+			throw new ValidationError(
+				"A mask needs exactly one reference image to redraw",
+				"maskWithoutReference",
+			);
+		}
 		const { prompt, loras } = await withLoras(ask.prompt, model);
 		if (!prompt) throw new ValidationError("prompt must be some words");
+		for (const picture of ask.pictures) await assertPictureSize(picture);
+
+		const uploaded: string[] = [];
 		const upload = async (data: Uint8Array) => {
 			const full = accounts?.storageRefusal(ctx.userId, data.byteLength);
 			if (full) throw full;
-			return (await service.uploadAsset(ctx, data)).id;
+			const { id } = await service.uploadAsset(ctx, data);
+			uploaded.push(id);
+			return id;
 		};
-		const references: string[] = [];
-		for (const picture of ask.pictures) references.push(await upload(picture));
-		// A mask marks one picture, for a model that redraws only part.
-		const mask =
-			ask.mask && model.capabilities.mask != null && references.length === 1
-				? await upload(ask.mask)
-				: undefined;
-		const sessionId = await sessionFor(c, ctx);
+		const cancel = () =>
+			Promise.all(
+				jobIds.map((id) => service.cancelJob(ctx, id).catch(() => {})),
+			);
 		const aspectRatio = nearestRatio(
 			model.capabilities.aspectRatios,
 			ask.width,
 			ask.height,
 		);
-
 		// A model makes so many at once; more come in more turns.
 		const per = Math.max(1, model.capabilities.maxCount);
-		const turns: TurnView[] = [];
-		mine.waiting++;
-		working.set(caller, mine);
-		const jobIds = new Set<string>();
-		const cancel = () =>
-			Promise.all(
-				[...jobIds].map((id) => service.cancelJob(ctx, id).catch(() => {})),
-			);
 		try {
-			try {
-				for (let made = 0; made < ask.count; made += per) {
-					const { turn } = await service.createTurn(ctx, {
-						sessionId,
-						modelIds: [model.id],
-						prompt,
-						count: Math.min(per, ask.count - made),
-						referenceAssetIds: references,
-						...(aspectRatio && { aspectRatio }),
-						...(ask.seed != null && { seed: ask.seed + made }),
-						...(mask && { maskAssetId: mask }),
-						...(ask.strength != null && { strength: ask.strength }),
-						...(loras.length > 0 && { loras }),
-					});
-					turns.push(turn);
-					for (const job of turn.jobs) {
-						jobIds.add(job.id);
-						mine.jobs.add(job.id);
-					}
+			const references: string[] = [];
+			for (const picture of ask.pictures) {
+				references.push(await upload(picture));
+			}
+			const mask = ask.mask ? await upload(ask.mask) : undefined;
+			const sessionId = await sessionFor(c, ctx);
+			for (let made = 0; made < ask.count; made += per) {
+				const { turn } = await service.createTurn(ctx, {
+					sessionId,
+					modelIds: [model.id],
+					prompt,
+					count: Math.min(per, ask.count - made),
+					referenceAssetIds: references,
+					...(aspectRatio && { aspectRatio }),
+					...(ask.seed != null && { seed: (ask.seed + made) % SEEDS }),
+					...(mask && { maskAssetId: mask }),
+					...(ask.strength != null && { strength: ask.strength }),
+					...(loras.length > 0 && { loras }),
+				});
+				for (const job of turn.jobs) {
+					jobIds.push(job.id);
+					mine.jobs.add(job.id);
 				}
-			} catch (error) {
-				await cancel();
-				throw error;
 			}
-			const result = await settled(
-				ctx,
-				sessionId,
-				turns.map((t) => t.id),
-				jobIds,
-				c.req.raw.signal,
-			);
-			if (result === "aborted") {
-				// The app gave up: nobody would see what it asked for.
-				await cancel();
-				return new Response(null, { status: 499 });
-			}
-			if (result === "timeout") {
-				return failure(
-					504,
-					"It is taking too long to wait for. It goes on, and lands in Hatchlight's gallery",
+		} catch (error) {
+			await cancel();
+			// Pictures given for a turn never made would only fill the gallery.
+			if (jobIds.length === 0) {
+				await Promise.all(
+					uploaded.map((id) => service.deleteAsset(ctx, id).catch(() => {})),
 				);
 			}
-			const jobs = result.flatMap((t) => t.jobs);
-			const assets = jobs.flatMap((job) =>
-				job.status === "succeeded"
-					? job.assets
-							.filter((a) => a.mime.startsWith("image/"))
-							.map((asset) => ({
-								asset,
-								...(job.params.translatedPrompt && {
-									revisedPrompt: job.params.translatedPrompt,
-								}),
-							}))
-					: [],
-			);
-			if (assets.length === 0) {
-				const failed = jobs.find((j) => j.status === "failed");
-				return failure(
-					502,
-					failed?.error ?? "Nothing was made",
-					failed?.errorCode,
-				);
-			}
-			return {
-				model,
-				assets,
-				costUsd: jobs.reduce((sum, j) => sum + (j.costUsd ?? 0), 0),
-			};
-		} finally {
-			mine.waiting--;
-			for (const id of jobIds) mine.jobs.delete(id);
-			if (mine.waiting === 0) working.delete(caller);
+			throw error;
 		}
+		const jobs = await settled(ctx, jobIds, c.req.raw.signal);
+		if (jobs === "aborted") {
+			// The app gave up: nobody would see what it asked for.
+			await cancel();
+			return new Response(null, { status: 499 });
+		}
+		if (jobs === "timeout") {
+			return failure(
+				504,
+				"It is taking too long to wait for. It goes on, and lands in Hatchlight's gallery",
+			);
+		}
+		const assets = jobs.flatMap((job) =>
+			job.status === "succeeded"
+				? job.assets
+						.filter((a) => a.mime.startsWith("image/"))
+						.map((asset) => ({
+							asset,
+							...(job.params.translatedPrompt && {
+								revisedPrompt: job.params.translatedPrompt,
+							}),
+						}))
+				: [],
+		);
+		if (assets.length === 0) {
+			const failed = jobs.find((j) => j.status === "failed");
+			return failure(
+				502,
+				failed?.error ?? "Nothing was made",
+				failed?.errorCode,
+			);
+		}
+		return {
+			model,
+			assets,
+			costUsd: jobs.reduce((sum, j) => sum + (j.costUsd ?? 0), 0),
+		};
 	}
 
 	/** A picture made, as PNG: what both APIs' clients expect. */
@@ -806,7 +860,16 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 		const images: string[] = [];
 		for (const { asset } of made.assets) images.push(await png(ctx, asset));
 		const used = made.model.capabilities.seed ? (seed ?? -1) : -1;
-		const seeds = images.map((_, i) => (used >= 0 ? used + i : -1));
+		const seeds = images.map((_, i) => (used >= 0 ? (used + i) % SEEDS : -1));
+		// The size made, which is the model's nearest to the one asked.
+		const size = await (async () => {
+			const first = made.assets[0];
+			if (!first) return null;
+			const { blob } = await service.getAssetFile(ctx, first.asset.id);
+			return new Bun.Image(await blob.arrayBuffer())
+				.metadata()
+				.catch(() => null);
+		})();
 		const prompt = typeof body.prompt === "string" ? body.prompt : "";
 		return c.json({
 			images,
@@ -819,11 +882,12 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 				all_seeds: seeds,
 				subseed: -1,
 				all_subseeds: seeds.map(() => -1),
-				width: body.width ?? 512,
-				height: body.height ?? 512,
-				sampler_name: body.sampler_name ?? "Euler a",
-				cfg_scale: body.cfg_scale ?? 7,
-				steps: body.steps ?? 20,
+				width: size?.width ?? null,
+				height: size?.height ?? null,
+				// Each model runs with its own: what was asked is not used.
+				sampler_name: null,
+				cfg_scale: null,
+				steps: null,
 				batch_size: body.batch_size ?? 1,
 				denoising_strength: body.denoising_strength ?? null,
 				sd_model_name: made.model.id,
@@ -898,7 +962,8 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 		const mask =
 			body.mask == null || body.mask === ""
 				? undefined
-				: body.inpainting_mask_invert === 1
+				: body.inpainting_mask_invert === 1 ||
+						body.inpainting_mask_invert === true
 					? await hatchlightMask(decoded(body.mask, "mask"), "black")
 					: // White is redrawn, as in Hatchlight.
 						decoded(body.mask, "mask");
@@ -954,7 +1019,12 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 					{ model: checkpoint },
 				);
 			}
-			await assertMayPay(c, ctx, entry);
+			// Kept for requests that name no model, which never spend.
+			if (entry.provider.requiresKey) {
+				throw new ValidationError(
+					"A paid model cannot be the default: name it in each request, in override_settings.sd_model_checkpoint",
+				);
+			}
 			await options.settings.set(ctx, { otherAppsModel: entry.model.id });
 		}
 		return c.json(null);
