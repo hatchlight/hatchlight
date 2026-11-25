@@ -623,6 +623,14 @@ h2 {
 	font-size: 15px;
 }
 
+.features {
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+}
+
+.features h3 {
+	margin-top: 0;
+}
+
 /* ---------- services ---------- */
 .providers {
 	list-style: none;
