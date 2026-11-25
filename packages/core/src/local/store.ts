@@ -15,14 +15,14 @@ import {
 	NotFoundError,
 	ValidationError,
 } from "../errors";
-import type { HubChoice, HubTarget } from "../hugging-face";
+import type { HubChoice, HubFile, HubTarget } from "../hugging-face";
 import { sniffMime } from "../mime";
 import { pathHere, portablePath } from "../paths";
 import type {
-	CheckpointInfo,
 	EngineBuild,
 	Fit,
 	Hardware,
+	HubAdded,
 	LocalEngineSpec,
 	LocalEngineStatus,
 	LocalModelEvent,
@@ -32,7 +32,6 @@ import type {
 	LocalModelStatus,
 	LocalModelsView,
 	LocalModelVariant,
-	LoraInfo,
 } from "../types";
 import { CheckpointShelf } from "./checkpoints";
 import { type BuildChoice, chooseBuild, chooseVariant, fitOf } from "./engines";
@@ -99,6 +98,8 @@ function movingError(): ValidationError {
 
 const MAX_DEMO_BYTES = 64 * 1024 * 1024;
 const PROGRESS_INTERVAL_MS = 250;
+/** One download from Hugging Face per file, whatever the case it is named in. */
+const hubKey = (repo: string, file: string) => `${repo}/${file}`.toLowerCase();
 const ID = /^[a-z0-9][a-z0-9.-]*$/;
 
 type Fetch = (url: string, init?: RequestInit) => Promise<Response>;
@@ -411,8 +412,14 @@ export class LocalModelStore {
 	private holders = new Set<() => Promise<void>>();
 	/** Why the last move to another folder failed, until the next one. */
 	private moveError: LocalModelsView["disk"]["moveError"] = null;
-	/** Files being downloaded from Hugging Face, as "repo/file". */
-	private hubDownloads = new Set<string>();
+	/**
+	 * Files being downloaded from Hugging Face, by lowercased "repo/file":
+	 * what stops each one, and what resolves once it ended.
+	 */
+	private hubDownloads = new Map<
+		string,
+		{ controller: AbortController; ended: Promise<unknown> }
+	>();
 
 	constructor(options: LocalModelStoreOptions) {
 		assertCatalog(options.catalog, options.engines);
@@ -1206,18 +1213,18 @@ export class LocalModelStore {
 	}
 
 	/**
-	 * Adds a checkpoint or LoRA from Hugging Face, at the revision the person
-	 * confirmed. It is looked at again there rather than taken on trust, and
-	 * stops when `signal` does.
+	 * Starts adding a checkpoint or LoRA from Hugging Face, at the revision
+	 * the person confirmed. The file is looked at again there rather than
+	 * taken on trust, and the disk is checked, before this resolves; the
+	 * download then goes on alone, told through `hub.progress` and then
+	 * `hub.done`, `hub.failed` or `hub.canceled`. A proxy in front of a
+	 * server cuts long requests: no request waits for the whole file.
+	 * `done` resolves with what was added, or null when nothing was.
 	 */
-	async addFromHub(
+	async startFromHub(
 		target: HubTarget,
 		revision: string,
-		signal?: AbortSignal,
-	): Promise<
-		| { kind: "checkpoint"; item: CheckpointInfo }
-		| { kind: "lora"; item: LoraInfo }
-	> {
+	): Promise<{ repo: string; file: string; done: Promise<HubAdded | null> }> {
 		this.notMoving();
 		if (!target.file || !HUB_REVISION.test(revision)) {
 			throw new ValidationError(
@@ -1225,7 +1232,7 @@ export class LocalModelStore {
 				"hubInvalid",
 			);
 		}
-		const key = `${target.repo}/${target.file}`.toLowerCase();
+		const key = hubKey(target.repo, target.file);
 		// Files can be many gigabytes: two at a time at most.
 		if (this.hubDownloads.has(key) || this.hubDownloads.size >= 2) {
 			throw new ValidationError(
@@ -1233,118 +1240,164 @@ export class LocalModelStore {
 				"hubBusy",
 			);
 		}
-		this.hubDownloads.add(key);
+		const controller = new AbortController();
+		const { signal } = controller;
+		let settle = () => {};
+		const ended = new Promise<void>((resolve) => {
+			settle = resolve;
+		});
+		this.hubDownloads.set(key, { controller, ended });
+		const finish = () => {
+			this.hubDownloads.delete(key);
+			settle();
+		};
+		let choice: HubFile;
 		try {
-			const choice = await inspectHubFile(target, revision, this.fetch, signal);
-			if (choice.kind === "unsupported") {
+			const found = await inspectHubFile(target, revision, this.fetch, signal);
+			if (found.kind === "unsupported") {
 				throw new ValidationError(
 					"This file cannot be added from Hugging Face",
 					"hubUnsupported",
-					{ reason: choice.reason },
+					{ reason: found.reason },
 				);
 			}
-			const { repo, file, size, sha256 } = choice;
 			const freeBytes = await this.freeBytes();
-			if (size > freeBytes) {
+			if (found.size > freeBytes) {
 				throw new ValidationError(
-					`Not enough disk space: ${formatBytes(size)} needed, ${formatBytes(freeBytes)} free`,
+					`Not enough disk space: ${formatBytes(found.size)} needed, ${formatBytes(freeBytes)} free`,
 					"notEnoughDisk",
-					{ neededBytes: size, freeBytes },
+					{ neededBytes: found.size, freeBytes },
 				);
 			}
-			const name = file.split("/").at(-1) as string;
-			const response = await hubFetch(
-				this.fetch,
-				hubFileUrl(repo, choice.revision, file),
-				{ signal },
-			);
-			if (!response.ok || !response.body) {
-				await response.body?.cancel().catch(() => {});
-				throw new CodedError(
-					`Could not download ${name} (HTTP ${response.status})`,
-					"downloadFailed",
-					{ file: name, status: response.status },
+			choice = found;
+		} catch (error) {
+			finish();
+			throw error;
+		}
+		const { repo, file } = choice;
+		const done = this.downloadFromHub(choice, signal).then(
+			(added) => {
+				finish();
+				this.emit({ type: "hub.done", repo, file, added });
+				return added;
+			},
+			(error) => {
+				finish();
+				this.emit(
+					signal.aborted
+						? { type: "hub.canceled", repo, file }
+						: { type: "hub.failed", repo, file, ...describeError(error) },
 				);
-			}
-			const hasher = new Bun.CryptoHasher("sha256");
-			let received = 0;
-			let shown = 0;
-			// Kept here: a stream's error may come out of the write changed.
-			let failure: Error | null = null;
-			const fail = (
-				controller: TransformStreamDefaultController,
-				error: Error,
-			) => {
-				failure = error;
-				controller.error(error);
-			};
-			const progress = () =>
-				this.emit({
-					type: "hub.progress",
-					repo,
-					file,
-					receivedBytes: received,
-					size,
-				});
-			progress();
-			const checked = response.body.pipeThrough(
-				new TransformStream<Uint8Array, Uint8Array>({
-					transform: (chunk, controller) => {
-						received += chunk.byteLength;
-						if (received > size) {
-							fail(
-								controller,
-								new CodedError(
-									`${name} is larger than expected`,
-									"downloadTooLarge",
-									{ file: name },
-								),
-							);
-							return;
-						}
-						hasher.update(chunk);
-						if (Date.now() - shown >= PROGRESS_INTERVAL_MS) {
-							shown = Date.now();
-							progress();
-						}
-						controller.enqueue(chunk);
-					},
-					flush: (controller) => {
-						if (received !== size) {
-							fail(
-								controller,
-								new CodedError(
-									`The download of ${name} was cut short`,
-									"downloadCutShort",
-									{ file: name },
-								),
-							);
-						} else if (sha256 && hasher.digest("hex") !== sha256) {
-							fail(
-								controller,
-								new CodedError(
-									`${name} did not match its expected hash`,
-									"hashMismatch",
-									{ file: name },
-								),
-							);
-						}
-					},
-				}),
+				return null;
+			},
+		);
+		return { repo, file, done };
+	}
+
+	/** Stops a download from Hugging Face; nothing of it is kept. */
+	async cancelFromHub(repo: string, file: string): Promise<void> {
+		const download = this.hubDownloads.get(hubKey(repo, file));
+		if (!download) return;
+		download.controller.abort();
+		await download.ended;
+	}
+
+	/** Downloads a file found on Hugging Face onto its shelf. */
+	private async downloadFromHub(
+		choice: HubFile,
+		signal: AbortSignal,
+	): Promise<HubAdded> {
+		const { repo, file, size, sha256 } = choice;
+		const name = file.split("/").at(-1) as string;
+		const response = await hubFetch(
+			this.fetch,
+			hubFileUrl(repo, choice.revision, file),
+			{ signal },
+		);
+		if (!response.ok || !response.body) {
+			await response.body?.cancel().catch(() => {});
+			throw new CodedError(
+				`Could not download ${name} (HTTP ${response.status})`,
+				"downloadFailed",
+				{ file: name, status: response.status },
 			);
-			try {
-				if (choice.kind === "checkpoint") {
-					return {
-						kind: "checkpoint",
-						item: await this.checkpoints.add(checked, name),
-					};
-				}
-				return { kind: "lora", item: await this.loras.add(checked, name) };
-			} catch (error) {
-				throw signal?.aborted ? error : (failure ?? error);
+		}
+		const hasher = new Bun.CryptoHasher("sha256");
+		let received = 0;
+		let shown = 0;
+		// Kept here: a stream's error may come out of the write changed.
+		let failure: Error | null = null;
+		const fail = (
+			controller: TransformStreamDefaultController,
+			error: Error,
+		) => {
+			failure = error;
+			controller.error(error);
+		};
+		const progress = () =>
+			this.emit({
+				type: "hub.progress",
+				repo,
+				file,
+				receivedBytes: received,
+				size,
+			});
+		progress();
+		const checked = response.body.pipeThrough(
+			new TransformStream<Uint8Array, Uint8Array>({
+				transform: (chunk, controller) => {
+					received += chunk.byteLength;
+					if (received > size) {
+						fail(
+							controller,
+							new CodedError(
+								`${name} is larger than expected`,
+								"downloadTooLarge",
+								{ file: name },
+							),
+						);
+						return;
+					}
+					hasher.update(chunk);
+					if (Date.now() - shown >= PROGRESS_INTERVAL_MS) {
+						shown = Date.now();
+						progress();
+					}
+					controller.enqueue(chunk);
+				},
+				flush: (controller) => {
+					if (received !== size) {
+						fail(
+							controller,
+							new CodedError(
+								`The download of ${name} was cut short`,
+								"downloadCutShort",
+								{ file: name },
+							),
+						);
+					} else if (sha256 && hasher.digest("hex") !== sha256) {
+						fail(
+							controller,
+							new CodedError(
+								`${name} did not match its expected hash`,
+								"hashMismatch",
+								{ file: name },
+							),
+						);
+					}
+				},
+			}),
+		);
+		try {
+			if (choice.kind === "checkpoint") {
+				return {
+					kind: "checkpoint",
+					item: await this.checkpoints.add(checked, name),
+				};
 			}
-		} finally {
-			this.hubDownloads.delete(key);
+			return { kind: "lora", item: await this.loras.add(checked, name) };
+		} catch (error) {
+			throw signal.aborted ? error : (failure ?? error);
 		}
 	}
 

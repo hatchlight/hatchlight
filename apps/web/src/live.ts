@@ -61,6 +61,31 @@ export function useHubProgress(
 	);
 }
 
+export type HubEnd = Extract<
+	LocalModelEvent,
+	{ type: "hub.done" | "hub.failed" | "hub.canceled" }
+>;
+// How each download from Hugging Face ended, by "repo/file", until another
+// download of the same file starts.
+const hubEnds = new Map<string, HubEnd>();
+
+export function useHubEnd(repo: string, file: string): HubEnd | undefined {
+	return useSyncExternalStore(
+		(watcher) => {
+			watchers.add(watcher);
+			return () => watchers.delete(watcher);
+		},
+		() => hubEnds.get(`${repo}/${file}`),
+	);
+}
+
+/** Forgets how a file's last download ended and how far it got. */
+export function forgetHubDownload(repo: string, file: string): void {
+	hubEnds.delete(`${repo}/${file}`);
+	hubProgress.delete(`${repo}/${file}`);
+	notify();
+}
+
 type FolderMove = Omit<
 	Extract<LocalModelEvent, { type: "models.moving" }>,
 	"type"
@@ -280,6 +305,26 @@ export function useLiveJobs(): void {
 			hubProgress.set(`${event.repo}/${event.file}`, event);
 			notify();
 		});
+		for (const type of ["hub.done", "hub.failed", "hub.canceled"]) {
+			source.addEventListener(type, (message) => {
+				const event = JSON.parse(message.data) as LocalModelEvent;
+				if (
+					event.type !== "hub.done" &&
+					event.type !== "hub.failed" &&
+					event.type !== "hub.canceled"
+				)
+					return;
+				hubEnds.set(`${event.repo}/${event.file}`, event);
+				if (event.type === "hub.done") {
+					void client.invalidateQueries({
+						queryKey: [
+							event.added.kind === "checkpoint" ? "checkpoints" : "loras",
+						],
+					});
+				}
+				notify();
+			});
+		}
 		source.addEventListener("job.updated", (message) => {
 			const event = JSON.parse(message.data) as EngineEvent;
 			if (event.type !== "job.updated") return;

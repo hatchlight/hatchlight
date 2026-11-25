@@ -8,6 +8,7 @@ import {
 import type {
 	CommercialUse,
 	Fit,
+	LocalModelEvent,
 	LocalModelStatus,
 	ModelFolder,
 	ModelFolderApp,
@@ -243,27 +244,62 @@ async function installFromHub(
 			return EXIT.ok;
 		}
 	}
+	// The download goes on in Hatchlight; its end comes as an event, so the
+	// events are listened to before it starts.
 	const listening = new AbortController();
-	void (async () => {
-		try {
-			for await (const event of api.events(listening.signal)) {
-				if (
-					event.type === "hub.progress" &&
-					event.repo === choice.repo &&
-					event.file === choice.file
-				) {
-					io.status(
-						`${choice.file}: ${bytes(event.receivedBytes)} of ${bytes(event.size)}`,
-					);
+	let ready = () => {};
+	const listens = new Promise<void>((resolve) => {
+		ready = resolve;
+	});
+	const ended = new Promise<HubEnd>((resolve, reject) => {
+		void (async () => {
+			try {
+				for await (const event of api.events(listening.signal, ready)) {
+					if (
+						!event.type.startsWith("hub.") ||
+						!("repo" in event) ||
+						event.repo !== choice.repo ||
+						event.file !== choice.file
+					) {
+						continue;
+					}
+					if (event.type === "hub.progress") {
+						io.status(
+							`${choice.file}: ${bytes(event.receivedBytes)} of ${bytes(event.size)}`,
+						);
+					} else {
+						resolve(event as HubEnd);
+						return;
+					}
 				}
+				if (!listening.signal.aborted) {
+					reject(new Error("Lost touch with Hatchlight during the download."));
+				}
+			} catch (error) {
+				reject(error);
 			}
-		} catch {
-			// Progress is a nicety.
-		}
-	})();
+		})();
+	});
+	ended.catch(() => {});
+	const interrupted = new Promise<null>((resolve) => {
+		if (io.signal.aborted) resolve(null);
+		io.signal.addEventListener("abort", () => resolve(null), { once: true });
+	});
 	try {
-		const added = await api.addFromHub(choice, io.signal);
+		await Promise.race([listens, ended]);
+		await api.startFromHub(choice);
+		const end = await Promise.race([ended, interrupted]);
 		io.status(null);
+		if (!end || end.type === "hub.canceled") {
+			await api.cancelFromHub(choice).catch(() => {});
+			io.err("Stopped. Nothing was kept.");
+			return EXIT.interrupted;
+		}
+		if (end.type === "hub.failed") {
+			io.err(`${choice.file} was not added: ${end.message}`);
+			return EXIT.failed;
+		}
+		const { added } = end;
 		if (values.json) json(io, added);
 		io.err(
 			added.kind === "checkpoint"
@@ -273,15 +309,17 @@ async function installFromHub(
 		return EXIT.ok;
 	} catch (error) {
 		io.status(null);
-		if (io.signal.aborted) {
-			io.err("Stopped. Nothing was kept.");
-			return EXIT.interrupted;
-		}
 		throw error;
 	} finally {
 		listening.abort();
 	}
 }
+
+/** How a download from Hugging Face ended. */
+type HubEnd = Extract<
+	LocalModelEvent,
+	{ type: "hub.done" | "hub.failed" | "hub.canceled" }
+>;
 
 /** Families of models as people write them. */
 const BASE_NAMES: Record<string, string> = {

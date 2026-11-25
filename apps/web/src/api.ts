@@ -461,19 +461,25 @@ export const api = {
 			})}`,
 			{ signal },
 		),
-	/** Downloads a file found on Hugging Face; stopping `signal` stops it. */
-	addFromHub: (file: HubFile, signal?: AbortSignal) =>
-		request<
-			| { kind: "checkpoint"; item: CheckpointInfo }
-			| { kind: "lora"; item: LoraInfo }
-		>("/api/hugging-face/downloads", {
-			...send("POST", {
+	/**
+	 * Starts downloading a file found on Hugging Face. It goes on in the
+	 * background: how it ends comes as a `hub.done`, `hub.failed` or
+	 * `hub.canceled` event.
+	 */
+	startFromHub: (file: HubFile) =>
+		request<{ repo: string; file: string }>(
+			"/api/hugging-face/downloads",
+			send("POST", {
 				repo: file.repo,
 				file: file.file,
 				revision: file.revision,
 			}),
-			signal,
-		}),
+		),
+	cancelFromHub: (file: Pick<HubFile, "repo" | "file">) =>
+		request<void>(
+			"/api/hugging-face/downloads/cancel",
+			send("POST", { repo: file.repo, file: file.file }),
+		),
 	addCheckpoint: (file: File) =>
 		request<CheckpointInfo>(
 			`/api/checkpoints?${new URLSearchParams({ name: file.name })}`,

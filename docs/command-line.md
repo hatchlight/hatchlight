@@ -85,7 +85,10 @@ hatchlight train photos/ --name "My dog" --trigger qzxdog --consent --samples ou
 catalog has is installed as usual, and a single SDXL or SD 1.5 checkpoint or
 a LoRA in a `.safetensors` file is added after it shows the file's size and
 license and you agree (`--yes` skips the question). Name the file when the
-repository has several: `hf:<owner>/<repo>/<file>`.
+repository has several: `hf:<owner>/<repo>/<file>`. The file downloads in
+Hatchlight itself while the command shows how far it is; Ctrl-C stops it and
+keeps nothing. On a Hatchlight server, only an admin, signed in, can add
+files from Hugging Face: an API token cannot.
 
 `hatchlight completions zsh` (or `bash`, `fish`) prints tab completion for
 your shell; its `--help` says where to put it.
