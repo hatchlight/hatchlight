@@ -8,7 +8,7 @@ import type {
 } from "@hatchlight/core/types";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { CheckIcon, ChevronDownIcon, SparklesIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -345,12 +345,14 @@ function FitBadge({
 	);
 }
 
-function ModelCard({
+export function ModelCard({
 	model,
 	engine,
 	freeBytes,
 	recommended,
 	focused,
+	badges,
+	actions,
 }: {
 	model: LocalModelStatus;
 	engine: LocalEngineStatus | undefined;
@@ -358,6 +360,10 @@ function ModelCard({
 	recommended: boolean;
 	/** Opened from a link: brought into view and marked. */
 	focused: boolean;
+	/** More to say at the top, beside how it runs here. */
+	badges?: ReactNode;
+	/** More to do, beside installing and deleting. */
+	actions?: ReactNode;
 }) {
 	const i18n = useI18n();
 	const { t, bytes, explain } = i18n;
@@ -413,9 +419,11 @@ function ModelCard({
 					focused && "ring-2 ring-gold",
 				)}
 			>
-				<Demos model={model} />
+				{/* Language models write: they have no pictures to show. */}
+				{model.media !== "text" && <Demos model={model} />}
 				<div className="flex flex-1 flex-col gap-4 p-5">
 					<div className="flex flex-wrap gap-1.5">
+						{badges}
 						<FitBadge model={model} recommended={recommended} />
 						<Badge
 							variant="outline"
@@ -439,7 +447,9 @@ function ModelCard({
 									? t("models.installed")
 									: model.media === "video"
 										? t("models.media.video")
-										: t("models.media.image")}
+										: model.media === "text"
+											? t("models.media.text")
+											: t("models.media.image")}
 							</span>
 						</div>
 						<p className="mt-1 text-xs text-dim">
@@ -642,6 +652,7 @@ function ModelCard({
 							/>
 						)}
 					</div>
+					{actions}
 				</div>
 			</Card>
 		</li>

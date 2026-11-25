@@ -15,6 +15,8 @@ export const DEFAULT_SETTINGS: Settings = {
 	otherAppsPaid: false,
 	otherAppsModel: null,
 	blindPicks: false,
+	writerModel: null,
+	eyesModel: null,
 };
 
 export interface SettingsStore {
@@ -56,6 +58,9 @@ export class FileSettingsStore implements SettingsStore {
 				typeof mine.blindPicks === "boolean"
 					? mine.blindPicks
 					: DEFAULT_SETTINGS.blindPicks,
+			writerModel:
+				typeof mine.writerModel === "string" ? mine.writerModel : null,
+			eyesModel: typeof mine.eyesModel === "string" ? mine.eyesModel : null,
 		};
 	}
 

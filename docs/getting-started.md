@@ -263,7 +263,8 @@ A LoRA is a small file that teaches a model a style or a subject. On the
   2. Add 10 to 30 sharp pictures, **From this computer** or **From your
      pictures**, varied in angle and background.
   3. Describe each picture, or let Hatchlight do it with **Describe them**
-     (it needs the Qwen2.5-VL model).
+     (it needs a model that looks at pictures, such as Qwen2.5-VL or Qwen3-VL,
+     installed in **Settings**, under **Language models on this computer**).
   4. Confirm that you may use the pictures, and choose **Start training**.
      800 steps take about 10 minutes on a 12 GB card.
   5. **How it is learning** shows sample pictures along the way. If one

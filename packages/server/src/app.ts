@@ -1275,6 +1275,29 @@ export function createApp(options: AppOptions): Hono {
 		if (body.blindPicks !== undefined && typeof body.blindPicks !== "boolean") {
 			throw new ValidationError("blindPicks must be true or false");
 		}
+		// A model on this computer for a job: one of the catalog's that does it.
+		const chosenModels: {
+			writerModel?: string | null;
+			eyesModel?: string | null;
+		} = {};
+		for (const [field, task] of [
+			["writerModel", "prompt-translation"],
+			["eyesModel", "picture-description"],
+		] as const) {
+			const id = body[field];
+			if (id === undefined) continue;
+			const known =
+				id === null ||
+				(await models.list()).models.some(
+					(m) => m.id === id && m.tasks.includes(task),
+				);
+			if (!known) {
+				throw new ValidationError(
+					`${field} must be the id of a model on this computer that does ${task}, or null`,
+				);
+			}
+			chosenModels[field] = id as string | null;
+		}
 		return c.json(
 			await options.settings.set(user(c), {
 				...(typeof body.blindPicks === "boolean" && {
@@ -1295,6 +1318,7 @@ export function createApp(options: AppOptions): Hono {
 				...(otherAppsModel !== undefined && {
 					otherAppsModel: otherAppsModel as string | null,
 				}),
+				...chosenModels,
 			}),
 		);
 	});
@@ -1627,7 +1651,7 @@ export function createApp(options: AppOptions): Hono {
 	});
 	// Captions for training pictures, from the model that looks at pictures.
 	app.get("/api/captioner", async (c) =>
-		c.json({ ready: (await options.captioner?.ready()) ?? false }),
+		c.json({ ready: (await options.captioner?.ready(user(c))) ?? false }),
 	);
 	app.post("/api/captions", async (c) => {
 		const { assetId } = await json(c);
@@ -1635,9 +1659,9 @@ export function createApp(options: AppOptions): Hono {
 			throw new ValidationError("assetId must be text");
 		}
 		const captioner = options.captioner;
-		if (!captioner || !(await captioner.ready())) {
+		if (!captioner || !(await captioner.ready(user(c)))) {
 			throw new ValidationError(
-				"Install Qwen2.5-VL in Models to describe pictures",
+				"Install a model that looks at pictures in Settings to describe pictures",
 				"captionNeedsModel",
 			);
 		}
@@ -1660,6 +1684,7 @@ export function createApp(options: AppOptions): Hono {
 					mimeType: asset.mime,
 				},
 				c.req.raw.signal,
+				user(c),
 			);
 			return c.json({ caption });
 		} finally {

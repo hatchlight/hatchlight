@@ -1516,3 +1516,81 @@ test("keys saved before encryption are encrypted on start; keys a new secret can
 	);
 	third.close();
 });
+
+test("the language models for each job are the person's choice, falling back to one installed", async () => {
+	const text = (id: string, task: LocalModelSpec["tasks"][number]) => {
+		const [variant] = LOCAL_MODEL.variants;
+		const [file] = variant?.files ?? [];
+		return {
+			...LOCAL_MODEL,
+			id,
+			name: id,
+			media: "text",
+			tasks: [task],
+			demos: [],
+			variants: [
+				{
+					...(variant as NonNullable<typeof variant>),
+					files: [
+						{ ...(file as NonNullable<typeof file>), name: `${id}.gguf` },
+					],
+				},
+			],
+		} satisfies LocalModelSpec;
+	};
+	const { post, call, runtime } = await setup({
+		localModels: [
+			LOCAL_MODEL,
+			text("writer", "prompt-translation"),
+			text("eyes-a", "picture-description"),
+			text("eyes-b", "picture-description"),
+		],
+	});
+	const me = { userId: "local" };
+	const now = () => runtime.languageModels(me);
+	const until = async (want: {
+		writer: string | null;
+		eyes: string | null;
+	}) => {
+		for (
+			let i = 0;
+			i < 200 && JSON.stringify(await now()) !== JSON.stringify(want);
+			i++
+		) {
+			await Bun.sleep(5);
+		}
+		expect(await now()).toEqual(want);
+	};
+	await until({ writer: null, eyes: null });
+	expect(await runtime.captioner?.ready(me)).toBe(false);
+
+	// The only one installed is used, chosen or not.
+	await runtime.models.install("eyes-b");
+	await runtime.models.idle();
+	await until({ writer: null, eyes: "eyes-b" });
+	expect(await runtime.captioner?.ready(me)).toBe(true);
+	// None chosen, the first in the catalog's order is.
+	await runtime.models.install("eyes-a");
+	await runtime.models.install("writer");
+	await runtime.models.idle();
+	await until({ writer: "writer", eyes: "eyes-a" });
+
+	const chosen = await post("/api/settings", { eyesModel: "eyes-b" }, "PUT");
+	expect(await chosen.json()).toMatchObject({ eyesModel: "eyes-b" });
+	await until({ writer: "writer", eyes: "eyes-b" });
+	// Only a model that does the job can be chosen for it.
+	for (const body of [
+		{ eyesModel: "tiny" },
+		{ eyesModel: "writer" },
+		{ writerModel: "eyes-a" },
+		{ writerModel: 3 },
+	]) {
+		expect((await post("/api/settings", body, "PUT")).status).toBe(400);
+	}
+	// The chosen one deleted, another one installed takes over.
+	await call("/api/local-models/eyes-b", { method: "DELETE" });
+	await until({ writer: "writer", eyes: "eyes-a" });
+	expect((await runtime.settings.get(me)).eyesModel).toBe("eyes-b");
+	await post("/api/settings", { eyesModel: null }, "PUT");
+	expect((await runtime.settings.get(me)).eyesModel).toBeNull();
+});

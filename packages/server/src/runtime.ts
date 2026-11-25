@@ -19,6 +19,7 @@ import {
 	type ChatModel,
 	type ChatReply,
 	type CompareOptions,
+	chooseLocalModel,
 	DEFAULT_PAID_ESTIMATE_USD,
 	FakeProvider,
 	FileKeyStore,
@@ -113,6 +114,14 @@ export interface Runtime {
 	assistantBrain(ctx: UserContext): Promise<AssistantBrain>;
 	/** Whether the prompt translator on this computer is installed. */
 	translatorReady(): boolean;
+	/**
+	 * The models on this computer that translate, write and think for a
+	 * person, and that look at pictures for them, now: the ones they chose
+	 * while installed, else the first installed. Null where none is.
+	 */
+	languageModels(
+		ctx: UserContext,
+	): Promise<{ writer: string | null; eyes: string | null }>;
 	/** A richer prompt for a short idea, written for the models named. */
 	improvePrompt(
 		ctx: UserContext,
@@ -744,7 +753,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		// Declared below; only called once a training has the GPU.
 		letGo: async () => {
 			await local.unloadIdle();
-			await translator.stopAndWait();
+			await Promise.all([...translators.values()].map((t) => t.stopAndWait()));
 		},
 		...options.trainerOptions,
 	});
@@ -847,32 +856,79 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	const keys = options.server
 		? new SharedKeyStore(fileKeys, allowedToPay)
 		: fileKeys;
-	// Puts prompts into English for the models that read only English, once
-	// its model is installed.
-	const translatorModel = catalog.find((m) =>
-		m.tasks.includes("prompt-translation"),
+	// Put prompts into English for the models that read only English, write
+	// prompts and think for the assistant: one of these, as the person
+	// chose, once installed. Each keeps its own server while used.
+	const writerIds = catalog
+		.filter((m) => m.tasks.includes("prompt-translation"))
+		.map((m) => m.id);
+	const translators = new Map(
+		writerIds.map((id) => [
+			id,
+			new LocalTranslator({ store: models, model: id }),
+		]),
 	);
-	const translator = new LocalTranslator({
-		store: models,
-		model: translatorModel?.id ?? "",
-	});
-	let translatorReady = translatorModel ? await translator.ready() : false;
+	// Look at pictures for an assistant whose brain cannot, and caption
+	// training pictures: run once per picture, so nothing stays loaded.
+	const eyesIds = catalog
+		.filter((m) => m.tasks.includes("picture-description"))
+		.map((m) => m.id);
+	const allEyes = new Map(
+		eyesIds.map((id) => [id, new LocalEyes({ store: models, model: id })]),
+	);
+	/** The models installed with their engine, as of the last change. */
+	const installedNow = async () => {
+		const view = await models.list().catch(() => null);
+		return new Set(view?.models.filter((m) => m.ready).map((m) => m.id));
+	};
+	let ready = await installedNow();
 	// Checks overlap (an install says it changed several times); only the
 	// latest one counts.
 	let check = 0;
 	models.subscribe((event) => {
 		if (event.type !== "models.changed") return;
 		const mine = ++check;
-		void translator.ready().then((ready) => {
+		void installedNow().then((now) => {
 			if (mine !== check) return;
-			translatorReady = ready;
-			if (!ready) translator.stop();
+			ready = now;
+			for (const [id, translator] of translators) {
+				if (!ready.has(id)) translator.stop();
+			}
 		});
 	});
+	/** The models on this computer that write and see for a person now. */
+	const languageModels = async (ctx: UserContext) => {
+		const { writerModel, eyesModel } = await settings.get(ctx);
+		const installed = (id: string) => ready.has(id);
+		return {
+			writer: chooseLocalModel(writerIds, writerModel, installed),
+			eyes: chooseLocalModel(eyesIds, eyesModel, installed),
+		};
+	};
+	/** The writer that served last: one model in memory at a time. */
+	let lastWriter: LocalTranslator | null = null;
+	/** The person's writer on this computer, or null when none is installed. */
+	const localWriter = async (ctx: UserContext) => {
+		const { writer } = await languageModels(ctx);
+		const translator = writer ? (translators.get(writer) ?? null) : null;
+		// Another one chosen: the one before lets go of its memory.
+		if (translator && lastWriter && lastWriter !== translator) {
+			lastWriter.stop();
+		}
+		if (translator) lastWriter = translator;
+		return translator;
+	};
+	/** The person's eyes on this computer, or null when none is installed. */
+	const localEyes = async (ctx: UserContext) => {
+		const { eyes } = await languageModels(ctx);
+		return eyes ? (allEyes.get(eyes) ?? null) : null;
+	};
 	// Models kept loaded let go of their files before files are deleted or
 	// moved: Windows does neither to an open file.
 	models.onLetGo(() => local.unloadIdle());
-	models.onLetGo(() => translator.stopAndWait());
+	models.onLetGo(async () => {
+		await Promise.all([...translators.values()].map((t) => t.stopAndWait()));
+	});
 	// One per service and key, so the jobs of a turn share a translation.
 	const clouds = new Map<string, CloudTranslator>();
 	/**
@@ -953,17 +1009,18 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	const translatorFor = async (ctx: UserContext) => {
 		const { translateWith } = await settings.get(ctx);
 		if (translateWith === "off") return null;
-		if (translateWith === "local") return translatorReady ? translator : null;
+		if (translateWith === "local") return localWriter(ctx);
 		return cloudFor(ctx, translateWith);
 	};
 	const writerFor = async (ctx: UserContext): Promise<LanguageModel | null> => {
 		const reachable = await reachableServices(ctx);
+		const local = await localWriter(ctx);
 		const choice = writerChoice(
 			await settings.get(ctx),
-			translatorReady,
+			local != null,
 			(service) => reachable.has(service),
 		);
-		if (choice === "local") return translator;
+		if (choice === "local") return local;
 		return choice ? cloudFor(ctx, choice) : null;
 	};
 	const services = ["openai", "google", "openrouter"] as const;
@@ -976,7 +1033,8 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	};
 	const brainChoice = async (ctx: UserContext): Promise<AssistantBrain> => {
 		const reachable = await reachableServices(ctx);
-		return assistantChoice(await settings.get(ctx), translatorReady, (s) =>
+		const { writer } = await languageModels(ctx);
+		return assistantChoice(await settings.get(ctx), writer != null, (s) =>
 			reachable.has(s),
 		);
 	};
@@ -984,7 +1042,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	const brains = new Map<string, CloudChatModel>();
 	const brainFor = async (ctx: UserContext): Promise<ChatModel | null> => {
 		const choice = await brainChoice(ctx);
-		if (choice === "local") return translator;
+		if (choice === "local") return localWriter(ctx);
 		if (!choice) return null;
 		const found = await keyFor(ctx, choice);
 		if (!found) return null;
@@ -1024,20 +1082,15 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 			? (userId) => accounts.storageRefusal(userId)
 			: undefined,
 	});
-	// Looks at pictures for an assistant whose brain cannot, once installed.
-	const eyesModel = catalog.find((m) =>
-		m.tasks.includes("picture-description"),
-	);
-	const eyes = eyesModel
-		? new LocalEyes({ store: models, model: eyesModel.id })
-		: null;
 	/**
 	 * What compares characters: the model on this computer that sees, for
 	 * free; else the person's cloud brain, which sees too.
 	 */
 	const judgeFor = async (ctx: UserContext): Promise<Judge | null> => {
 		if (options.judge) return options.judge;
-		if (eyes && (await eyes.ready())) return eyes;
+		// The person's chosen eyes, else another one installed.
+		const eyes = await localEyes(ctx);
+		if (eyes) return eyes;
 		const brain = await brainFor(ctx);
 		if (brain?.vision) return new ChatJudge(brain);
 		return fake ? new FakeJudge() : null;
@@ -1075,7 +1128,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		const judge = await judgeFor(ctx);
 		if (!judge) {
 			throw new ValidationError(
-				"No model can compare pictures: install Qwen2.5-VL in Models, or add a key for the assistant",
+				"No model can compare pictures: install one that looks at pictures in Settings, under Language models on this computer, or add a key for the assistant",
 				"noJudge",
 			);
 		}
@@ -1085,6 +1138,16 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		};
 		return judge.compare(references, candidate, signal, compareOptions);
 	};
+	// Captions training pictures with the eyes the person chose.
+	const captioner: Captioner = {
+		ready: async (ctx = LOCAL_USER) => (await localEyes(ctx)) != null,
+		caption: async (picture, signal, ctx = LOCAL_USER) => {
+			const eyes = await localEyes(ctx);
+			if (!eyes)
+				throw new Error("No model that looks at pictures is installed");
+			return eyes.caption(picture, signal);
+		},
+	};
 	const assistant = new Assistant({
 		store: {
 			add: (ctx, entry) => repo.addEntry(entry, ctx.userId),
@@ -1092,7 +1155,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 			list: (ctx, sessionId) => repo.listEntries(ctx, sessionId),
 		},
 		reel: (ctx) => localReel(service, ctx, settings, checkConsistency),
-		eyes: async () => (eyes && (await eyes.ready()) ? eyes : null),
+		eyes: localEyes,
 		brain: async (ctx) =>
 			options.assistantModel ??
 			(await brainFor(ctx)) ??
@@ -1120,14 +1183,15 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		engine,
 		models,
 		trainer,
-		captioner: eyes ?? undefined,
+		captioner: eyesIds.length > 0 ? captioner : undefined,
 		settings,
 		assistant,
 		// A model standing in (tests, trying the app) shows as this computer's.
 		assistantBrain: async (ctx) =>
 			(await brainChoice(ctx)) ??
 			(options.assistantModel || fake ? "local" : null),
-		translatorReady: () => translatorReady,
+		translatorReady: () => writerIds.some((id) => ready.has(id)),
+		languageModels,
 		improvePrompt: async (ctx, request, signal) => {
 			const writer = await writerFor(ctx);
 			if (!writer) {
@@ -1211,7 +1275,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 			trainer.cancelInstall();
 			void models.close();
 			local.close();
-			translator.stop();
+			for (const translator of translators.values()) translator.stop();
 			repo.close();
 			unlock();
 		},

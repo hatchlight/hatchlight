@@ -1162,6 +1162,30 @@ export interface Settings {
 	otherAppsModel: string | null;
 	/** Hide which model made which result of a comparison until one is picked. */
 	blindPicks: boolean;
+	/**
+	 * The model on this computer that translates, improves prompts and
+	 * thinks for the assistant; null for the first one installed.
+	 */
+	writerModel: string | null;
+	/**
+	 * The model on this computer that looks at pictures; null for the first
+	 * one installed.
+	 */
+	eyesModel: string | null;
+}
+
+/**
+ * Which model on this computer does a job: the one chosen while it is
+ * installed, else the first candidate installed (the catalog's order), else
+ * none. A chosen model that was deleted falls back, it does not stop the job.
+ */
+export function chooseLocalModel(
+	candidates: readonly string[],
+	chosen: string | null,
+	ready: (id: string) => boolean,
+): string | null {
+	if (chosen && candidates.includes(chosen) && ready(chosen)) return chosen;
+	return candidates.find(ready) ?? null;
 }
 
 /**
