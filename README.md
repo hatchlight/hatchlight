@@ -43,7 +43,7 @@ snow, soft morning light"._
 
 ## What it does
 
-**Models on your computer.** 33 picture and video models in the catalog, many
+**Models on your computer.** Picture and video models from the catalog, many
 of them in 16, 8 and 4 bit versions for different amounts of memory:
 
 - pictures: SDXL Turbo, Stable Diffusion XL and 1.5, FLUX.1 schnell, FLUX.2
