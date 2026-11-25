@@ -3,10 +3,10 @@ import { parseArgs } from "node:util";
 import {
 	AccountService,
 	defaultDataDir,
-	plainPath,
 	SqliteRepository,
 } from "@hatchlight/core";
 import { databaseFile } from "@hatchlight/server";
+import { resourcesDir } from "./resources";
 
 const HELP = `hatchlight users — the people of a Hatchlight server
 
@@ -41,9 +41,8 @@ export async function users(args: string[]): Promise<number> {
 		return values.help ? 0 : 1;
 	}
 	const dataDir = values["data-dir"] ?? defaultDataDir();
-	const migrations = values.resources
-		? join(plainPath(values.resources), "drizzle")
-		: undefined;
+	const resources = resourcesDir(values.resources);
+	const migrations = resources ? join(resources, "drizzle") : undefined;
 	// The database is shared with a running server, which SQLite allows.
 	const repo = new SqliteRepository(databaseFile(dataDir), migrations);
 	try {

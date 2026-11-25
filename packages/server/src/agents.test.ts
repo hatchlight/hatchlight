@@ -292,6 +292,20 @@ test("each system's Claude Desktop settings are found where it keeps them", asyn
 	expect(linux.desktop).toEqual(linux.code);
 });
 
+test("the npm package is started by name, not from bunx's temporary folder", async () => {
+	const setup = await agentsSetup({
+		platform: "linux",
+		env: {},
+		home: "/home/a",
+		dataDir: "/data",
+		npmPackage: "hatchlight",
+	});
+	expect(setup.code).toEqual({
+		command: "bunx",
+		args: ["hatchlight", "mcp", "--data-dir", "/data"],
+	});
+});
+
 test("folders set under the old variable names go on under the new ones", async () => {
 	const setup = await agentsSetup({
 		platform: "darwin",

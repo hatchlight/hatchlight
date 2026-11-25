@@ -1,0 +1,22 @@
+{
+	"$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+	"name": "io.github.hatchlight/hatchlight",
+	"title": "Hatchlight",
+	"description": "Make pictures and videos with the AI models on your own graphics card, or with your cloud keys.",
+	"websiteUrl": "https://hatchlight.app",
+	"repository": {
+		"url": "https://github.com/hatchlight/hatchlight",
+		"source": "github"
+	},
+	"version": "0.4.1",
+	"packages": [
+		{
+			"registryType": "npm",
+			"identifier": "hatchlight",
+			"version": "0.4.1",
+			"runtimeHint": "bunx",
+			"transport": { "type": "stdio" },
+			"packageArguments": [{ "type": "positional", "value": "mcp" }]
+		}
+	]
+}
