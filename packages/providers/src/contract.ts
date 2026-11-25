@@ -11,7 +11,10 @@ export function providerContract(adapter: ProviderAdapter): void {
 			expect(model.id).toBe(`${adapter.id}/${model.providerModelId}`);
 			expect(model.providerId).toBe(adapter.id);
 			expect(model.name).not.toBe("");
-			expect(model.operations).toContain("generate");
+			// Only a model that needs a picture makes nothing from words.
+			expect(model.operations.includes("generate")).toBe(
+				!model.capabilities.needsReference,
+			);
 			expect(model.capabilities.maxCount).toBeGreaterThanOrEqual(1);
 			expect(model.operations.includes("edit")).toBe(
 				model.capabilities.maxReferenceImages > 0,

@@ -220,7 +220,8 @@ export function Composer(props: Props) {
 	const [guide, setGuide] = useState<string | null>(null);
 	const [guideKind, setGuideKind] = useState<GuideKind>("outlines");
 	const [guideMap, setGuideMap] = useState(false);
-	const [guideMoved, setGuideStrength] = useState<number | null>(null);
+	// Unset, the slider shows the chosen models' own strength.
+	const [guideMoved, setGuideMoved] = useState<number | null>(null);
 	const [guidePreview, setGuidePreview] = useState<string | null>(null);
 	const guideInput = useRef<HTMLInputElement>(null);
 	const [painting, setPainting] = useState(false);
@@ -259,6 +260,9 @@ export function Composer(props: Props) {
 		}
 		if (maskId && model.capabilities.mask == null) {
 			return t("composer.blocked.noMask", { model: model.name });
+		}
+		if (model.capabilities.needsReference && references.length === 0) {
+			return t("composer.blocked.needsReference", { model: model.name });
 		}
 		if (
 			guide &&
@@ -303,7 +307,9 @@ export function Composer(props: Props) {
 	const canGuide = media === "image" && (guide != null || guider != null);
 	const guideStrength =
 		guideMoved ?? guider?.capabilities.guide?.strength ?? 0.75;
-	// Models that follow pictures keep the people in them: a character.
+	// Models that follow their pictures as examples, rather than redraw or
+	// enlarge them, keep the people in them: characters. Ideogram Character,
+	// which needs one, is such a model.
 	const followsPeople =
 		media === "image" &&
 		selected.some(
@@ -439,7 +445,9 @@ export function Composer(props: Props) {
 			strength: redrawing && moved != null ? moved : undefined,
 			maskAssetId: maskId ?? undefined,
 			loras: sentLoras.length > 0 ? sentLoras : undefined,
-			// Unmoved, each model follows the guide by its own strength.
+			// Unmoved, each model follows the guide by its own strength. The guide
+			// stays after sending, unlike references: the next try usually
+			// keeps the same layout.
 			guide:
 				guiding && guide
 					? {
@@ -469,20 +477,30 @@ export function Composer(props: Props) {
 	const overReferenceLimit =
 		selected.length === 0 &&
 		offered.some((m) => chosen.includes(m.id) && ready.has(m.providerId));
+	// Why the guide leaves no chosen model, when it is the guide: a model
+	// that follows this kind but only from a map, or none that follows one.
+	const guideBlocked = guiding
+		? offered.filter(
+				(m) =>
+					chosen.includes(m.id) &&
+					references.length <= m.capabilities.maxReferenceImages,
+			)
+		: [];
+	const blockedByGuide =
+		guideBlocked.length === 0
+			? null
+			: guideBlocked.some((m) =>
+						m.capabilities.guide?.kinds.includes(guideKind),
+					)
+				? t("composer.guideNeedsMap")
+				: t("composer.guideNoModel");
 	const error =
 		props.error ??
 		(upload.error ? explain(upload.error) : null) ??
 		(guideUpload.error ? explain(guideUpload.error) : null) ??
 		(improveError ? explain(improveError) : null) ??
 		(overReferenceLimit
-			? guiding &&
-				offered.some(
-					(m) =>
-						chosen.includes(m.id) &&
-						references.length <= m.capabilities.maxReferenceImages,
-				)
-				? t("composer.guideNoModel")
-				: t("composer.tooManyReferences")
+			? (blockedByGuide ?? t("composer.tooManyReferences"))
 			: null);
 	const total = selected.length * each;
 	// The settings in a few words, for the button that opens them on phones.
@@ -941,7 +959,7 @@ export function Composer(props: Props) {
 						step={0.05}
 						value={[guideStrength]}
 						onValueChange={(value) =>
-							setGuideStrength(
+							setGuideMoved(
 								typeof value === "number" ? value : (value[0] ?? guideStrength),
 							)
 						}

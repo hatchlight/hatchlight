@@ -436,6 +436,11 @@ export interface ModelCapabilities {
 	loraBase?: LoraBase;
 	/** Set for a model that follows a guide picture. */
 	guide?: GuideSupport;
+	/**
+	 * Set for a model that makes nothing from words alone: it needs a
+	 * reference, e.g. the person to keep in a new picture.
+	 */
+	needsReference?: boolean;
 }
 
 /** What a model is good at, shown as tags; the interface translates each. */
@@ -490,7 +495,12 @@ export interface ModelSpec {
 	operations: Operation[];
 	capabilities: ModelCapabilities;
 	/** Used to estimate a job's cost when the provider does not report one. */
-	pricing?: { usdPerOutput?: number; usdPerSecond?: number };
+	pricing?: {
+		usdPerOutput?: number;
+		usdPerSecond?: number;
+		/** Per picture when following a guide, when that costs otherwise. */
+		usdPerGuidedOutput?: number;
+	};
 	/** Absent for models the project has not described yet. */
 	profile?: ModelProfile;
 	/** Set for a model found in another app's folder. */

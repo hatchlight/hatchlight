@@ -200,9 +200,9 @@ const MODELS: FalModel[] = [
 					strength: 0.75,
 				},
 			},
-			// About a megapixel, at the guided endpoint's $0.0065 per megapixel
-			// (the plain one is $0.005).
-			pricing: { usdPerOutput: 0.0065 },
+			// About a megapixel: $0.005 per megapixel plain, $0.0065 at the
+			// guided endpoint.
+			pricing: { usdPerOutput: 0.005, usdPerGuidedOutput: 0.0065 },
 		}),
 		endpoint: (_references, guide) =>
 			guide ? "fal-ai/z-image/turbo/controlnet" : "fal-ai/z-image/turbo",
@@ -229,13 +229,15 @@ const MODELS: FalModel[] = [
 	},
 	{
 		spec: spec("fal-ai/ideogram/character", "Ideogram Character", {
-			operations: ["generate", "edit"],
+			// Never from words alone: it needs the person to keep.
+			operations: ["edit"],
 			capabilities: {
 				aspectRatios: Object.keys(FLUX_SIZES),
 				seed: true,
 				maxCount: 4,
 				// It keeps one person, from one picture of them.
 				maxReferenceImages: 1,
+				needsReference: true,
 			},
 			// At its default, balanced speed.
 			pricing: { usdPerOutput: 0.15 },

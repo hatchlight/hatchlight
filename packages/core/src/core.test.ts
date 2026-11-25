@@ -281,6 +281,61 @@ describe("turns", () => {
 		).rejects.toMatchObject({ code: "referenceNotFound" });
 	});
 
+	test("a guided picture costs the guided price, and a deleted guide fails a retry clearly", async () => {
+		const app = boot(await tempDir());
+		const guide = await app.service.uploadAsset(LOCAL_USER, PNG);
+		const turn = (over: object = {}) =>
+			app.service.createTurn(LOCAL_USER, {
+				prompt: "x",
+				modelIds: ["fake/alpha"],
+				...over,
+			});
+		const jobOf = async (sessionId: string) =>
+			(await app.service.getSession(LOCAL_USER, sessionId)).turns[0]?.jobs[0];
+		const guided = await turn({
+			guide: { assetId: guide.id, kind: "outlines" },
+		});
+		const plain = await turn();
+		await app.engine.idle();
+		expect((await jobOf(guided.session.id))?.costUsd).toBe(0.02);
+		expect((await jobOf(plain.session.id))?.costUsd).toBe(0.01);
+
+		app.provider.failWith = "down";
+		const again = await turn({
+			guide: { assetId: guide.id, kind: "outlines" },
+		});
+		await app.engine.idle();
+		const failed = await jobOf(again.session.id);
+		expect(failed?.status).toBe("failed");
+		app.provider.failWith = null;
+		await app.service.deleteAsset(LOCAL_USER, guide.id);
+		await app.service.retryJob(LOCAL_USER, failed?.id as string);
+		await app.engine.idle();
+		expect(await jobOf(again.session.id)).toMatchObject({
+			status: "failed",
+			errorCode: "referenceNotFound",
+		});
+	});
+
+	test("a model that needs a reference is refused without one", () => {
+		const model = {
+			...CLIP,
+			capabilities: {
+				...CLIP.capabilities,
+				maxReferenceImages: 1,
+				needsReference: true,
+			},
+		};
+		const params = { prompt: "x", count: 1, extras: {} };
+		expect(() =>
+			adaptParams(model, { ...params, referenceAssetIds: [] }),
+		).toThrow(expect.objectContaining({ code: "needsPicture" }));
+		expect(
+			adaptParams(model, { ...params, referenceAssetIds: ["a"] })
+				.referenceAssetIds,
+		).toEqual(["a"]);
+	});
+
 	test("a model follows only the guide kinds it knows", () => {
 		const params = {
 			prompt: "x",

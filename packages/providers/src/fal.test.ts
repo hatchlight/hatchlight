@@ -102,6 +102,11 @@ test("a guide picture switches Z-Image Turbo to its ControlNet, which makes the 
 	]);
 	const fal = new FalProvider(fetch, 0);
 	const zImage = model(fal, "fal/fal-ai/z-image/turbo");
+	// Priced by endpoint: plain, and following a guide.
+	expect(zImage.pricing).toEqual({
+		usdPerOutput: 0.005,
+		usdPerGuidedOutput: 0.0065,
+	});
 	expect(zImage.capabilities.guide).toEqual({
 		kinds: ["outlines", "pose", "depth"],
 		makesMaps: ["outlines", "pose", "depth"],
@@ -161,6 +166,9 @@ test("Ideogram Character keeps the person in its one reference", async () => {
 	const fal = new FalProvider(fetch, 0);
 	const character = model(fal, "fal/fal-ai/ideogram/character");
 	expect(character.capabilities.maxReferenceImages).toBe(1);
+	// Never from words alone, so it is never chosen without a picture.
+	expect(character.operations).toEqual(["edit"]);
+	expect(character.capabilities.needsReference).toBe(true);
 	await fal.submit(
 		{
 			model: character,

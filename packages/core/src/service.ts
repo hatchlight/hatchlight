@@ -61,7 +61,10 @@ export function adaptParams(
 					{ model: model.name, count: caps.maxReferenceImages },
 				);
 	}
-	if (caps.upscale != null && params.referenceAssetIds.length === 0) {
+	if (
+		(caps.upscale != null || caps.needsReference) &&
+		params.referenceAssetIds.length === 0
+	) {
 		throw new ValidationError(
 			`${model.name} needs a picture to work on`,
 			"needsPicture",

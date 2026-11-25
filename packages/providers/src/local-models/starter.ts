@@ -321,9 +321,10 @@ export function starterModels(): LocalModelSpec[] {
 			homepage:
 				"https://huggingface.co/alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1",
 			// Measured on a 12 GB card (RTX 4070 SUPER, the desktop holding
-			// about 2.2 GB): the 8-bit model, the control file and a 1024px
-			// picture's workspace need about 10.4 GB, and run only with a memory
-			// budget (31 s). The 4-bit one is estimated from it.
+			// about 2.2 GB): the 8-bit model and the control file take about
+			// 8.2 GB, and a 1024px picture's workspace about 2 GB more. It runs
+			// only within its memory budget (31 s), and 10.5 GB still lets a
+			// 12 GB card choose it over the 4-bit one, which is estimated.
 			variants: [
 				{
 					id: "q8",

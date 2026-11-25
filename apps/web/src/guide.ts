@@ -65,8 +65,9 @@ export function outlines(
 		for (let i = 0; i < size; i++) strength[i] = (strength[i] ?? 0) / strongest;
 	}
 
-	// Thinned to the strongest pixel across each edge. The angle ranges are
-	// the engine's, as it writes them.
+	// Thinned to the strongest pixel across each edge. The angle tests are
+	// the engine's as written, inverted comparisons and all (sic), so the
+	// preview matches what it makes: https://github.com/leejet/stable-diffusion.cpp/blob/532d2c15/src/runtime/preprocessing.hpp#L231-L243
 	const thin = new Float32Array(size);
 	for (let y = 1; y < height - 1; y++) {
 		for (let x = 1; x < width - 1; x++) {

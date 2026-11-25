@@ -173,6 +173,7 @@ function describe(model: ModelSpec): string {
 		caps.mask != null && "redraws only a masked part",
 		caps.upscale != null && `upscales a picture ${caps.upscale}x`,
 		caps.guide && guideText(caps.guide),
+		caps.needsReference && "needs a given picture",
 	].filter(Boolean);
 	const cost = isLocal(model)
 		? "free, runs on this computer"

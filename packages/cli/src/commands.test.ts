@@ -198,6 +198,7 @@ describe("generate", () => {
 		for (const args of [
 			["--guide", "pose.png", "--guide-kind", "edges"],
 			["--guide", "pose.png", "--guide-strength", "1.5"],
+			["--guide", "pose.png", "--guide-strength", ""],
 			["--guide-kind", "pose"],
 			["--guide-map"],
 		]) {

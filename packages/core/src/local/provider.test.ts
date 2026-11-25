@@ -1128,14 +1128,35 @@ describe("running", () => {
 		expect(events.at(-1)?.type).toBe("completed");
 		const argv = calls[0] ?? [];
 		const after = (flag: string) => argv[argv.indexOf(flag) + 1];
-		// The guide's shape, at the model's size.
-		expect([after("-W"), after("-H")]).toEqual(["576", "1024"]);
+		// The model's ratio nearest the guide's (1:1 of 1:1 and 16:9), at its
+		// size, as three channels with nothing transparent: a JPEG.
+		expect([after("-W"), after("-H")]).toEqual(["1024", "1024"]);
 		expect(await new Bun.Image(given).metadata()).toMatchObject({
-			width: 576,
+			width: 1024,
 			height: 1024,
+			format: "jpeg",
 		});
 		expect(after("--image-preprocess")).toBe("target=control,canny=true");
 		expect(await readdir(dir)).toEqual([]);
+	});
+
+	test("a guide of an odd shape takes the nearest ratio the model makes", async () => {
+		const { provider } = await setup(GUIDED);
+		const local = provider(() => {
+			throw new Error("not run");
+		});
+		await local.load();
+		const [model] = local.listModels();
+		const handle = await local.submit({
+			model: model as never,
+			params: params({
+				guide: { assetId: "g", kind: "outlines", ready: false },
+			}),
+			references: [],
+			guide: { data: picture(2000, 100), mime: "image/png" },
+		});
+		// 20:1 is nearest 16:9 here, not a 1024x64 sliver.
+		expect(handle.size).toEqual({ width: 1024, height: 576 });
 	});
 
 	test("a guide picture goes to the model kept loaded", async () => {
@@ -1206,6 +1227,10 @@ describe("running", () => {
 			"8",
 		);
 		expect(guided?.request.controlImage?.length).toBeGreaterThan(0);
+		const sent = Buffer.from(guided?.request.controlImage ?? "", "base64");
+		expect(await new Bun.Image(sent).metadata()).toMatchObject({
+			format: "jpeg",
+		});
 		expect(guided?.request.controlStrength).toBe(0.6);
 		expect(guided?.request.imagePreprocess).toBeUndefined();
 		expect([guided?.request.width, guided?.request.height]).toEqual([

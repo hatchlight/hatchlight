@@ -101,7 +101,10 @@ export class FakeProvider implements ProviderAdapter<FakeHandle> {
 				// Like FLUX, it reads prompts in English.
 				...(name === "beta" && { englishPrompts: true }),
 			},
-			pricing: { usdPerOutput: 0.01 },
+			pricing: {
+				usdPerOutput: 0.01,
+				...(name === "alpha" && { usdPerGuidedOutput: 0.02 }),
+			},
 		}));
 	}
 

@@ -49,11 +49,13 @@ function estimateCost(
 	params: GenerationParams,
 	outputs: number,
 ): number | null {
-	const { usdPerSecond, usdPerOutput } = model.pricing ?? {};
+	const { usdPerSecond, usdPerOutput, usdPerGuidedOutput } =
+		model.pricing ?? {};
 	if (usdPerSecond != null && params.durationSeconds != null) {
 		return usdPerSecond * params.durationSeconds * outputs;
 	}
-	return usdPerOutput == null ? null : usdPerOutput * outputs;
+	const each = (params.guide && usdPerGuidedOutput) || usdPerOutput;
+	return each == null ? null : each * outputs;
 }
 
 /**
@@ -727,7 +729,12 @@ export class JobEngine {
 				const asset = assets.find((a) => a.id === id);
 				const blob = asset && (await this.deps.assets.get(ctx, asset.hash));
 				if (!asset || !blob)
-					throw new Error(`Reference image is missing: ${id}`);
+					// Deleted since the job was asked for, e.g. before a retry: a
+					// reference, a mask or a guide alike.
+					throw new CodedError(
+						`A reference image was not found: ${id}`,
+						"referenceNotFound",
+					);
 				return { data: await blob.bytes(), mime: asset.mime };
 			}),
 		);

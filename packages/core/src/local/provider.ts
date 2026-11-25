@@ -247,6 +247,25 @@ export function dimensions(
 		: { width: round((size * w) / h), height: round(size) };
 }
 
+/** The ratio a model offers nearest the size asked for. */
+export function nearestRatio(
+	ratios: string[],
+	width: number | undefined,
+	height: number | undefined,
+): string | undefined {
+	if (!width || !height || width <= 0 || height <= 0) return undefined;
+	const wanted = Math.log(width / height);
+	const off = (ratio: string) => {
+		const [w = 1, h = 1] = ratio.split(":").map(Number);
+		return Math.abs(Math.log(w / h) - wanted);
+	};
+	return ratios.reduce<string | undefined>(
+		(best, ratio) =>
+			best === undefined || off(ratio) < off(best) ? ratio : best,
+		undefined,
+	);
+}
+
 /** A picture model that starts from a picture: image-to-image. */
 export function redraws(model: LocalModelSpec): boolean {
 	return (
@@ -752,13 +771,19 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 				});
 		};
 		if (spec?.defaults.guide && request.guide && request.params.guide) {
-			// The new picture keeps the guide's shape, at the model's size.
+			// The new picture takes the model's ratio nearest the guide's, at
+			// the model's size: a guide of an odd shape makes no sliver.
 			const { picture, width, height } = await readable(request.guide.data);
-			const size = dimensions(spec.defaults.size, `${width}:${height}`);
+			const size = dimensions(
+				spec.defaults.size,
+				nearestRatio(spec.defaults.aspectRatios, width, height),
+			);
 			handle.size = size;
+			// As JPEG at full quality: three channels, as the engine reads a
+			// guide, with no transparency to read one way or another.
 			handle.guide = await picture
 				.resize(size.width, size.height, { fit: "fill" })
-				.png()
+				.jpeg({ quality: 100 })
 				.bytes();
 		}
 		const max = spec?.defaults.references?.max ?? 0;
@@ -975,7 +1000,7 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 				references.push(await write(picture.data, `.${picture.extension}`));
 			}
 			const mask = handle.mask && (await write(handle.mask, "-mask.png"));
-			const guide = handle.guide && (await write(handle.guide, "-guide.png"));
+			const guide = handle.guide && (await write(handle.guide, "-guide.jpg"));
 			const hold = yield* this.store.gpu.acquire(
 				runtime.variant.memoryBytes,
 				ctx.signal,

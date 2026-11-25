@@ -175,6 +175,27 @@ describe("Z-Image Turbo, guided", () => {
 		expect(args).toContain("--control-image");
 	});
 
+	test("is 8-bit on a 12 GB card, where it runs within its budget", () => {
+		const gpu = {
+			vendor: "nvidia" as const,
+			name: "RTX 4070 SUPER",
+			memoryBytes: 12_282 * 2 ** 20,
+		};
+		const choice = chooseVariant(
+			guided?.variants ?? [],
+			{
+				os: "win32",
+				arch: "x64",
+				wsl: false,
+				memoryBytes: 32 * 2 ** 30,
+				gpus: [gpu],
+			},
+			() => ({ build: {} as never, gpu, throughWindows: false }),
+		);
+		expect(choice?.variant.id).toBe("q8");
+		expect(choice?.fit).toBe("gpu");
+	});
+
 	test("follows outlines it finds, and pose or depth from a map", () => {
 		expect(guided?.defaults.guide).toEqual({
 			kinds: ["outlines", "pose", "depth"],

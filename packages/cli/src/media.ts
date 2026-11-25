@@ -226,10 +226,14 @@ interface GenerateInput {
 /** The guide asked for with --guide and its options, checked. */
 function guideOf(values: Values): GenerateInput["guide"] {
 	const kind = values["guide-kind"] as string | undefined;
+	const given = values["guide-strength"] as string | undefined;
+	// An empty value is no number, not 0.
 	const strength =
-		values["guide-strength"] == null
+		given == null
 			? undefined
-			: Number(values["guide-strength"]);
+			: given.trim() === ""
+				? Number.NaN
+				: Number(given);
 	if (values.guide == null) {
 		if (kind != null || strength != null || values["guide-map"] === true) {
 			throw new UsageError(
