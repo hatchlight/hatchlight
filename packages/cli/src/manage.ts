@@ -286,7 +286,11 @@ async function installFromHub(
 		io.signal.addEventListener("abort", () => resolve(null), { once: true });
 	});
 	try {
-		await Promise.race([listens, ended]);
+		await Promise.race([listens, ended, interrupted]);
+		if (io.signal.aborted) {
+			io.err("Stopped. Nothing was downloaded.");
+			return EXIT.interrupted;
+		}
 		await api.startFromHub(choice);
 		const end = await Promise.race([ended, interrupted]);
 		io.status(null);

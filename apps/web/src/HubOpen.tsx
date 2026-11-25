@@ -6,7 +6,7 @@ import {
 } from "@hatchlight/core/hugging-face";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ExternalLinkIcon } from "lucide-react";
-import { type ReactNode, useEffect } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -128,10 +128,14 @@ export function HubOpen({ target }: { target: HubTarget | null }) {
 	const file =
 		found?.kind === "checkpoint" || found?.kind === "lora" ? found : null;
 	// The download goes on in the background; its end comes as an event.
+	// The start under way: stopping waits for it, else it would stop nothing.
+	const starting = useRef<Promise<unknown> | null>(null);
 	const start = useMutation({
 		mutationFn: (file: HubFile) => {
 			forgetHubDownload(file.repo, file.file);
-			return api.startFromHub(file);
+			const started = api.startFromHub(file);
+			starting.current = started;
+			return started;
 		},
 	});
 	const end = useHubEnd(file?.repo ?? "", file?.file ?? "");
@@ -151,7 +155,13 @@ export function HubOpen({ target }: { target: HubTarget | null }) {
 	}, [ended, t]);
 
 	const close = () => {
-		if (file && downloading) void api.cancelFromHub(file).catch(() => {});
+		if (file && downloading) {
+			void (starting.current ?? Promise.resolve()).then(
+				() => api.cancelFromHub(file).catch(() => {}),
+				// It did not start: there is nothing to stop.
+				() => {},
+			);
+		}
 		redirect(href.models);
 	};
 	const failure =

@@ -1493,15 +1493,19 @@ export function createApp(options: AppOptions): Hono {
 		// A LoRA added here counts as an upload by whoever asked for it.
 		const uploader = accounts ? c.get("viewer").user : null;
 		if (uploader) {
-			void download.done.then((added) => {
-				if (added?.kind === "lora") {
-					accounts?.recordLoraUpload(
-						uploader.id,
-						added.item.id,
-						added.item.size,
-					);
-				}
-			});
+			void download.done
+				.then((added) => {
+					if (added?.kind === "lora") {
+						accounts?.recordLoraUpload(
+							uploader.id,
+							added.item.id,
+							added.item.size,
+						);
+					}
+				})
+				.catch((error) =>
+					console.error("Could not record a LoRA from Hugging Face:", error),
+				);
 		}
 		return c.json({ repo: download.repo, file: download.file }, 202);
 	});
@@ -1874,13 +1878,17 @@ export function createApp(options: AppOptions): Hono {
 			const unsubscribeJobs = engine.subscribe((target, event) => {
 				if (target === userId) send(event);
 			});
+			// Who sees the server's paths, the admins: they also download from
+			// Hugging Face, whose errors may name those paths.
 			const folders = seesFolders(c);
 			const unsubscribeModels = models.subscribe((event) =>
-				send(
-					event.type === "models.moving" && !folders
-						? { ...event, to: "" }
-						: event,
-				),
+				event.type.startsWith("hub.") && !folders
+					? undefined
+					: send(
+							event.type === "models.moving" && !folders
+								? { ...event, to: "" }
+								: event,
+						),
 			);
 			const unsubscribeTrainer = options.trainer?.subscribe((event) => {
 				const trainer = forViewer(c, event.trainer);

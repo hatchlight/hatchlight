@@ -420,6 +420,8 @@ export class LocalModelStore {
 		string,
 		{ controller: AbortController; ended: Promise<unknown> }
 	>();
+	/** How long a download from Hugging Face may send nothing. */
+	private hubStallMs = 60_000;
 
 	constructor(options: LocalModelStoreOptions) {
 		assertCatalog(options.catalog, options.engines);
@@ -986,6 +988,7 @@ export class LocalModelStore {
 				);
 			const busy =
 				this.installs.size > 0 ||
+				this.hubDownloads.size > 0 ||
 				this.gpu.inUse() ||
 				this.loras.busy ||
 				this.checkpoints.busy ||
@@ -1291,7 +1294,8 @@ export class LocalModelStore {
 				return null;
 			},
 		);
-		return { repo, file, done };
+		// Never left to reject: nobody may be waiting on it.
+		return { repo, file, done: done.catch(() => null) };
 	}
 
 	/** Stops a download from Hugging Face; nothing of it is kept. */
@@ -1307,13 +1311,51 @@ export class LocalModelStore {
 		choice: HubFile,
 		signal: AbortSignal,
 	): Promise<HubAdded> {
+		const name = choice.file.split("/").at(-1) as string;
+		// Nobody waits on the download: one that stops sending is given up,
+		// so it does not hold its place forever.
+		const quiet = new AbortController();
+		let stalled: Error | null = null;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const awake = () => {
+			clearTimeout(timer);
+			timer = setTimeout(() => {
+				stalled = new CodedError(
+					`The download of ${name} was cut short`,
+					"downloadCutShort",
+					{ file: name },
+				);
+				quiet.abort(stalled);
+			}, this.hubStallMs);
+		};
+		awake();
+		try {
+			return await this.receiveFromHub(
+				choice,
+				name,
+				AbortSignal.any([signal, quiet.signal]),
+				awake,
+			);
+		} catch (error) {
+			throw signal.aborted ? error : (stalled ?? error);
+		} finally {
+			clearTimeout(timer);
+		}
+	}
+
+	private async receiveFromHub(
+		choice: HubFile,
+		name: string,
+		signal: AbortSignal,
+		awake: () => void,
+	): Promise<HubAdded> {
 		const { repo, file, size, sha256 } = choice;
-		const name = file.split("/").at(-1) as string;
 		const response = await hubFetch(
 			this.fetch,
 			hubFileUrl(repo, choice.revision, file),
 			{ signal },
 		);
+		awake();
 		if (!response.ok || !response.body) {
 			await response.body?.cancel().catch(() => {});
 			throw new CodedError(
@@ -1346,6 +1388,7 @@ export class LocalModelStore {
 		const checked = response.body.pipeThrough(
 			new TransformStream<Uint8Array, Uint8Array>({
 				transform: (chunk, controller) => {
+					awake();
 					received += chunk.byteLength;
 					if (received > size) {
 						fail(

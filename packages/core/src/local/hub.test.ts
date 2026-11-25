@@ -517,6 +517,26 @@ describe("adding a file from Hugging Face", () => {
 		// Stopping what is not downloading does nothing.
 		await models.cancelFromHub("someone/checkpoint", "other.safetensors");
 	});
+	test("a download that stops sending is given up, and frees its place", async () => {
+		const { models, events } = await store(
+			{
+				"someone/checkpoint": {
+					files: { "juggernaut.safetensors": safetensors(SDXL) },
+				},
+			},
+			stalling,
+		);
+		(models as unknown as { hubStallMs: number }).hubStallMs = 20;
+		const where = target("someone/checkpoint", "juggernaut.safetensors");
+		expect(await add(models, where)).toBeNull();
+		expect(events.at(-1)).toMatchObject({
+			type: "hub.failed",
+			code: "downloadCutShort",
+		});
+		expect(await models.checkpoints.list()).toEqual([]);
+		const again = await models.startFromHub(where, SHA);
+		await models.cancelFromHub(again.repo, again.file);
+	});
 
 	test("a file larger than the free disk space is refused before downloading", async () => {
 		const { models } = await store({
