@@ -4,7 +4,7 @@
  * migrations). It runs on Bun, like the source: `bunx hatchlight mcp`.
  *
  * Build the UI first (`bun run build`). Then publish with
- * `npm publish dist/npm --access public`.
+ * `npm publish ./dist/npm --access public`.
  */
 import { cp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";

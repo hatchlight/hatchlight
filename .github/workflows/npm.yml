@@ -110,7 +110,7 @@ jobs:
           if npm view "hatchlight@${TAG#v}" version >/dev/null 2>&1; then
             echo "hatchlight ${TAG#v} is already on npm"
           else
-            npm publish dist/npm --access public --provenance
+            npm publish ./dist/npm --access public --provenance
           fi
       - name: Publish to the MCP Registry
         run: |
