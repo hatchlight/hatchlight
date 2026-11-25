@@ -16,6 +16,7 @@ import type {
 import {
 	Assistant,
 	type AssistantStore,
+	assistantInstructions,
 	conversation,
 	fit,
 	keptModels,
@@ -502,6 +503,19 @@ describe("the tools as the model is told about them", () => {
 		expect(properties.prompt).toBeDefined();
 		expect(properties.session_id).toBeUndefined();
 		expect(generate.parameters.required).toEqual(["prompt"]);
+		// A guide picture is asked for by id in the app, with its kind.
+		expect(properties.guide_image).toBeDefined();
+		expect(properties.guide_kind).toMatchObject({
+			enum: ["outlines", "pose", "depth"],
+		});
+		expect(properties.guide_is_map).toMatchObject({ type: "boolean" });
+		expect(properties.guide_strength).toMatchObject({ minimum: 0, maximum: 1 });
+	});
+
+	test("know how to keep a person, and how to follow a pose", () => {
+		const said = assistantInstructions();
+		expect(said).toContain('"the person in picture 1"');
+		expect(said).toContain("guide_image with guide_kind");
 	});
 });
 

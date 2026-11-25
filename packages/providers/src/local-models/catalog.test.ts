@@ -106,6 +106,48 @@ describe("the local models catalog", () => {
 	});
 });
 
+describe("Z-Image Turbo, guided", () => {
+	const plain = models.find((m) => m.id === "z-image-turbo");
+	const guided = models.find((m) => m.id === "z-image-turbo-guided");
+
+	test("adds only the control file to Z-Image Turbo's, pinned and hashed", () => {
+		expect(guided?.variants.map((v) => v.id)).toEqual(["q8", "q4"]);
+		for (const variant of guided?.variants ?? []) {
+			const same = plain?.variants.find((v) => v.id === variant.id);
+			// Files with the same hash are stored once: only one is new.
+			const shared = variant.files.filter((f) =>
+				same?.files.some((o) => o.sha256 === f.sha256 && o.size === f.size),
+			);
+			expect(shared).toEqual(same?.files ?? []);
+			const added = variant.files.filter((f) => !shared.includes(f));
+			expect(added).toEqual([
+				{
+					name: "Z-Image-Turbo-Fun-Controlnet-Union-2.1-lite-2602-8steps.safetensors",
+					url: "https://huggingface.co/alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1/resolve/5155fc56d17821007d6f62ac192c09e0f0e72016/Z-Image-Turbo-Fun-Controlnet-Union-2.1-lite-2602-8steps.safetensors",
+					size: 2_016_627_488,
+					sha256:
+						"3ea098db9bd145be525c7e2366920b6d76c5ffd46b3d7aa8169bbc943fdaee35",
+					role: "control_net",
+				},
+			]);
+			expect(roleOption("control_net")).toBe("--control-net");
+			expect(variant.memoryBytes).toBeGreaterThan(same?.memoryBytes ?? 0);
+		}
+	});
+
+	test("follows outlines it finds, and pose or depth from a map", () => {
+		expect(guided?.defaults.guide).toEqual({
+			kinds: ["outlines", "pose", "depth"],
+			makesMaps: ["outlines"],
+			strength: 0.75,
+		});
+		// Its weights are Apache 2.0, like Z-Image Turbo's.
+		expect(guided?.license).toBe("Apache 2.0");
+		expect(guided?.commercial).toEqual({ kind: "allowed" });
+		expect(plain?.defaults.guide).toBeUndefined();
+	});
+});
+
 describe("variants chosen for a card", () => {
 	test("FLUX.2 klein is 8-bit on a 12 GB card: 16-bit runs out when editing", () => {
 		const gpu = {

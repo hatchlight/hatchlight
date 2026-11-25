@@ -12,6 +12,8 @@ export interface ProviderRequest {
 	references: ReferenceImage[];
 	/** What of the first reference to redraw, when the person marked it. */
 	mask?: ReferenceImage;
+	/** The picture `params.guide` names, for a model that follows a guide. */
+	guide?: ReferenceImage;
 }
 
 export interface ProviderContext {

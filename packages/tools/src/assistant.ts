@@ -110,6 +110,8 @@ export function assistantInstructions(language?: string): string {
 		"- The pictures you make appear to the person on their own: do not repeat their ids or links.",
 		"- When you can see the results, look before you answer: say in one sentence whether they match what was asked, and if something is clearly off (cut off, wrong count, misspelled text, wrong colors) offer one concrete fix as a question. Do not make it again unasked.",
 		"- To change a picture you made, start from it: give its id in reference_images, with a model that edits or redraws pictures, rather than making a new one from words.",
+		'- To keep the same person or character in a new picture ("the same girl, now sitting"), give a picture of them in reference_images to a model that follows given pictures, and name them in the prompt as "the person in picture 1", then describe the whole new scene.',
+		'- To follow the pose, outlines or depth of a picture ("in this pose", "keep this layout"), give it as guide_image with guide_kind, to a model that follows a guide picture. When the picture already is a skeleton, edge drawing or depth map, set guide_is_map.',
 		"- When several models made the same prompt, say which result fits the request best and why, in a sentence.",
 		TOOLS_INSTRUCTIONS,
 	].join("\n");

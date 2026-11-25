@@ -45,6 +45,12 @@ export interface WarmRequest {
 	maskImage?: string;
 	/** How much the redrawn picture changes, 0 to 1. */
 	strength?: number;
+	/** The guide picture the model follows, base64. */
+	controlImage?: string;
+	/** How closely the guide is followed, 0 to 1. */
+	controlStrength?: number;
+	/** The engine's rules for its pictures, e.g. finding a guide's outlines. */
+	imagePreprocess?: string;
 }
 
 interface Running {
@@ -370,6 +376,15 @@ export class WarmEngines {
 			...(request.refImages?.length && { ref_images: request.refImages }),
 			...(request.maskImage != null && { mask_image: request.maskImage }),
 			...(request.strength != null && { strength: request.strength }),
+			...(request.controlImage != null && {
+				control_image: request.controlImage,
+			}),
+			...(request.controlStrength != null && {
+				control_strength: request.controlStrength,
+			}),
+			...(request.imagePreprocess != null && {
+				image_preprocess: request.imagePreprocess,
+			}),
 			// Only these two forms are known to work: an object here stops the
 			// server altogether.
 			...(request.previewInterval != null && {

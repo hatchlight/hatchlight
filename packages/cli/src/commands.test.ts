@@ -170,6 +170,60 @@ describe("generate", () => {
 		);
 	});
 
+	test("follows a guide picture, and refuses guide options that do not fit", async () => {
+		const t = await terminal();
+		await writeFile(join(t.dir, "pose.png"), picture(32, 32));
+		const code = await t.run("generate", [
+			"a dancer",
+			"--allow-paid",
+			"-m",
+			"fake/alpha",
+			"--guide",
+			"pose.png",
+			"--guide-kind",
+			"pose",
+			"--guide-map",
+			"--guide-strength",
+			"0.6",
+			"--json",
+		]);
+		expect(code).toBe(EXIT.ok);
+		const session = await t.api.session(t.json().sessionId);
+		expect(session.turns[0]?.jobs[0]?.params.guide).toMatchObject({
+			kind: "pose",
+			ready: true,
+			strength: 0.6,
+		});
+		expect(t.provider.submitted.at(-1)?.guide).toBeDefined();
+		for (const args of [
+			["--guide", "pose.png", "--guide-kind", "edges"],
+			["--guide", "pose.png", "--guide-strength", "1.5"],
+			["--guide-kind", "pose"],
+			["--guide-map"],
+		]) {
+			await expect(
+				t.run("generate", [
+					"a fox",
+					"--allow-paid",
+					"-m",
+					"fake/alpha",
+					...args,
+				]),
+			).rejects.toBeInstanceOf(UsageError);
+		}
+		// A model that follows no guide says so.
+		await expect(
+			t.run("generate", [
+				"a fox",
+				"--allow-paid",
+				"-m",
+				"fake/beta",
+				"--guide",
+				"pose.png",
+			]),
+		).rejects.toMatchObject({ code: "noGuide" });
+	});
+
 	test("Ctrl+C stops waiting, and the job goes on", async () => {
 		const t = await terminal();
 		let open = () => {};

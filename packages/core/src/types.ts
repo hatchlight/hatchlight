@@ -127,6 +127,35 @@ export const DEFAULT_STRENGTH = 0.7;
  */
 export const DEFAULT_MASK_STRENGTH = 0.85;
 
+/**
+ * What a guide picture shows for a new picture to follow: its outlines, the
+ * pose of a person (a skeleton), or how far each part is (a depth map).
+ */
+export const GUIDE_KINDS = ["outlines", "pose", "depth"] as const;
+export type GuideKind = (typeof GUIDE_KINDS)[number];
+
+/** How a model follows a guide picture. */
+export interface GuideSupport {
+	/** The kinds of guide it follows. */
+	kinds: GuideKind[];
+	/**
+	 * The kinds whose map it makes itself from any picture; the others need
+	 * a picture that already is the map, e.g. a pose skeleton.
+	 */
+	makesMaps: GuideKind[];
+	/** How closely it follows the guide unasked, 0 to 1. */
+	strength: number;
+}
+
+/** Whether a model with `guide` can follow a guide of this kind, as given. */
+export function followsGuide(
+	guide: GuideSupport | undefined,
+	asked: { kind: GuideKind; ready: boolean },
+): boolean {
+	if (!guide?.kinds.includes(asked.kind)) return false;
+	return asked.ready || guide.makesMaps.includes(asked.kind);
+}
+
 /** A LoRA's id: also its file's name, and safe inside `<lora:id:1>`. */
 export const LORA_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
@@ -329,6 +358,20 @@ export const generationParamsSchema = z.object({
 	 */
 	maskAssetId: z.string().optional(),
 	/**
+	 * A picture whose outlines, pose or depth the new picture follows. Only
+	 * for models that take a guide.
+	 */
+	guide: z
+		.object({
+			assetId: z.string(),
+			kind: z.enum(GUIDE_KINDS),
+			/** The picture already is the map (edges, a skeleton, depth). */
+			ready: z.boolean().default(false),
+			/** How closely it is followed, 0 to 1; unasked, the model's own. */
+			strength: z.number().min(0).max(1).optional(),
+		})
+		.optional(),
+	/**
 	 * LoRAs to add to the model, each with how strongly: 1 as trained, less
 	 * to soften it. Only for models that take LoRAs of their family.
 	 */
@@ -391,6 +434,8 @@ export interface ModelCapabilities {
 	englishPrompts?: boolean;
 	/** Set for a model that takes LoRAs: the family they must be for. */
 	loraBase?: LoraBase;
+	/** Set for a model that follows a guide picture. */
+	guide?: GuideSupport;
 }
 
 /** What a model is good at, shown as tags; the interface translates each. */
@@ -777,6 +822,11 @@ export interface LocalModelDefaults {
 	previewsWhileFollowing?: boolean;
 	/** Upscalers: how many times larger the picture comes out. */
 	upscale?: number;
+	/**
+	 * Set for a model that follows a guide picture, through a file with the
+	 * `control_net` role.
+	 */
+	guide?: GuideSupport;
 }
 
 /** What a local model makes, and from what. */

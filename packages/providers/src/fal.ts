@@ -1,11 +1,14 @@
-import type {
-	GenerationParams,
-	ModelSpec,
-	ProviderAdapter,
-	ProviderContext,
-	ProviderEvent,
-	ProviderRequest,
-	ReferenceImage,
+import {
+	type GenerationParams,
+	GUIDE_KINDS,
+	type GuideKind,
+	type ModelSpec,
+	type ProviderAdapter,
+	type ProviderContext,
+	type ProviderEvent,
+	type ProviderRequest,
+	type ReferenceImage,
+	ValidationError,
 } from "@hatchlight/core";
 import {
 	errorMessage,
@@ -42,10 +45,24 @@ const FLUX_SIZES: Record<string, string> = {
 
 interface FalModel {
 	spec: ModelSpec;
-	/** The endpoint to call; some models use a separate one for editing. */
-	endpoint(references: ReferenceImage[]): string;
-	input(params: GenerationParams, references: ReferenceImage[]): object;
+	/**
+	 * The endpoint to call; some models use a separate one for editing, or
+	 * for following a guide picture.
+	 */
+	endpoint(references: ReferenceImage[], guide?: ReferenceImage): string;
+	input(
+		params: GenerationParams,
+		references: ReferenceImage[],
+		guide?: ReferenceImage,
+	): object;
 }
+
+/** How fal's Z-Image ControlNet makes the map of each kind of guide. */
+const PREPROCESS: Record<GuideKind, string> = {
+	outlines: "canny",
+	pose: "pose",
+	depth: "depth",
+};
 
 function spec(
 	endpoint: string,
@@ -168,6 +185,83 @@ const MODELS: FalModel[] = [
 			...params.extras,
 		}),
 	},
+	{
+		spec: spec("fal-ai/z-image/turbo", "Z-Image Turbo", {
+			operations: ["generate"],
+			capabilities: {
+				aspectRatios: Object.keys(FLUX_SIZES),
+				seed: true,
+				maxCount: 4,
+				maxReferenceImages: 0,
+				// fal makes the map of every kind from any picture.
+				guide: {
+					kinds: [...GUIDE_KINDS],
+					makesMaps: [...GUIDE_KINDS],
+					strength: 0.75,
+				},
+			},
+			// About a megapixel, at the guided endpoint's $0.0065 per megapixel
+			// (the plain one is $0.005).
+			pricing: { usdPerOutput: 0.0065 },
+		}),
+		endpoint: (_references, guide) =>
+			guide ? "fal-ai/z-image/turbo/controlnet" : "fal-ai/z-image/turbo",
+		input: (params, _references, guide) => ({
+			prompt: params.prompt,
+			num_images: params.count,
+			output_format: "png",
+			// Guided, the picture takes the guide's shape.
+			...(params.aspectRatio &&
+				!guide && { image_size: FLUX_SIZES[params.aspectRatio] }),
+			...(params.seed != null && { seed: params.seed }),
+			...(guide &&
+				params.guide && {
+					image_url: toDataUri(guide.data, guide.mime),
+					preprocess: params.guide.ready
+						? "none"
+						: PREPROCESS[params.guide.kind],
+					...(params.guide.strength != null && {
+						control_scale: params.guide.strength,
+					}),
+				}),
+			...params.extras,
+		}),
+	},
+	{
+		spec: spec("fal-ai/ideogram/character", "Ideogram Character", {
+			operations: ["generate", "edit"],
+			capabilities: {
+				aspectRatios: Object.keys(FLUX_SIZES),
+				seed: true,
+				maxCount: 4,
+				// It keeps one person, from one picture of them.
+				maxReferenceImages: 1,
+			},
+			// At its default, balanced speed.
+			pricing: { usdPerOutput: 0.15 },
+		}),
+		endpoint: () => "fal-ai/ideogram/character",
+		input: (params, references) => {
+			const [person] = references;
+			if (!person) {
+				throw new ValidationError(
+					"Ideogram Character needs a picture of the person to keep",
+					"needsPicture",
+					{ model: "Ideogram Character" },
+				);
+			}
+			return {
+				prompt: params.prompt,
+				num_images: params.count,
+				reference_image_urls: [toDataUri(person.data, person.mime)],
+				...(params.aspectRatio && {
+					image_size: FLUX_SIZES[params.aspectRatio],
+				}),
+				...(params.seed != null && { seed: params.seed }),
+				...params.extras,
+			};
+		},
+	},
 	video({
 		name: "Veo 3.1 Fast",
 		text: "fal-ai/veo3.1/fast",
@@ -281,11 +375,13 @@ export class FalProvider implements ProviderAdapter<FalHandle> {
 		if (!model) throw new Error(`Unknown fal model: ${request.model.id}`);
 		const response = await send(
 			this.fetch,
-			`${QUEUE}/${model.endpoint(request.references)}`,
+			`${QUEUE}/${model.endpoint(request.references, request.guide)}`,
 			{
 				method: "POST",
 				headers: { ...this.headers(ctx), "content-type": "application/json" },
-				body: JSON.stringify(model.input(request.params, request.references)),
+				body: JSON.stringify(
+					model.input(request.params, request.references, request.guide),
+				),
 				signal: ctx.signal,
 			},
 			this.name,

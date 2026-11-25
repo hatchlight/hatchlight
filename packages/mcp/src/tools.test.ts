@@ -147,6 +147,47 @@ test("a result, or a file, is the picture the next generation starts from", asyn
 	expect(textOf(next)).toContain(`Session ${session}`);
 });
 
+test("a guide picture is followed by a model that takes one, and refused by others", async () => {
+	const { call, dataDir } = await agent({ allowPaid: true });
+	const listed = textOf(await call("list_models"));
+	expect(listed).toContain(
+		"follows a guide picture (outlines from any picture; pose, depth only from a ready map)",
+	);
+	const file = join(dataDir, "pose.png");
+	await writeFile(file, picture(32, 32));
+	const guided = await call("generate", {
+		prompt: "a dancer on a stage",
+		models: ["fake/alpha"],
+		guide_image: file,
+		guide_kind: "pose",
+		guide_is_map: true,
+		guide_strength: 0.6,
+	});
+	expect(guided.isError).toBeFalsy();
+	expect(textOf(guided)).toContain("Fake alpha: done");
+	// A pose found in a plain picture needs a model that makes the map.
+	const unmade = await call("generate", {
+		prompt: "a dancer on a stage",
+		models: ["fake/alpha"],
+		guide_image: file,
+		guide_kind: "pose",
+	});
+	expect(unmade.isError).toBe(true);
+	const refused = await call("generate", {
+		prompt: "a dancer on a stage",
+		models: ["fake/beta"],
+		guide_image: file,
+	});
+	expect(refused.isError).toBe(true);
+	const wrong = await call("generate", {
+		prompt: "a dancer",
+		models: ["fake/alpha"],
+		guide_image: file,
+		guide_strength: 2,
+	});
+	expect(wrong.isError).toBe(true);
+});
+
 test("spending stops at the limit the person set", async () => {
 	const { call } = await agent({ allowPaid: true, spendLimitUsd: 0.015 });
 	const first = await call("generate", { prompt: "a", models: ["fake/alpha"] });
@@ -346,4 +387,25 @@ test("without a model named, the best free one is used, the faster of equals", (
 	// From a picture, only one that takes pictures.
 	expect(bestLocalModel(models, 1)?.id).toBe("local/draft");
 	expect(bestLocalModel(models.slice(1, 2), 1)).toBeUndefined();
+	// Following a guide, only one that follows that kind.
+	const guided = model("guided", 2, 2, {
+		guide: {
+			kinds: ["outlines", "pose"],
+			makesMaps: ["outlines"],
+			strength: 0.75,
+		},
+	});
+	const withGuided = [...models, guided];
+	expect(
+		bestLocalModel(withGuided, 0, { kind: "outlines", ready: false })?.id,
+	).toBe("local/guided");
+	expect(bestLocalModel(withGuided, 0, { kind: "pose", ready: true })?.id).toBe(
+		"local/guided",
+	);
+	expect(
+		bestLocalModel(withGuided, 0, { kind: "pose", ready: false }),
+	).toBeUndefined();
+	expect(
+		bestLocalModel(withGuided, 0, { kind: "depth", ready: true }),
+	).toBeUndefined();
 });

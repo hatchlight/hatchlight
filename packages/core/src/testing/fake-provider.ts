@@ -44,6 +44,8 @@ export interface FakeHandle {
 	aspectRatio?: string;
 	/** The mask's bytes, when one was given. */
 	mask?: Uint8Array;
+	/** The guide picture's bytes, when one was given. */
+	guide?: Uint8Array;
 }
 
 /**
@@ -88,7 +90,14 @@ export class FakeProvider implements ProviderAdapter<FakeHandle> {
 				seed: true,
 				maxCount: 2,
 				maxReferenceImages: name === "alpha" ? 2 : 0,
-				...(name === "alpha" && { mask: 0.85 }),
+				...(name === "alpha" && {
+					mask: 0.85,
+					guide: {
+						kinds: ["outlines", "pose", "depth"],
+						makesMaps: ["outlines"],
+						strength: 0.75,
+					},
+				}),
 				// Like FLUX, it reads prompts in English.
 				...(name === "beta" && { englishPrompts: true }),
 			},
@@ -110,6 +119,7 @@ export class FakeProvider implements ProviderAdapter<FakeHandle> {
 			count: request.params.count,
 			aspectRatio: request.params.aspectRatio,
 			...(request.mask && { mask: request.mask.data }),
+			...(request.guide && { guide: request.guide.data }),
 		};
 		this.submitted.push(handle);
 		return handle;

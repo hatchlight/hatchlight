@@ -495,6 +495,9 @@ export class JobEngine {
 							job.params.maskAssetId != null
 								? await this.loadReferences(ctx, [job.params.maskAssetId])
 								: [];
+						const [guide] = job.params.guide
+							? await this.loadReferences(ctx, [job.params.guide.assetId])
+							: [];
 						const params = await this.inEnglish(job, model, controller.signal);
 						handle = await adapter.submit(
 							{
@@ -502,6 +505,7 @@ export class JobEngine {
 								params,
 								references,
 								...(mask && { mask }),
+								...(guide && { guide }),
 							},
 							pctx,
 						);

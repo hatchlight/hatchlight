@@ -1,5 +1,8 @@
 import { storedValue } from "@hatchlight/core/legacy";
 import {
+	followsGuide,
+	GUIDE_KINDS,
+	type GuideKind,
 	MAX_LORAS,
 	type Media,
 	type ModelSpec,
@@ -44,6 +47,7 @@ import {
 	SheetTitle,
 } from "@/components/ui/sheet";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Toggle } from "@/components/ui/toggle";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -51,6 +55,7 @@ import { cn } from "@/lib/utils";
 import { Adjust } from "./Adjust";
 import { api, assetUrl, useDemo } from "./api";
 import { Extend } from "./Extend";
+import { outlines } from "./guide";
 import { useI18n } from "./i18n";
 import { type ChosenLora, LoraPicker, useLoras } from "./Loras";
 import { MaskPainter } from "./MaskPainter";
@@ -69,6 +74,13 @@ export interface Draft {
 	maskAssetId?: string;
 	/** LoRAs for the models that take them. */
 	loras?: ChosenLora[];
+	/** A picture whose outlines, pose or depth the new one follows. */
+	guide?: {
+		assetId: string;
+		kind: GuideKind;
+		ready: boolean;
+		strength?: number;
+	};
 }
 
 interface Props {
@@ -99,6 +111,34 @@ const WIDE = "(min-width: 1024px)";
 const DEFAULT_RATIO = "default";
 /** The length item that leaves each model at its shortest. */
 const SHORTEST = "shortest";
+
+/** The longest side of the outline preview, made in the browser. */
+const PREVIEW_SIDE = 512;
+
+/**
+ * The outlines the engine will find in a picture, as a picture to show:
+ * made here only to preview them, with the engine's own method.
+ */
+async function outlinePreview(src: string): Promise<string> {
+	const picture = new Image();
+	picture.crossOrigin = "anonymous";
+	picture.src = src;
+	await picture.decode();
+	const scale = Math.min(
+		1,
+		PREVIEW_SIDE / Math.max(picture.naturalWidth, picture.naturalHeight),
+	);
+	const canvas = document.createElement("canvas");
+	canvas.width = Math.max(1, Math.round(picture.naturalWidth * scale));
+	canvas.height = Math.max(1, Math.round(picture.naturalHeight * scale));
+	const context = canvas.getContext("2d");
+	if (!context) throw new Error("No canvas to draw on");
+	context.drawImage(picture, 0, 0, canvas.width, canvas.height);
+	const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+	pixels.data.set(outlines(pixels.data, canvas.width, canvas.height));
+	context.putImageData(pixels, 0, 0);
+	return canvas.toDataURL("image/png");
+}
 
 /** Makes `ids` the models the composer starts with next time. */
 export function rememberModels(ids: string[]): void {
@@ -140,6 +180,9 @@ export function Composer(props: Props) {
 		count: useId(),
 		strength: useId(),
 		length: useId(),
+		guideKind: useId(),
+		guideMap: useId(),
+		guideStrength: useId(),
 	};
 	const wide = useWide();
 	// On narrow screens the settings open in a sheet.
@@ -173,6 +216,13 @@ export function Composer(props: Props) {
 		/** The marks as painted, to show over the picture. */
 		marks: string;
 	} | null>(null);
+	// A picture to follow the outlines, pose or depth of, and how.
+	const [guide, setGuide] = useState<string | null>(null);
+	const [guideKind, setGuideKind] = useState<GuideKind>("outlines");
+	const [guideMap, setGuideMap] = useState(false);
+	const [guideMoved, setGuideStrength] = useState<number | null>(null);
+	const [guidePreview, setGuidePreview] = useState<string | null>(null);
+	const guideInput = useRef<HTMLInputElement>(null);
 	const [painting, setPainting] = useState(false);
 	const [extending, setExtending] = useState(false);
 	// The reference being turned or cropped.
@@ -210,6 +260,18 @@ export function Composer(props: Props) {
 		if (maskId && model.capabilities.mask == null) {
 			return t("composer.blocked.noMask", { model: model.name });
 		}
+		if (
+			guide &&
+			model.media === "image" &&
+			!followsGuide(model.capabilities.guide, {
+				kind: guideKind,
+				ready: guideMap,
+			})
+		) {
+			return model.capabilities.guide?.kinds.includes(guideKind)
+				? t("composer.blocked.guideNeedsMap", { model: model.name })
+				: t("composer.blocked.noGuide", { model: model.name });
+		}
 		return null;
 	};
 	// Images and videos are chosen separately: they differ in cost by orders of
@@ -235,6 +297,21 @@ export function Composer(props: Props) {
 		(maskId
 			? (redrawer?.capabilities.mask ?? redrawer?.capabilities.strength)
 			: redrawer?.capabilities.strength);
+	// A guide is offered once a chosen model follows one, and stays while set.
+	const guiding = media === "image" && guide != null;
+	const guider = selected.find((m) => m.capabilities.guide != null);
+	const canGuide = media === "image" && (guide != null || guider != null);
+	const guideStrength =
+		guideMoved ?? guider?.capabilities.guide?.strength ?? 0.75;
+	// Models that follow pictures keep the people in them: a character.
+	const followsPeople =
+		media === "image" &&
+		selected.some(
+			(m) =>
+				m.capabilities.maxReferenceImages > 0 &&
+				m.capabilities.strength == null &&
+				m.capabilities.upscale == null,
+		);
 	// LoRAs are offered for the families the chosen models take.
 	const loraBases = [
 		...new Set(selected.flatMap((m) => m.capabilities.loraBase ?? [])),
@@ -247,9 +324,11 @@ export function Composer(props: Props) {
 			)
 			.slice(0, MAX_LORAS),
 	);
-	// A redrawn picture keeps the reference's shape: no ratio to choose.
+	// A redrawn picture keeps the reference's shape, and a guided one its
+	// guide's: no ratio to choose.
 	const ratios =
-		redrawing && selected.every((m) => m.capabilities.strength != null)
+		(redrawing && selected.every((m) => m.capabilities.strength != null)) ||
+		(guiding && selected.every((m) => m.capabilities.guide != null))
 			? []
 			: offeredRatios;
 	const ratio = ratios.includes(aspectRatio) ? aspectRatio : "";
@@ -276,6 +355,28 @@ export function Composer(props: Props) {
 		mutationFn: api.upload,
 		onSuccess: (asset) => setReferences([...references, asset.id]),
 	});
+	const guideUpload = useMutation({
+		mutationFn: api.upload,
+		onSuccess: (asset) => setGuide(asset.id),
+	});
+
+	// The outlines the engine will find, shown before anything is made.
+	const previewing = guide != null && guideKind === "outlines" && !guideMap;
+	useEffect(() => {
+		setGuidePreview(null);
+		if (!previewing || guide == null) return;
+		let current = true;
+		outlinePreview(assetUrl(guide)).then(
+			(url) => {
+				if (current) setGuidePreview(url);
+			},
+			// Without a preview, the picture itself is shown.
+			() => {},
+		);
+		return () => {
+			current = false;
+		};
+	}, [previewing, guide]);
 
 	// Kept in a ref too, so a second click before the next render is ignored
 	// and the request stops when the composer goes away.
@@ -338,6 +439,16 @@ export function Composer(props: Props) {
 			strength: redrawing && moved != null ? moved : undefined,
 			maskAssetId: maskId ?? undefined,
 			loras: sentLoras.length > 0 ? sentLoras : undefined,
+			// Unmoved, each model follows the guide by its own strength.
+			guide:
+				guiding && guide
+					? {
+							assetId: guide,
+							kind: guideKind,
+							ready: guideMap,
+							...(guideMoved != null && { strength: guideMoved }),
+						}
+					: undefined,
 		});
 		// Kept when refused, so nothing typed is lost; cleared once accepted,
 		// unless it was changed meanwhile.
@@ -361,8 +472,18 @@ export function Composer(props: Props) {
 	const error =
 		props.error ??
 		(upload.error ? explain(upload.error) : null) ??
+		(guideUpload.error ? explain(guideUpload.error) : null) ??
 		(improveError ? explain(improveError) : null) ??
-		(overReferenceLimit ? t("composer.tooManyReferences") : null);
+		(overReferenceLimit
+			? guiding &&
+				offered.some(
+					(m) =>
+						chosen.includes(m.id) &&
+						references.length <= m.capabilities.maxReferenceImages,
+				)
+				? t("composer.guideNoModel")
+				: t("composer.tooManyReferences")
+			: null);
 	const total = selected.length * each;
 	// The settings in a few words, for the button that opens them on phones.
 	const summary = [
@@ -568,10 +689,18 @@ export function Composer(props: Props) {
 				// In a demo they come only from the gallery: none, nothing to show.
 				hidden={demo && references.length === 0}
 			>
-				<span className={LABEL}>{t("composer.referenceImages")}</span>
+				<span className={LABEL}>
+					{followsPeople
+						? t("composer.characters")
+						: t("composer.referenceImages")}
+				</span>
 				<ul
 					className="flex flex-wrap gap-2"
-					aria-label={t("composer.referenceImages")}
+					aria-label={
+						followsPeople
+							? t("composer.characters")
+							: t("composer.referenceImages")
+					}
 				>
 					{references.map((id) => (
 						<li key={id} className="relative">
@@ -671,6 +800,11 @@ export function Composer(props: Props) {
 						)}
 					</div>
 				)}
+				{followsPeople && references.length > 0 && (
+					<p className="text-xs leading-relaxed text-dim">
+						{t("composer.charactersHint")}
+					</p>
+				)}
 				<input
 					ref={fileInput}
 					type="file"
@@ -683,6 +817,156 @@ export function Composer(props: Props) {
 					}}
 				/>
 			</div>
+
+			{canGuide && (
+				<div className="flex flex-col gap-2.5">
+					<span className={LABEL}>{t("composer.guide")}</span>
+					<div className="flex flex-wrap items-start gap-2">
+						{guide ? (
+							<div className="relative">
+								<img
+									src={guidePreview ?? assetUrl(guide)}
+									alt={
+										guidePreview
+											? t("composer.guidePreview")
+											: t("composer.guide")
+									}
+									className="block size-20 rounded-[10px] bg-black object-contain"
+								/>
+								<button
+									type="button"
+									aria-label={t("composer.removeGuide")}
+									onClick={() => setGuide(null)}
+									className="absolute -top-1.5 -right-1.5 grid size-6 place-items-center rounded-full border border-line-strong bg-panel-2 text-soft outline-none after:absolute after:-inset-2 hover:text-ink focus-visible:ring-3 focus-visible:ring-ring/60"
+								>
+									<X className="size-3.5" />
+								</button>
+							</div>
+						) : (
+							<button
+								type="button"
+								hidden={demo}
+								onClick={() => guideInput.current?.click()}
+								disabled={guideUpload.isPending}
+								aria-label={
+									guideUpload.isPending
+										? t("composer.uploading")
+										: t("composer.addGuide")
+								}
+								title={t("composer.addGuide")}
+								className="grid size-20 place-items-center rounded-[10px] border border-dashed border-line-strong text-dim outline-none transition-colors hover:border-dim hover:text-ink focus-visible:ring-3 focus-visible:ring-ring/60 disabled:opacity-60"
+							>
+								{guideUpload.isPending ? (
+									<Loader2 className="size-[18px] animate-spin" />
+								) : (
+									<Plus className="size-[18px]" />
+								)}
+							</button>
+						)}
+						{references.length > 0 && (
+							<Button
+								variant="outline"
+								onClick={() => {
+									// The picture last chosen, e.g. from the gallery.
+									const last = references.at(-1);
+									if (last == null) return;
+									setGuide(last);
+									setReferences(references.filter((id) => id !== last));
+								}}
+							>
+								{t("composer.guideFromReference")}
+							</Button>
+						)}
+					</div>
+					{guidePreview && (
+						<p className="text-xs leading-relaxed text-dim">
+							{t("composer.guidePreviewHint")}
+						</p>
+					)}
+					<span id={ids.guideKind} className="sr-only">
+						{t("composer.guideKind")}
+					</span>
+					<ToggleGroup
+						aria-labelledby={ids.guideKind}
+						value={[guideKind]}
+						onValueChange={(values) => {
+							const [value] = values;
+							if (value) setGuideKind(value as GuideKind);
+						}}
+						className="grid w-full grid-cols-3 gap-1.5"
+					>
+						{GUIDE_KINDS.map((kind) => (
+							<ToggleGroupItem
+								key={kind}
+								value={kind}
+								variant="outline"
+								className="h-10 min-w-0 rounded-[10px] border-line bg-panel px-1 text-xs text-soft aria-pressed:border-ink aria-pressed:bg-panel-2 aria-pressed:text-ink"
+							>
+								{kind === "outlines"
+									? t("composer.guideOutlines")
+									: kind === "pose"
+										? t("composer.guidePose")
+										: t("composer.guideDepth")}
+							</ToggleGroupItem>
+						))}
+					</ToggleGroup>
+					<label
+						htmlFor={ids.guideMap}
+						className="flex items-center justify-between gap-3 text-sm"
+					>
+						{t("composer.guideMap")}
+						<Switch
+							id={ids.guideMap}
+							checked={guideMap}
+							onCheckedChange={setGuideMap}
+						/>
+					</label>
+					{guideKind !== "outlines" && !guideMap && (
+						<p className="text-xs leading-relaxed text-dim">
+							{t("composer.guideMapHint")}
+						</p>
+					)}
+					<div className="flex items-baseline justify-between">
+						<span id={ids.guideStrength} className={LABEL}>
+							{t("composer.guideStrength")}
+						</span>
+						<span className="font-mono text-[13px]">
+							{number(guideStrength, { style: "percent" })}
+						</span>
+					</div>
+					<Slider
+						aria-labelledby={ids.guideStrength}
+						min={0.1}
+						max={1}
+						step={0.05}
+						value={[guideStrength]}
+						onValueChange={(value) =>
+							setGuideStrength(
+								typeof value === "number" ? value : (value[0] ?? guideStrength),
+							)
+						}
+						format={{ style: "percent" }}
+						locale={language}
+						getAriaValueText={(_, value) =>
+							t("composer.guideStrengthValue", {
+								amount: number(value, { style: "percent" }),
+							})
+						}
+						className="py-2"
+					/>
+					<input
+						ref={guideInput}
+						type="file"
+						accept="image/png,image/jpeg,image/webp"
+						hidden
+						onChange={(event) => {
+							const file = event.target.files?.[0];
+							if (file) guideUpload.mutate(file);
+							event.target.value = "";
+						}}
+					/>
+				</div>
+			)}
 
 			{hasLoras && (
 				<div className="flex flex-col gap-2.5">

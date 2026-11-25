@@ -182,6 +182,46 @@ describe("warm engines", () => {
 		warm.stop();
 	});
 
+	test("a guide picture is sent with its strength and how to read it", async () => {
+		const servers = fakeServers();
+		const api = fakeApi();
+		const warm = engines(servers.spawn, api.fetch);
+		const signal = new AbortController().signal;
+		await collect(
+			warm.run(
+				"z:q8",
+				["sd-server", "--control-net", "/m/control"],
+				{
+					...request,
+					controlImage: "Z3VpZGU=",
+					controlStrength: 0.75,
+					imagePreprocess: "target=control,canny=true",
+				},
+				signal,
+			),
+		);
+		// A job without one, on the same server, sends none of it.
+		await collect(
+			warm.run(
+				"z:q8",
+				["sd-server", "--control-net", "/m/control"],
+				request,
+				signal,
+			),
+		);
+		expect(servers.started).toHaveLength(1);
+		expect(api.bodies[0]).toMatchObject({
+			control_image: "Z3VpZGU=",
+			control_strength: 0.75,
+			image_preprocess: "target=control,canny=true",
+		});
+		expect(Object.keys(api.bodies[1] as object)).not.toContain("control_image");
+		expect(Object.keys(api.bodies[1] as object)).not.toContain(
+			"image_preprocess",
+		);
+		warm.stop();
+	});
+
 	test("unload one model before loading another", async () => {
 		const servers = fakeServers();
 		const warm = engines(servers.spawn, fakeApi().fetch);
