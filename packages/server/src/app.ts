@@ -696,6 +696,9 @@ export function createApp(options: AppOptions): Hono {
 			now: demo.now,
 		});
 		app.use("/api/*", visitors.gate);
+		// The image APIs for other apps too: a demo serves its page only.
+		app.use("/v1/*", visitors.gate);
+		app.use("/sdapi/*", visitors.gate);
 		app.post("/api/visitor", visitors.start);
 	}
 	if (accounts) {

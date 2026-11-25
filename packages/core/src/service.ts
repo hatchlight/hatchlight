@@ -188,14 +188,6 @@ export class ReelService {
 		return (await this.deps.repo.getSession(ctx, id)) != null;
 	}
 
-	/** One of the person's jobs, with what it made. */
-	async getJob(ctx: UserContext, jobId: string): Promise<JobView> {
-		const job = await this.deps.repo.findJob(jobId);
-		if (!job || job.userId !== ctx.userId)
-			throw new NotFoundError("Job not found", "jobNotFound");
-		return job;
-	}
-
 	/** An empty session, for a conversation that starts with words. */
 	async startSession(ctx: UserContext, title: string): Promise<Session> {
 		const now = Date.now();

@@ -348,6 +348,23 @@ export const DEMO_ACCESS: Readonly<Record<string, DemoAccess>> = {
 	"GET /api/agents": "refused",
 	"PUT /api/agents/claude-desktop": "refused",
 	"DELETE /api/agents/claude-desktop": "refused",
+
+	// Other apps' image APIs: a public demo is for people on its page.
+	"GET /v1/models": "refused",
+	"POST /v1/images/generations": "refused",
+	"POST /v1/images/edits": "refused",
+	"POST /sdapi/v1/txt2img": "refused",
+	"POST /sdapi/v1/img2img": "refused",
+	"GET /sdapi/v1/sd-models": "refused",
+	"GET /sdapi/v1/options": "refused",
+	"POST /sdapi/v1/options": "refused",
+	"GET /sdapi/v1/samplers": "refused",
+	"GET /sdapi/v1/schedulers": "refused",
+	"GET /sdapi/v1/upscalers": "refused",
+	"GET /sdapi/v1/sd-vae": "refused",
+	"GET /sdapi/v1/loras": "refused",
+	"GET /sdapi/v1/progress": "refused",
+	"POST /sdapi/v1/interrupt": "refused",
 };
 
 /** What a demo lets in for a route; anything not named is refused. */
