@@ -1,8 +1,8 @@
 # Hatchlight's public demo as a Hugging Face Docker Space. See README.md.
 #
-# Demo mode came after 0.4.2: build from a release that has it, such as
-# --build-arg HATCHLIGHT_IMAGE=ghcr.io/hatchlight/hatchlight:<version>.
-ARG HATCHLIGHT_IMAGE=ghcr.io/hatchlight/hatchlight:latest
+# Demo mode came in 0.5.0. Pinned to a release, so the Space changes only
+# when this line does.
+ARG HATCHLIGHT_IMAGE=ghcr.io/hatchlight/hatchlight:0.5.0
 FROM ${HATCHLIGHT_IMAGE}
 
 COPY start.sh /usr/local/bin/demo-start
