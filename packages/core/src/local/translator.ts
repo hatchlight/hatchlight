@@ -424,3 +424,82 @@ export class LocalTranslator implements Translator, LanguageModel, ChatModel {
 		await running?.exited;
 	}
 }
+
+/**
+ * A language model on this computer that can be swapped for another: it
+ * translates, writes and chats, and lets go of its memory when stopped.
+ */
+export interface LocalWriter extends Translator, LanguageModel, ChatModel {
+	stop(): void;
+	stopAndWait(): Promise<void>;
+}
+
+/**
+ * Keeps one writer in memory at a time. A request for another one waits
+ * until the requests under way on the current one are done and it has let
+ * go of its memory, then that one starts: two models of gigabytes never
+ * load side by side, and no request is cut off by a switch.
+ */
+export class WriterGate {
+	private current: LocalWriter | null = null;
+	private inFlight = 0;
+	/** Requests for another writer, waiting for the current one to be done. */
+	private waiting: (() => void)[] = [];
+	/** The current writer letting go, before another one starts. */
+	private switching: Promise<void> = Promise.resolve();
+
+	/** `writer`, with each request let through this gate. */
+	gated(writer: LocalWriter): Translator & LanguageModel & ChatModel {
+		return {
+			vision: writer.vision,
+			...(writer.contextChars != null && {
+				contextChars: writer.contextChars,
+			}),
+			toEnglish: (prompt, signal) =>
+				this.through(writer, () => writer.toEnglish(prompt, signal)),
+			reply: (instructions, text, signal, options) =>
+				this.through(writer, () =>
+					writer.reply(instructions, text, signal, options),
+				),
+			chat: (instructions, messages, tools, signal) =>
+				this.through(writer, () =>
+					writer.chat(instructions, messages, tools, signal),
+				),
+		};
+	}
+
+	private async through<T>(writer: LocalWriter, job: () => Promise<T>) {
+		await this.enter(writer);
+		try {
+			return await job();
+		} finally {
+			this.leave();
+		}
+	}
+
+	private async enter(writer: LocalWriter): Promise<void> {
+		for (;;) {
+			await this.switching;
+			if (this.current === writer || this.current === null) {
+				this.current = writer;
+				this.inFlight++;
+				return;
+			}
+			if (this.inFlight > 0) {
+				await new Promise<void>((resolve) => this.waiting.push(resolve));
+				continue;
+			}
+			// Nothing runs on the current one: it lets go, then the loop
+			// starts over (another request may have come for it meanwhile).
+			const old = this.current;
+			this.current = null;
+			this.switching = old.stopAndWait().catch(() => {});
+		}
+	}
+
+	private leave(): void {
+		this.inFlight--;
+		if (this.inFlight > 0) return;
+		for (const resolve of this.waiting.splice(0)) resolve();
+	}
+}

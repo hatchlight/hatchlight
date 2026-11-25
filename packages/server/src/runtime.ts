@@ -21,6 +21,7 @@ import {
 	type CompareOptions,
 	chooseLocalModel,
 	DEFAULT_PAID_ESTIMATE_USD,
+	type Eyes,
 	FakeProvider,
 	FileKeyStore,
 	FileSettingsStore,
@@ -41,6 +42,7 @@ import {
 	LocalModelStore,
 	LocalProvider,
 	LocalTranslator,
+	type LocalWriter,
 	legacyName,
 	mayUsePaid,
 	NotFoundError,
@@ -65,6 +67,7 @@ import {
 	type UserContext,
 	ValidationError,
 	verdictOf,
+	WriterGate,
 	writerChoice,
 } from "@hatchlight/core";
 import type {
@@ -670,6 +673,10 @@ export interface RuntimeOptions {
 	assistantModel?: ChatModel;
 	/** What compares characters, in place of the installed or cloud model. */
 	judge?: Judge;
+	/** Stands in for the models that look at pictures, by catalog id. */
+	eyes?: (model: string) => Eyes & Captioner & Judge;
+	/** Stands in for the writer models on this computer, by catalog id. */
+	writers?: (model: string) => LocalWriter;
 	/** Tries a freshly installed engine. Defaults to running it. */
 	checkEngine?: (executable: string) => Promise<string | null>;
 	/** Where the LoRA trainer is installed. Defaults to `trainer` in the data directory. */
@@ -906,19 +913,28 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	const writerIds = catalog
 		.filter((m) => m.tasks.includes("prompt-translation"))
 		.map((m) => m.id);
-	const translators = new Map(
+	const translators = new Map<string, LocalWriter>(
 		writerIds.map((id) => [
 			id,
-			new LocalTranslator({ store: models, model: id }),
+			options.writers?.(id) ??
+				new LocalTranslator({ store: models, model: id }),
 		]),
+	);
+	// One writer in memory at a time; a switch waits for its requests.
+	const writerGate = new WriterGate();
+	const gatedWriters = new Map(
+		[...translators].map(([id, writer]) => [id, writerGate.gated(writer)]),
 	);
 	// Look at pictures for an assistant whose brain cannot, and caption
 	// training pictures: run once per picture, so nothing stays loaded.
 	const eyesIds = catalog
 		.filter((m) => m.tasks.includes("picture-description"))
 		.map((m) => m.id);
-	const allEyes = new Map(
-		eyesIds.map((id) => [id, new LocalEyes({ store: models, model: id })]),
+	const allEyes = new Map<string, Eyes & Captioner & Judge>(
+		eyesIds.map((id) => [
+			id,
+			options.eyes?.(id) ?? new LocalEyes({ store: models, model: id }),
+		]),
 	);
 	/** The models installed with their engine, as of the last change. */
 	const installedNow = async () => {
@@ -949,18 +965,10 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 			eyes: chooseLocalModel(eyesIds, eyesModel, installed),
 		};
 	};
-	/** The writer that served last: one model in memory at a time. */
-	let lastWriter: LocalTranslator | null = null;
 	/** The person's writer on this computer, or null when none is installed. */
 	const localWriter = async (ctx: UserContext) => {
 		const { writer } = await languageModels(ctx);
-		const translator = writer ? (translators.get(writer) ?? null) : null;
-		// Another one chosen: the one before lets go of its memory.
-		if (translator && lastWriter && lastWriter !== translator) {
-			lastWriter.stop();
-		}
-		if (translator) lastWriter = translator;
-		return translator;
+		return writer ? (gatedWriters.get(writer) ?? null) : null;
 	};
 	/** The person's eyes on this computer, or null when none is installed. */
 	const localEyes = async (ctx: UserContext) => {
@@ -1058,13 +1066,13 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	};
 	const writerFor = async (ctx: UserContext): Promise<LanguageModel | null> => {
 		const reachable = await reachableServices(ctx);
-		const local = await localWriter(ctx);
+		const { writer } = await languageModels(ctx);
 		const choice = writerChoice(
 			await settings.get(ctx),
-			local != null,
+			writer != null,
 			(service) => reachable.has(service),
 		);
-		if (choice === "local") return local;
+		if (choice === "local") return localWriter(ctx);
 		return choice ? cloudFor(ctx, choice) : null;
 	};
 	const services = ["openai", "google", "openrouter"] as const;

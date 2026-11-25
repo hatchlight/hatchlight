@@ -175,6 +175,7 @@ function Choice<T extends string>({
 }) {
 	const { t } = useI18n();
 	const id = useId();
+	const can = useCan();
 	return (
 		<div className="flex flex-col gap-2">
 			<p id={id} className="text-sm font-medium">
@@ -208,9 +209,11 @@ function Choice<T extends string>({
 							{!option.usable && (
 								<span className="text-xs">
 									{" "}
-									{option.value === "local"
-										? t("settings.translateLocalMissing")
-										: t("settings.translateNoKey")}
+									{option.value !== "local"
+										? t("settings.translateNoKey")
+										: can.admin
+											? t("settings.translateLocalMissing")
+											: t("settings.translateLocalAskAdmin")}
 								</span>
 							)}
 						</span>
@@ -357,6 +360,7 @@ function LanguageModels({
 	onChoose(change: Partial<Choices>): void;
 }) {
 	const { t } = useI18n();
+	const can = useCan();
 	const jobs: Job[] = [
 		{
 			field: "writerModel",
@@ -404,6 +408,21 @@ function LanguageModels({
 								<p className="max-w-2xl text-sm leading-relaxed text-dim">
 									{job.intro}
 								</p>
+								<div className="flex min-h-10 flex-wrap items-center gap-3 text-sm">
+									{chosen == null ? (
+										<span className="text-dim">
+											{t("settings.languageAutomatic")}
+										</span>
+									) : (
+										<Button
+											variant="outline"
+											disabled={disabled}
+											onClick={() => onChoose({ [job.field]: null })}
+										>
+											{t("settings.languageBackToAutomatic")}
+										</Button>
+									)}
+								</div>
 							</div>
 							<ul className="grid gap-5 md:grid-cols-2">
 								{candidates.map((model) => (
@@ -427,7 +446,9 @@ function LanguageModels({
 												</Badge>
 											) : model.id === chosen ? (
 												<Badge variant="outline" className="h-6 px-2.5">
-													{t("settings.chosenNotReady")}
+													{can.admin
+														? t("settings.chosenNotReady")
+														: t("settings.chosenAskAdmin")}
 												</Badge>
 											) : null
 										}

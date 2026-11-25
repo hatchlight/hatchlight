@@ -95,6 +95,7 @@ export const ERROR_CODES = [
 	"notEnoughDisk",
 	"notInDemo",
 	"notInstalled",
+	"notLanguageModel",
 	"notOnServer",
 	"otherAppsPaidOff",
 	"paidNotAllowed",

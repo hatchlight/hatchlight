@@ -895,8 +895,82 @@ describe("questions before a picture", () => {
 		const view = await assistant.view(ctx, sessionId);
 		expect(view.entries.filter((e) => e.question)).toHaveLength(1);
 		expect(JSON.stringify(view.entries.at(-1)?.message)).toContain(
-			"You asked enough",
+			"waiting for the person's answer",
 		);
+	});
+
+	test("what comes after a question in the same reply waits for the answer", async () => {
+		const brain = scripted({
+			text: "",
+			toolCalls: [
+				{
+					id: "q1",
+					name: "ask_user",
+					arguments: { question: "Shape?", options: ["Square", "Wide"] },
+				},
+				{ id: "g1", name: "generate", arguments: { prompt: "a fox" } },
+			],
+		});
+		const { assistant, inputs, idle } = setup(brain);
+		const { sessionId } = await assistant.send(ctx, { text: "a fox" });
+		await idle(sessionId);
+		const view = await assistant.view(ctx, sessionId);
+		expect(inputs).toHaveLength(0);
+		expect(view.entries.at(-1)?.message).toMatchObject({
+			role: "tool",
+			callId: "g1",
+			content: [
+				{ type: "text", text: "Not run: waiting for the person's answer." },
+			],
+		});
+		expect(view.entries.find((e) => e.question)?.question?.state).toBe("asked");
+	});
+
+	test("a question after a paid call in the same reply waits for the approval", async () => {
+		const brain = scripted({
+			text: "",
+			toolCalls: [
+				{
+					id: "g1",
+					name: "generate",
+					arguments: { prompt: "a fox", models: ["fal/x"] },
+				},
+				{
+					id: "q1",
+					name: "ask_user",
+					arguments: { question: "Shape?", options: ["Square"] },
+				},
+			],
+		});
+		const { assistant, idle } = setup(brain);
+		const { sessionId } = await assistant.send(ctx, { text: "a fox with X" });
+		await idle(sessionId);
+		const view = await assistant.view(ctx, sessionId);
+		expect(view.entries.some((e) => e.question)).toBe(false);
+		expect(view.entries.find((e) => e.confirm)?.confirm?.state).toBe("asked");
+		expect(JSON.stringify(view.entries.at(-1)?.message)).toContain(
+			"waiting for the person's approval",
+		);
+	});
+
+	test("after a generation, it may ask again", async () => {
+		const brain = scripted(
+			ask("Shape?", ["Square"], "q1"),
+			ask("Style?", ["Photo"], "q2"),
+			ask("Light?", ["Warm"], "q3"),
+			call("generate", { prompt: "a fox", models: ["nope/x"] }, "g1"),
+			{ text: "That failed.", toolCalls: [] },
+			ask("Which model then?", ["Z"], "q4"),
+		);
+		const { assistant, idle } = setup(brain);
+		const { sessionId } = await assistant.send(ctx, { text: "a fox" });
+		await idle(sessionId);
+		for (const answer of ["Square", "Photo", "Warm", "try another"]) {
+			await assistant.send(ctx, { sessionId, text: answer });
+			await idle(sessionId);
+		}
+		const view = await assistant.view(ctx, sessionId);
+		expect(view.entries.filter((e) => e.question)).toHaveLength(4);
 	});
 
 	test("after a few questions, it is told to make the picture", async () => {
@@ -921,6 +995,34 @@ describe("questions before a picture", () => {
 		);
 		expect(JSON.stringify(refused?.message)).toContain("make the picture now");
 		expect(inputs).toHaveLength(1);
+	});
+
+	test("an answer to a paid call passes over a question left waiting", async () => {
+		const brain = scripted(
+			call("generate", { prompt: "a fox", models: ["fal/x"] }),
+		);
+		const { assistant, store, idle } = setup(brain);
+		const { sessionId } = await assistant.send(ctx, { text: "use X" });
+		await idle(sessionId);
+		const confirm = store.entries.find((e) => e.confirm) as AssistantEntry;
+		// As an older version could leave it.
+		store.entries.push({
+			id: "msg_q",
+			sessionId,
+			createdAt: 0,
+			message: {
+				role: "tool",
+				callId: "q0",
+				name: "ask_user",
+				content: [{ type: "text", text: "Asked." }],
+			},
+			question: { text: "Shape?", options: ["Square"], state: "asked" },
+		});
+		await assistant.answer(ctx, sessionId, confirm.id, false);
+		await idle(sessionId);
+		expect(store.entries.find((e) => e.id === "msg_q")?.question?.state).toBe(
+			"answered",
+		);
 	});
 
 	test("a call without a question asks nothing", async () => {

@@ -1294,6 +1294,7 @@ export function createApp(options: AppOptions): Hono {
 			if (!known) {
 				throw new ValidationError(
 					`${field} must be the id of a model on this computer that does ${task}, or null`,
+					"notLanguageModel",
 				);
 			}
 			chosenModels[field] = id as string | null;

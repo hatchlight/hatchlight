@@ -457,6 +457,15 @@ export class Assistant {
 				);
 			}
 			entry = found;
+			// A question left waiting is passed over by this answer.
+			for (const other of entries) {
+				if (other.question?.state === "asked") {
+					await this.store.update(ctx, other.id, {
+						...bodyOf(other),
+						question: { ...other.question, state: "answered" },
+					});
+				}
+			}
 			othersWaiting = entries.some(
 				(e) => e.id !== entryId && e.confirm?.state === "asked",
 			);
@@ -727,8 +736,11 @@ export class Assistant {
 			const messages = conversation(kept);
 			if (brain.vision) await this.showAgain(ctx, sessionId, kept, messages);
 			const instructions = assistantInstructions(language);
-			// Questions since the last picture made: a few, then it makes one.
-			const lastMade = kept.findLastIndex((e) => e.turnId != null);
+			// Questions since the last generation, made or failed: a few,
+			// then it makes one.
+			const lastMade = kept.findLastIndex(
+				(e) => e.message.role === "tool" && e.message.name === "generate",
+			);
 			let questions = kept
 				.slice(lastMade + 1)
 				.filter((e) => e.question != null).length;
@@ -759,17 +771,35 @@ export class Assistant {
 				await this.add(ctx, sessionId, { message: said });
 				if (said.toolCalls.length === 0) return;
 
+				/** Something waits for the person: a question, or a cost. */
 				let asked = false;
+				let questioned = false;
+				const unrun = async (call: ToolCall, text: string) => {
+					const message: ChatMessage = {
+						role: "tool",
+						callId: call.id,
+						name: call.name,
+						content: [{ type: "text", text }],
+					};
+					messages.push(message);
+					await this.add(ctx, sessionId, { message });
+				};
 				for (const call of said.toolCalls) {
 					if (signal.aborted) break;
+					// Asked something: the rest waits for the answer.
+					if (questioned) {
+						await unrun(call, "Not run: waiting for the person's answer.");
+						continue;
+					}
 					if (call.name === ASK_USER.name) {
 						const question = questionOf(call.arguments);
-						// One question waits at a time; more go unasked.
 						const refusal = !question
 							? "Error: say the question to ask."
-							: asked || questions >= MAX_QUESTIONS
-								? "Error: not asked. You asked enough: make the picture now with what you know."
-								: null;
+							: asked
+								? "Not asked: waiting for the person's approval of the cost first."
+								: questions >= MAX_QUESTIONS
+									? "Error: not asked. You asked enough: make the picture now with what you know."
+									: null;
 						const message: ChatMessage = {
 							role: "tool",
 							callId: call.id,
@@ -789,6 +819,7 @@ export class Assistant {
 							continue;
 						}
 						asked = true;
+						questioned = true;
 						questions++;
 						await this.add(ctx, sessionId, {
 							message,
