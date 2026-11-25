@@ -863,6 +863,28 @@ test("the demo describes where requests come from, for its first minutes", async
 	expect(logged).toHaveLength(2);
 });
 
+test("a picture a library keeps does not stop the sweep", async () => {
+	const { visitor, make, runtime } = await demoApp({
+		HATCHLIGHT_DEMO_TTL_HOURS: "24",
+	});
+	const ana = await visitor();
+	await make(ana);
+	const bia = await visitor();
+	await make(bia);
+	// Visitors cannot keep a library; made here as if one had.
+	const [kept] = runtime.visitors.staleAssets(Date.now() + 1000);
+	await runtime.service.saveLibraryEntry(
+		{ userId: kept?.userId as string },
+		{ kind: "style", name: "Kept", pictureIds: [kept?.id as string] },
+	);
+	const swept = await runtime.sweepVisitors(Date.now() + 1000);
+	expect(swept.sessions).toBe(2);
+	// The other visitor's picture went; the kept one waits for next time.
+	expect(
+		runtime.visitors.staleAssets(Date.now() + 1000).map((a) => a.id),
+	).toEqual([kept?.id as string]);
+});
+
 test("old pictures, sessions and idle visitors are deleted", async () => {
 	const { call, visitor, make, runtime, root, tick } = await demoApp({
 		HATCHLIGHT_DEMO_TTL_HOURS: "24",

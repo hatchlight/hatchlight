@@ -113,10 +113,21 @@ describe("the library", () => {
 		});
 		expect(service.listLibrary(ana).map((e) => e.name)).toEqual(["Rex"]);
 		expect(service.listLibrary(bia)).toEqual([]);
+		expect(service.listLibrary(bia)).toEqual([]);
 
 		await expect(
 			service.saveLibraryEntry(ana, { kind: "character", name: " rex " }),
 		).rejects.toMatchObject({ code: "libraryNameTaken" });
+		// Accents, their encoding and spaces do not make another name.
+		await service.saveLibraryEntry(ana, {
+			kind: "character",
+			name: "José  Dog",
+		});
+		for (const name of ["jose dog", "Jose\u0301 Dog".normalize("NFD")]) {
+			await expect(
+				service.saveLibraryEntry(ana, { kind: "character", name }),
+			).rejects.toMatchObject({ code: "libraryNameTaken" });
+		}
 		// Another kind, or another person, may have the same name.
 		await service.saveLibraryEntry(ana, { kind: "style", name: "Rex" });
 		await service.saveLibraryEntry(bia, { kind: "character", name: "Rex" });
@@ -141,7 +152,43 @@ describe("the library", () => {
 			{ code: "libraryEntryNotFound" },
 		);
 		await service.deleteLibraryEntry(ana, rex.id);
-		expect(service.listLibrary(ana).map((e) => e.kind)).toEqual(["style"]);
+		expect(service.listLibrary(ana).map((e) => e.name)).toEqual([
+			"José  Dog",
+			"Rex",
+		]);
+	});
+
+	test("a name taken by a save at the same time is refused, not a failure", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "hatchlight-library-"));
+		dirs.push(dir);
+		const repo = new SqliteRepository(join(dir, "db.sqlite"));
+		const library = repo.library();
+		const registry = new ProviderRegistry().register(new FakeProvider());
+		const keys = new FileKeyStore(
+			join(dir, "auth.json"),
+			crypto.getRandomValues(new Uint8Array(32)),
+		);
+		const assets = new FsAssetStore(join(dir, "assets"));
+		// The other save lands between the check and the write.
+		const racing = new ReelService({
+			repo,
+			assets,
+			registry,
+			keys,
+			engine: new JobEngine({ repo, assets, registry, keys }),
+			library: {
+				list: (ctx) => library.list(ctx),
+				get: (ctx, id) => library.get(ctx, id),
+				findByName: () => null,
+				put: (ctx, e) => library.put(ctx, e),
+				delete: (ctx, id) => library.delete(ctx, id),
+			},
+		});
+		library.put(ana, entry({ id: "lib_first", kind: "style", name: "Ink" }));
+		await expect(
+			racing.saveLibraryEntry(ana, { kind: "style", name: "ink" }),
+		).rejects.toMatchObject({ code: "libraryNameTaken" });
+		repo.close();
 	});
 
 	test("refuses pictures not the person's, missing LoRAs and odd values", async () => {
@@ -254,8 +301,9 @@ describe("the library", () => {
 			},
 		});
 		expect(alpha?.loras).toBeUndefined();
+		// The installed LoRAs' own trigger words are the engine's to add.
 		expect(beta).toMatchObject({
-			prompt: "rexdog, inkstyle, Rex on the beach, soft watercolor",
+			prompt: "Rex on the beach, soft watercolor",
 			referenceAssetIds: [],
 			loras: [
 				{ id: "rexy", weight: 0.8 },
@@ -264,7 +312,7 @@ describe("the library", () => {
 		});
 		await engine.idle();
 		expect(provider.submitted.map((s) => s.prompt)).toContain(
-			"rexdog, inkstyle, Rex on the beach, soft watercolor",
+			"Rex on the beach, soft watercolor",
 		);
 		const [made] = await service.listGallery(ana, { limit: 1 });
 		expect(made?.params?.library?.character).toBe("Rex");
@@ -341,6 +389,10 @@ const params = (fields: Partial<GenerationParams>): GenerationParams => ({
 
 const installed = new Map([
 	["rexy", lora("rexy", "rexdog")],
+	["ink", lora("ink", "inkstyle")],
+	["a1", lora("a1")],
+	["a2", lora("a2")],
+	["a3", lora("a3")],
 	["fluxy", { ...lora("fluxy", "fx"), base: "flux" as const }],
 ]);
 
@@ -393,23 +445,83 @@ describe("adding a character and a style", () => {
 		);
 		expect(out.loras).toEqual([{ id: "rexy", weight: 0.3 }]);
 		expect(out.referenceAssetIds).toEqual([]);
-		expect(out.prompt).toBe("rexdog, Rex on the beach, ink lines");
+		expect(out.prompt).toBe("Rex on the beach, ink lines");
 	});
 
-	test("adds words and trigger words only once, so using it again adds nothing", () => {
+	test("adds words and its own trigger words only once, so using it again adds nothing", () => {
 		const used = {
 			character: entry({
-				loras: [{ id: "rexy", weight: 1, trigger: "rexdog" }],
+				loras: [
+					// A word of its own: the engine adds only the LoRA's.
+					{ id: "rexy", weight: 1, trigger: "rexcorgi" },
+					// Turned off: no word for it.
+					{ id: "ink", weight: 0, trigger: "inky" },
+				],
 				prompt: "a corgi",
 			}),
 		};
 		const once = applyLibrary(params({}), takesLoras, used, installed);
-		expect(once.prompt).toBe("rexdog, Rex on the beach, a corgi");
+		expect(once.prompt).toBe("rexcorgi, Rex on the beach, a corgi");
 		expect(applyLibrary(once, takesLoras, used, installed)).toMatchObject({
 			prompt: once.prompt,
 			loras: once.loras,
 			library: { prompt: "Rex on the beach" },
 		});
+	});
+
+	test("names the character by its saved name only, once, and never as a word", () => {
+		const cat = entry({ name: "Cat", pictureIds: ["ast_a"] });
+		expect(
+			applyLibrary(
+				params({ prompt: "a cat chasing a dog, cat food" }),
+				follows,
+				{ character: cat },
+				installed,
+			).prompt,
+		).toBe("The person in picture 1, a cat chasing a dog, cat food");
+		expect(
+			applyLibrary(
+				params({ prompt: "Cat on a roof, Cat asleep" }),
+				follows,
+				{ character: cat },
+				installed,
+			).prompt,
+		).toBe("the person in picture 1 on a roof, Cat asleep");
+		// A prompt that already names the picture, in any language, keeps it.
+		for (const prompt of [
+			"a pessoa na imagem 1 na praia",
+			"the person in picture 1 at night",
+			"o gato da foto 1",
+		]) {
+			expect(
+				applyLibrary(params({ prompt }), follows, { character: cat }, installed)
+					.prompt,
+			).toBe(prompt);
+		}
+	});
+
+	test("refuses more LoRAs of one family than the engine takes", () => {
+		const style = entry({
+			kind: "style",
+			name: "Busy",
+			loras: ["a1", "a2", "a3"].map((id) => ({ id, weight: 1, trigger: null })),
+		});
+		expect(() =>
+			applyLibrary(
+				params({
+					loras: [
+						{ id: "rexy", weight: 1 },
+						{ id: "ink", weight: 1 },
+					],
+				}),
+				takesLoras,
+				{ style },
+				installed,
+			),
+		).toThrow(expect.objectContaining({ code: "tooManyLoras" }));
+		expect(
+			applyLibrary(params({}), takesLoras, { style }, installed).loras,
+		).toHaveLength(3);
 	});
 
 	test("fills the seed and ratio only when none was asked for", () => {
@@ -513,11 +625,34 @@ describe("finding entries by name", () => {
 		expect(
 			libraryModel(
 				[a, b],
-				entry({ modelId: "gone" }),
-				entry({ kind: "style", modelId: "b" }),
+				[entry({ modelId: "gone" }), entry({ kind: "style", modelId: "b" })],
 			)?.id,
 		).toBe("b");
-		expect(libraryModel([a], null, undefined)).toBeNull();
+		expect(libraryModel([a], [null, undefined])).toBeNull();
+		// Not when it cannot take the pictures or the guide asked for.
+		const picky = { ...model({ maxReferenceImages: 1 }), id: "p" };
+		const style = entry({ kind: "style", modelId: "p" });
+		expect(libraryModel([picky], [style], { references: 1 })?.id).toBe("p");
+		expect(libraryModel([picky], [style], { references: 2 })).toBeNull();
+		expect(
+			libraryModel([picky], [style], {
+				references: 0,
+				guide: { kind: "pose", ready: true },
+			}),
+		).toBeNull();
+		// One that needs a picture fits when the character brings one.
+		const needs = {
+			...model({ maxReferenceImages: 2, needsReference: true }),
+			id: "n",
+		};
+		expect(
+			libraryModel([needs], [entry({ modelId: "n" })], { references: 0 }),
+		).toBeNull();
+		expect(
+			libraryModel([needs], [entry({ modelId: "n", pictureIds: ["ast_a"] })], {
+				references: 0,
+			})?.id,
+		).toBe("n");
 	});
 });
 

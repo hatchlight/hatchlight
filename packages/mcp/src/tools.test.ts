@@ -324,13 +324,22 @@ test("an agent lists the library and makes pictures with a character and a style
 		true,
 	);
 
-	const made = await call("generate", {
+	// Its model is paid: used only when named, as any paid model.
+	const unnamed = await call("generate", {
 		prompt: "Rex on the beach",
 		character: "rex",
 		style: "watercolor",
 	});
+	expect(textOf(unnamed)).toContain(
+		"Watercolor prefers Fake beta (fake/beta), which is paid: name it in models to use it.",
+	);
+	const made = await call("generate", {
+		prompt: "Rex on the beach",
+		character: "rex",
+		style: "watercolor",
+		models: ["fake/beta"],
+	});
 	expect(made.isError).toBeFalsy();
-	// No model named: the style's own.
 	expect(textOf(made)).toContain("Fake beta: done");
 	const session = await hatchlight.session(
 		textOf(made).match(/Session (ses_\w+)/)?.[1] as string,

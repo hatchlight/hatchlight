@@ -1150,8 +1150,17 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		visitors,
 		sweepVisitors: async (before) => {
 			const gone = (error: unknown) => {
-				// Deleted meanwhile, as by its visitor: nothing left to do.
-				if (!(error instanceof NotFoundError)) throw error;
+				// Deleted meanwhile, as by its visitor: nothing left to do. A
+				// picture a library keeps is left for next time.
+				if (
+					!(error instanceof NotFoundError) &&
+					!(
+						error instanceof ValidationError &&
+						error.code === "pictureInLibrary"
+					)
+				) {
+					throw error;
+				}
 			};
 			const sessions = visitors.staleSessions(before);
 			for (const { id, userId } of sessions) {

@@ -282,3 +282,47 @@ describe("the spending guard", () => {
 		expect(spend.committed()).toBe(0);
 	});
 });
+
+describe("characters and styles", () => {
+	test("a free local model they prefer is used unnamed; a paid one only when named", async () => {
+		const asked: string[][] = [];
+		const style = (modelId: string) => ({
+			id: `lib_${modelId}`,
+			kind: "style" as const,
+			name: `Ink ${modelId}`,
+			pictureIds: [],
+			loras: [],
+			prompt: null,
+			notes: null,
+			seed: null,
+			aspectRatio: null,
+			modelId,
+			createdAt: 1,
+			updatedAt: 1,
+		});
+		const hatchlight = {
+			...reel(),
+			library: async () => [style("local/z"), style("fal/x")],
+			createTurn: async (input: { modelIds: string[] }) => {
+				asked.push(input.modelIds);
+				throw new Error("not in this test");
+			},
+		} as unknown as Reel;
+		const generate = createTools(hatchlight, {
+			allowPaid: true,
+			spend: new SpendGuard(null),
+			files: false,
+		}).find((t) => t.name === "generate");
+		await generate
+			?.run({ prompt: "a fox", style: "Ink local/z" }, context)
+			.catch(() => {});
+		expect(asked.at(-1)).toEqual(["local/z"]);
+		const result = await generate
+			?.run({ prompt: "a fox", style: "Ink fal/x" }, context)
+			.catch(() => null);
+		// The free one was used instead of the paid one it prefers.
+		expect(asked.at(-1)).toEqual(["local/z"]);
+		expect(asked).toHaveLength(2);
+		expect(result ?? null).toBeNull();
+	});
+});

@@ -1,11 +1,14 @@
 import { ValidationError } from "./errors";
-import type {
-	GenerationParams,
-	LibraryEntry,
-	LibraryKind,
-	LoraInfo,
-	ModelCapabilities,
-	ModelSpec,
+import {
+	followsGuide,
+	type GenerationParams,
+	type GuideKind,
+	type LibraryEntry,
+	type LibraryKind,
+	type LoraInfo,
+	MAX_LORAS,
+	type ModelCapabilities,
+	type ModelSpec,
 } from "./types";
 
 /**
@@ -18,6 +21,7 @@ import type {
 /** A name as typed, to compare: no case, accents or extra spaces. */
 export function looseName(name: string): string {
 	return name
+		.normalize("NFC")
 		.normalize("NFD")
 		.replace(/\p{M}/gu, "")
 		.toLowerCase()
@@ -76,22 +80,42 @@ export function followsPictures(caps: ModelCapabilities): boolean {
 	);
 }
 
+/** What a generation needs of a model, besides a character and a style. */
+export interface ModelNeeds {
+	/** The person's own pictures. */
+	references: number;
+	guide?: { kind: GuideKind; ready: boolean };
+}
+
 /**
  * The model a character or style prefers, when nothing else is chosen and
- * it can be used: the character's first.
+ * it can be used and fits what is asked (pictures, guide): the
+ * character's first.
  */
 export function libraryModel(
 	usable: ModelSpec[],
-	...entries: (LibraryEntry | null | undefined)[]
+	entries: (LibraryEntry | null | undefined)[],
+	needs: ModelNeeds = { references: 0 },
 ): ModelSpec | null {
+	const pictures = entries.some(
+		(e) => e?.kind === "character" && e.pictureIds.length > 0,
+	);
+	const fits = (model: ModelSpec) => {
+		const caps = model.capabilities;
+		if (needs.references > caps.maxReferenceImages) return false;
+		if (needs.guide && !followsGuide(caps.guide, needs.guide)) return false;
+		// Its only picture would be the character's, which it must follow.
+		if (caps.needsReference && needs.references === 0) {
+			return pictures && followsPictures(caps);
+		}
+		return true;
+	};
 	for (const entry of entries) {
 		const found = usable.find((m) => m.id === entry?.modelId);
-		if (found) return found;
+		if (found && fits(found)) return found;
 	}
 	return null;
 }
-
-const literal = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** "1", "1 and 2", "1, 2 and 3". */
 const numbers = (list: number[]) =>
@@ -99,8 +123,21 @@ const numbers = (list: number[]) =>
 		? String(list[0])
 		: `${list.slice(0, -1).join(", ")} and ${list.at(-1)}`;
 
+const literal = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Whether the words are in the text as words, whatever their case. */
 const has = (text: string, words: string) =>
-	text.toLowerCase().includes(words.toLowerCase());
+	new RegExp(
+		`(?<![\\p{L}\\p{N}])${literal(words.trim())}(?![\\p{L}\\p{N}])`,
+		"iu",
+	).test(text);
+
+/**
+ * A prompt that already calls something by its picture's number, in any
+ * of the languages people write here: "picture 1", "imagem 2", "foto 1".
+ */
+const NUMBERED =
+	/(?<![\p{L}])(pictures?|images?|imagens?|imagem|photos?|fotos?)\s+\d/iu;
 
 /**
  * Adds a character and a style to what one model is asked, as far as that
@@ -155,6 +192,14 @@ export function applyLibrary(
 			.filter((l) => !mine.some((m) => m.id === l.id))
 			.map(({ id, weight }) => ({ id, weight })),
 	];
+	// The engine takes so many of one family at once.
+	if (joined.filter((l) => fits(l.id)).length > MAX_LORAS) {
+		throw new ValidationError(
+			`At most ${MAX_LORAS} LoRAs can be used at once, with those of ${[character?.name, style?.name].filter(Boolean).join(" and ")}`,
+			"tooManyLoras",
+			{ max: MAX_LORAS },
+		);
+	}
 
 	const seen = character
 		? character.pictureIds.flatMap((id) => {
@@ -176,15 +221,13 @@ export function applyLibrary(
 	}
 
 	let text = params.prompt;
-	if (
-		character &&
-		seen.length > 0 &&
-		!/the person in pictures? \d/i.test(text)
-	) {
+	if (character && seen.length > 0 && !NUMBERED.test(text)) {
 		const who = `the person in ${seen.length === 1 ? "picture" : "pictures"} ${numbers(seen)}`;
+		// The name as saved, its case too, once: "Cat" is a name, "a cat"
+		// is not, and other words stay as written.
 		const name = new RegExp(
 			`(?<![\\p{L}\\p{N}])${literal(character.name)}(?![\\p{L}\\p{N}])`,
-			"giu",
+			"u",
 		);
 		text = name.test(text)
 			? text.replace(name, who)
@@ -202,8 +245,18 @@ export function applyLibrary(
 		styleSeen.length > 0 &&
 			`in the style of ${styleSeen.length === 1 ? "picture" : "pictures"} ${numbers(styleSeen)}`,
 	].filter((w): w is string => Boolean(w) && !has(text, w as string));
+	// The engine adds an installed LoRA's own trigger word when missing:
+	// only a word the entry keeps instead of it is added here, and none for
+	// a LoRA turned off.
 	const triggers = theirs
-		.flatMap((l) => (l.trigger ? [l.trigger] : []))
+		.filter(
+			(l) =>
+				l.weight !== 0 &&
+				l.trigger &&
+				l.trigger.toLowerCase() !==
+					(loras.get(l.id)?.trigger ?? "").toLowerCase(),
+		)
+		.map((l) => l.trigger as string)
 		.filter((t, i, all) => all.indexOf(t) === i && !has(text, t));
 
 	return {

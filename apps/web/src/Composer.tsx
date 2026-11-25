@@ -1,4 +1,5 @@
 import { storedValue } from "@hatchlight/core/legacy";
+import { followsPictures } from "@hatchlight/core/library";
 import {
 	followsGuide,
 	GUIDE_KINDS,
@@ -298,7 +299,8 @@ export function Composer(props: Props) {
 		if (
 			model.capabilities.needsReference &&
 			references.length === 0 &&
-			!character?.pictureIds.length
+			// The character's pictures, only where the server adds them.
+			!(character?.pictureIds.length && followsPictures(model.capabilities))
 		) {
 			return t("composer.blocked.needsReference", { model: model.name });
 		}

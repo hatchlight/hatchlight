@@ -1,13 +1,17 @@
 import type { Database } from "bun:sqlite";
 import { and, asc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
+import { looseName } from "../library";
 import type { LibraryEntry, UserContext } from "../types";
 import * as schema from "./schema";
 
 type Row = typeof schema.library.$inferSelect;
 
-/** How names are told apart: by their letters, whatever their case. */
-export const nameKey = (name: string) => name.trim().toLowerCase();
+/**
+ * How names are told apart: by their letters, whatever their case, accents
+ * or spaces, so "José" and "jose" are one name.
+ */
+export const nameKey = looseName;
 
 const entryOf = (row: Row): LibraryEntry => ({
 	...row.data,

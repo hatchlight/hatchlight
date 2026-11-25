@@ -631,7 +631,12 @@ ${COMMON_HELP}`,
 			const models = await usableModels(context.api, allowPaid);
 			let ids = (values.model as string[] | undefined) ?? [];
 			// The model the character or style prefers, when it can be used.
-			const kept = ids.length === 0 && libraryModel(models, character, style);
+			const kept =
+				ids.length === 0 &&
+				libraryModel(models, [character, style], {
+					references: given.length,
+					guide,
+				});
 			if (kept) ids = [kept.id];
 			if (ids.length === 0) {
 				// A character's pictures are followed by models that take them.

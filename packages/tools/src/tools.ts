@@ -732,9 +732,28 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 						}
 					: undefined;
 				let ids = args.models ?? [];
-				// The model a character or style prefers, when it can be used.
-				const kept = ids.length === 0 && libraryModel(models, character, style);
-				if (kept) ids = [kept.id];
+				// The model a character or style prefers, when it fits. Unnamed,
+				// only a free one on this computer is used, as for any default.
+				let note: string | null = null;
+				const preferred =
+					ids.length === 0
+						? libraryModel(await reel.models(), [character, style], {
+								references: given.length,
+								guide,
+							})
+						: null;
+				if (
+					preferred &&
+					isLocal(preferred) &&
+					models.some((m) => m.id === preferred.id)
+				) {
+					ids = [preferred.id];
+				} else if (preferred && !isLocal(preferred)) {
+					const by = [character, style].find(
+						(e) => e?.modelId === preferred.id,
+					);
+					note = `${by?.name} prefers ${preferred.name} (${preferred.id}), which is paid: name it in models to use it. Without it, a free local model is used.`;
+				}
 				if (ids.length === 0) {
 					// What the person picked most in comparisons, else the best on
 					// paper; for a character's pictures, one that follows them first.
@@ -751,11 +770,12 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 							: undefined) ?? (await pick(given.length));
 					if (!fit) {
 						return failure(
-							guide
-								? `No installed local model can follow a ${guide.kind} guide${guide.ready ? "" : " made from this picture"}. Name one with models (a cloud model may make the map), or the user can install Z-Image Turbo, guided in the Hatchlight app.`
-								: given.length > 0
-									? "No installed local model can start from a picture. Name one with models, or the user can install one in the Hatchlight app."
-									: "No local model is installed. The user can install one from Local models in the Hatchlight app.",
+							(note ? `${note}\n` : "") +
+								(guide
+									? `No installed local model can follow a ${guide.kind} guide${guide.ready ? "" : " made from this picture"}. Name one with models (a cloud model may make the map), or the user can install Z-Image Turbo, guided in the Hatchlight app.`
+									: given.length > 0
+										? "No installed local model can start from a picture. Name one with models, or the user can install one in the Hatchlight app."
+										: "No local model is installed. The user can install one from Local models in the Hatchlight app."),
 						);
 					}
 					ids = [fit.id];
@@ -767,7 +787,7 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 						`Cannot use ${unknown.join(", ")}: not installed, without a key, or paid while paid models are off. Call list_models for what can be used.`,
 					);
 				}
-				return run(
+				const result = await run(
 					{
 						prompt: args.prompt,
 						modelIds: ids,
@@ -786,6 +806,7 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 					models,
 					context,
 				);
+				return note ? { ...result, text: `${note}\n${result.text}` } : result;
 			},
 		}),
 		tool({

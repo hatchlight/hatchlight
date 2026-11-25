@@ -497,7 +497,17 @@ export class ReelService {
 			updatedAt: Date.now(),
 		};
 		await this.checkLibraryParts(ctx, entry, await this.installedLoras());
-		this.library.put(ctx, entry);
+		try {
+			this.library.put(ctx, entry);
+		} catch (error) {
+			// Taken meanwhile, by a save made at the same time.
+			if (!/UNIQUE constraint failed/.test(String(error))) throw error;
+			throw new ValidationError(
+				`There already is a ${kind} named ${entry.name}`,
+				"libraryNameTaken",
+				{ name: entry.name },
+			);
+		}
 		return entry;
 	}
 
