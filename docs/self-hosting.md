@@ -41,13 +41,12 @@ With Docker Compose, using [`deploy/compose.yaml`](../deploy/compose.yaml):
 
 ```sh
 git clone https://github.com/hatchlight/hatchlight.git && cd hatchlight
-docker build -t ghcr.io/hatchlight/hatchlight .
 HATCHLIGHT_PUBLIC_URL=http://192.168.1.20:4096 docker compose -f deploy/compose.yaml up -d
 ```
 
-The second line builds the image, which takes a few minutes. The image is
-published to `ghcr.io/hatchlight/hatchlight` from the next release on; then
-that line can be skipped, and Compose downloads the image instead.
+Compose downloads the image from `ghcr.io/hatchlight/hatchlight`. To build
+it yourself instead, run `docker build -t ghcr.io/hatchlight/hatchlight .`
+first, which takes a few minutes.
 `docker compose -f deploy/compose.yaml logs hatchlight` shows the setup code.
 
 Or with `docker run`:
