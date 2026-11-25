@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { api, assetUrl, previewUrl, type SessionDetail, useDemo } from "./api";
-import { Composer, type Draft } from "./Composer";
+import { Composer, type Draft, ROOMY } from "./Composer";
 import {
 	blindLetter,
 	blindOrder,
@@ -751,7 +751,7 @@ export function Chat({
 				</div>
 			) : (
 				!deciding && (
-					<div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] lg:grid-cols-[300px_minmax(0,1fr)_320px]">
+					<div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] lg:grid-cols-[280px_minmax(0,1fr)] roomy:grid-cols-[300px_minmax(0,1fr)_320px]">
 						<Composer
 							models={models.data ?? []}
 							providers={providers.data ?? []}
@@ -825,10 +825,8 @@ export function Chat({
 											models={byId}
 											onOpen={(item) => {
 												setSelected(item);
-												// The sheet is for narrow screens; wide ones show a column.
-												setInspecting(
-													!window.matchMedia("(min-width: 1024px)").matches,
-												);
+												// A sheet below the column width; a column above it.
+												setInspecting(!window.matchMedia(ROOMY).matches);
 											}}
 											onUseAsReference={addReference}
 											upscale={upscale}
