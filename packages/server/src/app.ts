@@ -1034,6 +1034,28 @@ export function createApp(options: AppOptions): Hono {
 		await models.checkpoints.remove(c.req.param("id"));
 		return c.body(null, 204);
 	});
+	// Other apps' folders, whose models are used where they are. Machine-wide
+	// like the models: on a server, the paths are the server's.
+	app.get("/api/model-folders", async (c) =>
+		c.json(await models.folders.list()),
+	);
+	app.get("/api/model-folders/suggestions", async (c) =>
+		c.json(await models.folders.suggestions()),
+	);
+	app.post("/api/model-folders", async (c) => {
+		const body = await json(c);
+		if (typeof body.path !== "string" || !body.path.trim()) {
+			throw new ValidationError("path must name a folder");
+		}
+		return c.json(await models.folders.add(body.path), 201);
+	});
+	app.post("/api/model-folders/rescan", async (c) =>
+		c.json(await models.folders.rescan()),
+	);
+	app.delete("/api/model-folders/:id", async (c) => {
+		await models.folders.remove(c.req.param("id"));
+		return c.body(null, 204);
+	});
 	// Pictures being described now: no training starts beside them.
 	let captioning = 0;
 	// The LoRA trainer, shared like the models it trains on.

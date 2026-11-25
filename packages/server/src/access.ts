@@ -83,6 +83,7 @@ export const ROUTE_ACCESS: Readonly<Record<string, Access>> = {
 	"GET /api/local-models/:id/demos/:index": "member",
 	"GET /api/loras": "member",
 	"GET /api/checkpoints": "member",
+	"GET /api/model-folders": "member",
 	"GET /api/trainer": "member",
 	"GET /api/captioner": "member",
 
@@ -102,6 +103,11 @@ export const ROUTE_ACCESS: Readonly<Record<string, Access>> = {
 	"POST /api/checkpoints": "admin",
 	"PATCH /api/checkpoints/:id": "admin",
 	"DELETE /api/checkpoints/:id": "admin",
+	// Other apps' folders on the machine: where to look is the admins' call.
+	"GET /api/model-folders/suggestions": "admin",
+	"POST /api/model-folders": "admin",
+	"POST /api/model-folders/rescan": "admin",
+	"DELETE /api/model-folders/:id": "admin",
 	// The people of the server.
 	"GET /api/users": "admin",
 	"PATCH /api/users/:id": "admin",
@@ -148,6 +154,7 @@ export const ROUTE_SCOPE: Readonly<Record<string, TokenScope>> = {
 	"GET /api/local-models/:id/demos/:index": "read",
 	"GET /api/loras": "read",
 	"GET /api/checkpoints": "read",
+	"GET /api/model-folders": "read",
 	"GET /api/trainer": "read",
 	"GET /api/captioner": "read",
 

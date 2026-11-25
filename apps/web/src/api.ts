@@ -10,6 +10,8 @@ import type {
 	InviteView,
 	LocalModelsView,
 	LoraInfo,
+	ModelFolder,
+	ModelFolderSuggestion,
 	ModelSpec,
 	ProviderStatus,
 	Session,
@@ -370,6 +372,15 @@ export const api = {
 		),
 	deleteLora: (id: string) =>
 		request<void>(`/api/loras/${id}`, { method: "DELETE" }),
+	modelFolders: () => request<ModelFolder[]>("/api/model-folders"),
+	modelFolderSuggestions: () =>
+		request<ModelFolderSuggestion[]>("/api/model-folders/suggestions"),
+	addModelFolder: (path: string) =>
+		request<ModelFolder>("/api/model-folders", send("POST", { path })),
+	rescanModelFolders: () =>
+		request<ModelFolder[]>("/api/model-folders/rescan", { method: "POST" }),
+	removeModelFolder: (id: string) =>
+		request<void>(`/api/model-folders/${id}`, { method: "DELETE" }),
 	settings: () => request<Settings>("/api/settings"),
 	saveSettings: (change: Partial<Settings>) =>
 		request<Settings>("/api/settings", send("PUT", change)),

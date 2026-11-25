@@ -150,6 +150,8 @@ export interface LoraInfo {
 	trigger: string | null;
 	size: number;
 	addedAt: number;
+	/** Set when the file is in another app's folder, used where it is. */
+	linked?: LinkedFrom;
 }
 
 /** The families of single-file models that can be added by hand. */
@@ -171,6 +173,58 @@ export interface CheckpointInfo {
 	clipSkip: number | null;
 	size: number;
 	addedAt: number;
+	/** Set when the file is in another app's folder, used where it is. */
+	linked?: LinkedFrom;
+}
+
+/** Apps whose models folders Hatchlight knows how to read. */
+export const MODEL_FOLDER_APPS = [
+	"comfyui",
+	"a1111",
+	"stabilityMatrix",
+] as const;
+/** `a1111` stands for AUTOMATIC1111 and Forge, which share a layout. */
+export type ModelFolderApp = (typeof MODEL_FOLDER_APPS)[number];
+
+/** Where a model found in another app's folder comes from. */
+export interface LinkedFrom {
+	/** The linked folder's id. */
+	folder: string;
+	/** The app whose layout the folder has; null for a plain folder. */
+	app: ModelFolderApp | null;
+}
+
+/**
+ * A folder of another app (ComfyUI, AUTOMATIC1111, Forge, Stability
+ * Matrix) whose checkpoints and LoRAs Hatchlight uses where they are.
+ */
+export interface ModelFolder {
+	id: string;
+	path: string;
+	/** The layout found; null when the folder was read as a plain folder. */
+	app: ModelFolderApp | null;
+	/** False when the folder was not there at the last look (a drive unplugged). */
+	available: boolean;
+	checkpoints: number;
+	loras: number;
+	/** Files that are not used, by why. */
+	skipped: {
+		/** A family or kind of file Hatchlight does not run. */
+		unknown: number;
+		/** Not a safetensors file that can be read. */
+		unreadable: number;
+		tooLarge: number;
+	};
+	/** More files than are looked at: the rest were left out. */
+	truncated: boolean;
+	addedAt: number;
+	scannedAt: number | null;
+}
+
+/** An install of another app found on this computer, not linked yet. */
+export interface ModelFolderSuggestion {
+	path: string;
+	app: ModelFolderApp;
 }
 
 /** Where the LoRA trainer is: not installed, being installed, or ready. */

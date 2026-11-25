@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 import { useCan } from "./Accounts";
 import { api } from "./api";
 import { type I18n, useI18n } from "./i18n";
+import { LinkedLabel } from "./ModelFolders";
 import { ConfirmButton, LABEL, SECTION, TrainPanel } from "./Training";
 
 /** A LoRA chosen for the next picture, and how strongly. */
@@ -77,6 +78,11 @@ function LoraRow({ lora, models }: { lora: LoraInfo; models: ModelSpec[] }) {
 							})
 						: t("loras.noModel", { base: baseText(t, lora.base) })}
 				</p>
+				{lora.linked && (
+					<p className="mt-1.5">
+						<LinkedLabel linked={lora.linked} />
+					</p>
+				)}
 				{lora.trigger && (
 					<p className="mt-1.5 text-xs text-dim">
 						{t("loras.trigger")}{" "}
@@ -90,7 +96,8 @@ function LoraRow({ lora, models }: { lora: LoraInfo; models: ModelSpec[] }) {
 				)}
 			</div>
 			<span className="font-mono text-xs text-dim">{bytes(lora.size)}</span>
-			{can.admin && (
+			{/* Another app's file is removed with its folder, never from here. */}
+			{can.admin && !lora.linked && (
 				<ConfirmButton
 					label={t("loras.delete")}
 					ariaLabel={t("loras.deleteNamed", { name: lora.name })}

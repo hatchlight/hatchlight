@@ -24,6 +24,7 @@ import {
 	checkpointOf,
 } from "./checkpoints";
 import { type GpuMemory, readGpuMemory } from "./hardware";
+import { type FileLinks, lorasFolder } from "./linked";
 import type { LocalModelStore, LocalRuntime } from "./store";
 import { WarmEngines } from "./warm";
 
@@ -398,6 +399,8 @@ export interface LocalProviderOptions {
 	warm?: WarmEngines | false;
 	/** Reads the GPU's free memory; tests give their own. */
 	freeMemory?: () => Promise<GpuMemory | null>;
+	/** How LoRAs are linked into a job's folder; tests give their own. */
+	links?: Partial<FileLinks>;
 }
 
 /** How long a job waits for the reading of free graphics memory. */
@@ -572,6 +575,7 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 	private windowsPath: PathMapper;
 	private warm: WarmEngines | false;
 	private freeMemory: () => Promise<GpuMemory | null>;
+	private links: Partial<FileLinks> | undefined;
 
 	constructor(options: LocalProviderOptions) {
 		this.store = options.store;
@@ -579,6 +583,7 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 		this.spawn = options.spawn ?? spawnProcess;
 		this.windowsPath = options.windowsPath ?? windowsPath;
 		this.freeMemory = options.freeMemory ?? (() => readGpuMemory());
+		this.links = options.links;
 		this.warm =
 			options.warm ??
 			new WarmEngines({ spawn: this.spawn, gpu: this.store.gpu });
@@ -976,7 +981,7 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 		}
 	}
 
-	/** Runs the engine once for this job. */
+	/** Runs the engine once for this job, with its LoRAs in one folder. */
 	private async *once(
 		runtime: LocalRuntime,
 		handle: LocalHandle,
@@ -985,6 +990,33 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 		path: PathMapper,
 		references: string[],
 		mask: string | undefined,
+	): AsyncIterable<ProviderEvent> {
+		const loras = await this.engineLoras(handle, runtime);
+		try {
+			yield* this.runOnce(
+				runtime,
+				handle,
+				ctx,
+				output,
+				path,
+				references,
+				mask,
+				loras.loras,
+			);
+		} finally {
+			await loras.done();
+		}
+	}
+
+	private async *runOnce(
+		runtime: LocalRuntime,
+		handle: LocalHandle,
+		ctx: ProviderContext,
+		output: string,
+		path: PathMapper,
+		references: string[],
+		mask: string | undefined,
+		loras: EngineLora[],
 	): AsyncIterable<ProviderEvent> {
 		const video = runtime.model.media === "video";
 		const argv = [
@@ -998,7 +1030,7 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 				references,
 				handle.size,
 				mask,
-				await this.engineLoras(handle),
+				loras,
 			)),
 		];
 		// The engine writes the picture as it forms, numbered from 000.
@@ -1120,15 +1152,37 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 		}
 	}
 
-	/** The handle's LoRAs, found where the models folder is now. */
-	private async engineLoras(handle: LocalHandle): Promise<EngineLora[]> {
+	/**
+	 * The handle's LoRAs, found where the models folder is now. The engine
+	 * reads them from one folder by id: with any from another app's folder,
+	 * they are all put in a folder of this job's, removed by `done`.
+	 */
+	private async engineLoras(
+		handle: LocalHandle,
+		runtime: LocalRuntime,
+	): Promise<{ loras: EngineLora[]; done(): Promise<void> }> {
 		const loras: EngineLora[] = [];
+		let linked = false;
 		for (const lora of handle.loras ?? []) {
 			// Deleted since the job was asked for: say so, not a vague failure.
-			await this.store.loras.get(lora.id);
+			const info = await this.store.loras.get(lora.id);
+			if (info.linked) linked = true;
 			loras.push({ ...lora, path: this.store.loras.path(lora.id) });
 		}
-		return loras;
+		if (!linked) return { loras, done: async () => {} };
+		const folder = await lorasFolder(loras, {
+			dir: join(runtime.scratch, `loras-${crypto.randomUUID()}`),
+			cache: join(runtime.scratch, "linked-loras"),
+			throughWindows: runtime.throughWindows,
+			links: this.links,
+		});
+		return {
+			loras: loras.map((lora) => ({
+				...lora,
+				path: join(folder.dir, `${lora.id}.safetensors`),
+			})),
+			done: folder.remove,
+		};
 	}
 
 	async cancel(): Promise<void> {

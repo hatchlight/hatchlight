@@ -195,6 +195,13 @@ A LoRA is a small file that teaches a model a style or a subject. On the
   models, such as SDXL, Stable Diffusion 1.5, FLUX, Z-Image or Wan.
 - **Add a model**: add a whole Stable Diffusion XL or 1.5 model (a
   checkpoint), as a `.safetensors` file.
+- **Models from other apps**: already have models in ComfyUI, AUTOMATIC1111,
+  Forge or Stability Matrix? Add that app's folder (or its models folder),
+  or pick it when Hatchlight finds it. Its checkpoints and LoRAs show up with
+  yours and are used where they are: nothing is copied, moved or deleted.
+  Only SDXL and SD 1.5 checkpoints, and LoRAs for a family Hatchlight runs,
+  are used; other files are counted as skipped. Hatchlight looks again each
+  time it starts, or when you choose **Look again**.
 - **Train a LoRA**: teach Stable Diffusion XL a subject or style from your
   own pictures. It needs Windows (or WSL), an NVIDIA card with 12 GB of
   memory, and Stable Diffusion XL installed. It downloads about 6 GB of tools

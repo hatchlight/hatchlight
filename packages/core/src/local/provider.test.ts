@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import {
 	dimensions,
 	engineArguments,
 	type GpuMemory,
+	LinkedFolders,
 	type LocalModelSpec,
 	LocalProvider,
 	type LocalRuntime,
@@ -1247,6 +1248,70 @@ describe("running", () => {
 				references: [],
 			}),
 		).rejects.toMatchObject({ code: "loraMissing" });
+	});
+
+	test("a LoRA from another app's folder reaches the engine through a folder of the job's", async () => {
+		const SDXL = { ...FLUX, loraBase: "sdxl" as const };
+		const { provider, fake, calls, store, gpuRoot, dir } = await setup(SDXL);
+		const app = await mkdtemp(join(tmpdir(), "hatchlight-comfyui-"));
+		dirs.push(app);
+		await mkdir(join(app, "models", "loras"), { recursive: true });
+		await Bun.write(
+			join(app, "models", "loras", "Ink v2.safetensors"),
+			safetensors(["lora_unet_input_blocks_4_1_proj_in.alpha"]),
+		);
+		const folders = new LinkedFolders({
+			root: () => gpuRoot,
+			ownIds: { lora: async () => [], checkpoint: async () => [] },
+		});
+		store.loras = new LoraShelf({
+			root: () => gpuRoot,
+			linked: folders.loras,
+		});
+		const own = await store.loras.add(
+			new Blob([safetensors(["lora_te2_x.alpha"], { ss_output_name: "Mine" })]),
+			"mine.safetensors",
+		);
+		await folders.add(app);
+		// What the engine finds in its LoRA folder while it runs.
+		let seen: string[] = [];
+		const watching: Spawn = (argv) => {
+			seen = readdirSync(argv[argv.indexOf("--lora-model-dir") + 1] as string);
+			return fake([])(argv);
+		};
+		const watched = provider(watching);
+		await watched.load();
+		const [model] = watched.listModels();
+		const handle = await watched.submit({
+			model: model as never,
+			params: params({
+				loras: [
+					{ id: "ink-v2", weight: 1 },
+					{ id: own.id, weight: 0.5 },
+				],
+			}),
+			references: [],
+		});
+		const events: ProviderEvent[] = [];
+		for await (const event of watched.events(handle, {
+			apiKey: undefined,
+			signal: new AbortController().signal,
+		})) {
+			events.push(event);
+		}
+		expect(events.at(-1)?.type).toBe("completed");
+		const argv = calls[0] ?? [];
+		expect(argv[argv.indexOf("-p") + 1]).toBe(
+			"a red fox <lora:ink-v2:1> <lora:mine:0.5>",
+		);
+		const loraDir = argv[argv.indexOf("--lora-model-dir") + 1] as string;
+		expect(loraDir.startsWith(join(dir, "loras-"))).toBe(true);
+		expect(seen.sort()).toEqual(["ink-v2.safetensors", "mine.safetensors"]);
+		// Gone after the job; the other app's file stays.
+		expect(await readdir(dir)).not.toContain(loraDir.slice(dir.length + 1));
+		expect(await readdir(join(app, "models", "loras"))).toEqual([
+			"Ink v2.safetensors",
+		]);
 	});
 
 	test("a LoRA deleted after the job was asked for fails the job, saying so", async () => {

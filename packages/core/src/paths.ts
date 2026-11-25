@@ -133,6 +133,33 @@ export async function defaultModelsDir(
 }
 
 /**
+ * The home folders and drives other apps are often installed in: this
+ * system's home and, under WSL, the Windows one with its C: drive, found as
+ * the models folder is.
+ */
+export async function appHomes(
+	platform: NodeJS.Platform = process.platform,
+	env: Record<string, string | undefined> = process.env,
+	home: string = homedir(),
+): Promise<{ homes: string[]; drives: string[] }> {
+	if (platform === "win32") {
+		return { homes: [env.USERPROFILE ?? home], drives: ["C:\\"] };
+	}
+	if (
+		platform === "linux" &&
+		(await detectHardware({ run: async () => null })).wsl
+	) {
+		const windows = await output(["cmd.exe", "/c", "echo", "%USERPROFILE%"]);
+		const linux =
+			windows && !windows.includes("%")
+				? await output(["wslpath", "-u", windows])
+				: null;
+		return { homes: [home, ...(linux ? [linux] : [])], drives: ["/mnt/c"] };
+	}
+	return { homes: [home], drives: [] };
+}
+
+/**
  * Where the LoRA trainer (Python, PyTorch and the training scripts) is
  * installed. Never the models folder: under WSL that folder is on the
  * Windows side, where a Linux Python environment runs too slowly, and the
