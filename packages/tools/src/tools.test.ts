@@ -148,6 +148,20 @@ describe("the model used when none is named", () => {
 		);
 	});
 
+	test("is never a model the person mostly picked against", async () => {
+		const losing = { ...rank("local/y", false), wins: 2, winRate: 2 / 9 };
+		expect(
+			await preferredModel(
+				ranked({ all: [losing] }),
+				[local, other],
+				"a fox",
+				0,
+			),
+		).toBeNull();
+		// So the best on paper is used.
+		expect(bestLocalModel([local, other], 0)?.id).toBe("local/z");
+	});
+
 	test("is left to the best on paper while picks are few or out of reach", async () => {
 		expect(
 			await preferredModel(

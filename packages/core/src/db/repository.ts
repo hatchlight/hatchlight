@@ -415,8 +415,16 @@ export class SqliteRepository implements Repository {
 
 	async listGallery(ctx: UserContext, q: GalleryQuery) {
 		const { assets } = schema;
-		return this.db
-			.select()
+		const rows = this.db
+			.select({
+				asset: assets,
+				unpicked: sql<number>`exists (
+					select 1 from ${schema.jobs} j
+					where j.id = ${assets.jobId}
+						and (select count(*) from ${schema.jobs} k where k.turn_id = j.turn_id) > 1
+						and not exists (select 1 from ${schema.picks} p where p.turn_id = j.turn_id)
+				)`,
+			})
 			.from(assets)
 			.where(
 				and(
@@ -439,6 +447,7 @@ export class SqliteRepository implements Repository {
 			.orderBy(desc(assets.createdAt), desc(assets.id))
 			.limit(q.limit)
 			.all();
+		return rows.map((row) => ({ ...row.asset, unpicked: row.unpicked === 1 }));
 	}
 
 	async findJob(id: string) {

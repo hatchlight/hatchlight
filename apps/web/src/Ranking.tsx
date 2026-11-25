@@ -230,6 +230,8 @@ export function Ranking() {
 	const [kind, setKind] = useState<KindChoice>("all");
 	const [examples, setExamples] = useState(false);
 	const [copied, setCopied] = useState(false);
+	// The Markdown to copy by hand when the clipboard cannot be written.
+	const [manual, setManual] = useState<string | null>(null);
 	const [drawing, setDrawing] = useState(false);
 	const ranking = useQuery({
 		queryKey: ["ranking", media, period, kind],
@@ -264,12 +266,21 @@ export function Ranking() {
 
 	const copy = () => {
 		if (!data) return;
-		void navigator.clipboard
-			?.writeText(rankingMarkdown(i18n, data, facts()))
-			.then(() => {
+		const markdown = rankingMarkdown(i18n, data, facts());
+		// Browsers keep the clipboard from pages on plain http, such as a
+		// server reached by its address: the text is then shown to copy.
+		if (!navigator.clipboard) {
+			setManual(markdown);
+			return;
+		}
+		navigator.clipboard.writeText(markdown).then(
+			() => {
+				setManual(null);
 				setCopied(true);
 				setTimeout(() => setCopied(false), 2000);
-			});
+			},
+			() => setManual(markdown),
+		);
 	};
 	const save = async () => {
 		if (!data) return;
@@ -427,7 +438,7 @@ export function Ranking() {
 														{i18n.number(i + 1)}
 													</td>
 													<th scope="row" className="py-3 pr-4 font-medium">
-														<span className="flex flex-wrap items-center gap-2">
+														<span className="flex flex-col items-start gap-1">
 															{row.name}
 															{row.few && (
 																<Badge
@@ -439,7 +450,7 @@ export function Ranking() {
 															)}
 														</span>
 													</th>
-													<td className="py-3 font-mono tabular-nums">
+													<td className="py-3 pr-4 font-mono whitespace-nowrap tabular-nums">
 														{row.wins}
 													</td>
 													<td className="py-3 font-mono tabular-nums">
@@ -459,7 +470,8 @@ export function Ranking() {
 								<p className="text-xs leading-relaxed text-dim">
 									{t("ranking.sortNote", {
 										count: data?.minComparisons ?? 0,
-									})}
+									})}{" "}
+									{t("ranking.timeNote")}
 								</p>
 								<div className="flex flex-wrap items-center gap-3 border-t border-line pt-5">
 									<Button variant="outline" onClick={copy}>
@@ -488,6 +500,24 @@ export function Ranking() {
 								>
 									{copied ? t("ranking.copiedNote") : t("ranking.shareNote")}
 								</p>
+								{manual != null && (
+									<div className="flex flex-col gap-2">
+										<label
+											htmlFor={`${id}-markdown`}
+											className="text-sm text-danger"
+										>
+											{t("ranking.copyByHand")}
+										</label>
+										<textarea
+											id={`${id}-markdown`}
+											readOnly
+											value={manual}
+											rows={8}
+											onFocus={(event) => event.currentTarget.select()}
+											className="rounded-xl border border-line bg-bg p-3 font-mono text-xs"
+										/>
+									</div>
+								)}
 							</>
 						)}
 					</CardContent>

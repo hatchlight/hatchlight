@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
+import { blindLetter, blindOrder, namesHidden } from "@hatchlight/core/blind";
 import { promptKinds } from "@hatchlight/core/ranking";
 import {
 	type JobView,
@@ -8,6 +9,7 @@ import {
 	type PromptKind,
 	RANKING_PERIODS,
 	type Ranking,
+	type TurnView,
 } from "@hatchlight/core/types";
 import { z } from "zod";
 import type { Reel } from "./reel";
@@ -216,7 +218,7 @@ function fitsByDefault(model: ModelSpec, references: number): boolean {
 
 /**
  * The model the person picked most often in comparisons, among `fits`,
- * for prompts of the kind given; null while there are too few picks to say.
+ * for prompts of the kind given; null while no model is clearly preferred.
  */
 export async function preferredModel(
 	reel: Pick<Reel, "ranking">,
@@ -229,7 +231,11 @@ export async function preferredModel(
 	const kind = promptKinds(prompt, references)[0];
 	for (const query of kind ? [{ kind }, {}] : [{}]) {
 		const ranking = await reel.ranking(query).catch(() => null);
-		const top = ranking?.models.find((m) => !m.few && byId.has(m.modelId));
+		// A real preference: enough comparisons, and won at least half of
+		// them. Merely ranking first among models that all lose is none.
+		const top = ranking?.models.find(
+			(m) => !m.few && m.winRate >= 0.5 && byId.has(m.modelId),
+		);
 		if (top) return byId.get(top.modelId) ?? null;
 	}
 	return null;
@@ -312,25 +318,42 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 		return ids;
 	}
 
-	/** Says how a turn's jobs stand, with previews of what they made. */
+	/** Whether the person hides model names until they pick the best. */
+	const blindPicks = async () =>
+		(await reel.settings?.().catch(() => null))?.blindPicks === true;
+
+	/**
+	 * Says how a turn's jobs stand, with previews of what they made. In a
+	 * blind comparison not picked yet, the models go by the letters the app
+	 * shows, in its order, with nothing that would tell them apart.
+	 */
 	async function report(
-		jobs: JobView[],
+		turn: Pick<TurnView, "id" | "jobs" | "pickedAssetId">,
 		models: ModelSpec[],
 		images: ToolImage[],
+		blind: boolean,
 	): Promise<string[]> {
 		const lines: string[] = [];
-		for (const job of jobs) {
-			const name =
-				models.find((m) => m.id === job.modelId)?.name ?? job.modelId;
+		const hidden = namesHidden(turn, blind);
+		const jobs = hidden ? blindOrder(turn.jobs, turn.id) : turn.jobs;
+		if (hidden) {
+			lines.push(
+				"The user hides model names until they pick the best result: call the results by these letters, and do not name or guess the models.",
+			);
+		}
+		for (const [index, job] of jobs.entries()) {
+			const name = hidden
+				? `Model ${blindLetter(index)}`
+				: (models.find((m) => m.id === job.modelId)?.name ?? job.modelId);
 			const seconds =
-				job.startedAt && job.finishedAt
+				!hidden && job.startedAt && job.finishedAt
 					? ` in ${((job.finishedAt - job.startedAt) / 1000).toFixed(1)} s`
 					: "";
-			const paid = job.costUsd ? `, $${job.costUsd.toFixed(3)}` : "";
+			const paid = !hidden && job.costUsd ? `, $${job.costUsd.toFixed(3)}` : "";
 			if (job.status !== "succeeded") {
-				lines.push(
-					`- ${name}: ${job.status}${job.error ? `: ${job.error}` : ""}`,
-				);
+				// An error may name its model: not while the names are hidden.
+				const error = job.error && !hidden ? `: ${job.error}` : "";
+				lines.push(`- ${name}: ${job.status}${error}`);
 				continue;
 			}
 			const made: string[] = [];
@@ -412,6 +435,7 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 		context.started?.(turn.id);
 
 		let jobs: JobView[] = turn.jobs;
+		let pickedAssetId: string | null = null;
 		const started = Date.now();
 		let stopped = false;
 		try {
@@ -425,6 +449,7 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 				const current = detail.turns.find((t) => t.id === turn.id);
 				if (current) {
 					jobs = current.jobs;
+					pickedAssetId = current.pickedAssetId ?? null;
 					spend.settle(current);
 				}
 				const finished = jobs.filter((j) => TERMINAL.includes(j.status));
@@ -439,7 +464,12 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 		const images: ToolImage[] = [];
 		const lines = [
 			`Session ${session.id}, turn ${turn.id} (the user can open it at ${reel.sessionUrl(session.id)}).`,
-			...(await report(jobs, models, images)),
+			...(await report(
+				{ id: turn.id, jobs, pickedAssetId },
+				models,
+				images,
+				await blindPicks(),
+			)),
 		];
 		lines.push(...previewsLine(images));
 		if (!done(jobs)) {
@@ -660,12 +690,13 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 				const latest = detail.turns.at(-1);
 				if (!latest) return text("The session has nothing in it yet.");
 				const shown = detail.turns.filter((t) => t === latest || !done(t.jobs));
+				const blind = await blindPicks();
 				const images: ToolImage[] = [];
 				const lines: string[] = [];
 				for (const turn of shown) {
 					spend.settle(turn);
 					lines.push(`Turn ${turn.id}: "${turn.prompt}"`);
-					lines.push(...(await report(turn.jobs, models, images)));
+					lines.push(...(await report(turn, models, images, blind)));
 				}
 				lines.push(...previewsLine(images));
 				return { text: lines.join("\n"), images };
@@ -694,11 +725,12 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 			async run({ query, limit }) {
 				const items = await reel.gallery({ query, limit: limit ?? 20 });
 				if (items.length === 0) return text("Nothing found.");
+				const blind = await blindPicks();
 				return text(
 					items
 						.map(
 							(item) =>
-								`- ${item.id} — ${item.mime} — ${item.modelId ?? "uploaded"} — ${new Date(item.createdAt).toISOString()} — "${item.prompt ?? ""}"`,
+								`- ${item.id} — ${item.mime} — ${blind && item.unpicked ? "model hidden until the user picks" : (item.modelId ?? "uploaded")} — ${new Date(item.createdAt).toISOString()} — "${item.prompt ?? ""}"`,
 						)
 						.join("\n"),
 				);

@@ -1,5 +1,6 @@
 export * from "./accounts";
 export * from "./assets";
+export * from "./blind";
 export * from "./chat";
 export * from "./db/accounts";
 export * from "./db/repository";

@@ -7,6 +7,7 @@ import type {
 	Ranking,
 	RankingQuery,
 	Session,
+	Settings,
 	TurnView,
 } from "@hatchlight/core/types";
 
@@ -31,4 +32,6 @@ export interface Reel {
 	sessionUrl(id: string): string;
 	/** How the person's picks rank the models they compared, where known. */
 	ranking?(query: RankingQuery): Promise<Ranking>;
+	/** The person's choices, such as hiding model names until a pick. */
+	settings?(): Promise<Settings>;
 }

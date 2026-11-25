@@ -145,7 +145,11 @@ export interface ImproveRequest {
 export type AssistantBrain = "local" | CloudTranslatorId | null;
 
 /** Hatchlight as a person sees it, for the assistant in this process. */
-export function localReel(service: ReelService, ctx: UserContext): Reel {
+export function localReel(
+	service: ReelService,
+	ctx: UserContext,
+	settings?: SettingsStore,
+): Reel {
 	return {
 		models: async () => service.listModels(),
 		providers: () => service.listProviders(ctx),
@@ -163,6 +167,7 @@ export function localReel(service: ReelService, ctx: UserContext): Reel {
 		},
 		sessionUrl: (id) => `#/s/${encodeURIComponent(id)}`,
 		ranking: (query) => service.ranking(ctx, query),
+		...(settings && { settings: () => settings.get(ctx) }),
 	};
 }
 
@@ -938,7 +943,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 			update: (ctx, id, body) => repo.updateEntry(ctx, id, body),
 			list: (ctx, sessionId) => repo.listEntries(ctx, sessionId),
 		},
-		reel: (ctx) => localReel(service, ctx),
+		reel: (ctx) => localReel(service, ctx, settings),
 		eyes: async () => (eyes && (await eyes.ready()) ? eyes : null),
 		brain: async (ctx) =>
 			options.assistantModel ??

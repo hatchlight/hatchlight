@@ -103,6 +103,52 @@ describe("picking the best of a comparison", () => {
 				single.jobs[0]?.assets[0]?.id as string,
 			),
 		).rejects.toMatchObject({ code: "pickNeedsComparison" });
+		// Several pictures of one model say nothing about which model is liked.
+		const { session, turn } = await app.service.createTurn(ana, {
+			prompt: "a fox",
+			modelIds: ["fake/alpha"],
+			count: 2,
+		});
+		await app.engine.idle();
+		const two = (await app.service.getSession(ana, session.id)).turns.find(
+			(t) => t.id === turn.id,
+		);
+		expect(two?.jobs[0]?.assets).toHaveLength(2);
+		await expect(
+			app.service.pickResult(
+				ana,
+				turn.id,
+				two?.jobs[0]?.assets[1]?.id as string,
+			),
+		).rejects.toMatchObject({ code: "pickNeedsComparison" });
+	});
+
+	test("the gallery tells which pictures await a pick between models", async () => {
+		const app = await boot();
+		const compared = await compare(app, ana);
+		await compare(app, ana, "alone", ["fake/alpha"]);
+		const unpicked = async () =>
+			Object.fromEntries(
+				(await app.service.listGallery(ana, { limit: 10 })).map((item) => [
+					item.prompt === "alone" ? "alone" : item.modelId,
+					item.unpicked,
+				]),
+			);
+		expect(await unpicked()).toEqual({
+			alone: false,
+			"fake/alpha": true,
+			"fake/beta": true,
+		});
+		await app.service.pickResult(
+			ana,
+			compared.id,
+			compared.jobs[0]?.assets[0]?.id as string,
+		);
+		expect(await unpicked()).toEqual({
+			alone: false,
+			"fake/alpha": false,
+			"fake/beta": false,
+		});
 	});
 
 	test("is each person's own", async () => {

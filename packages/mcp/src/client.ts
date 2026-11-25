@@ -9,6 +9,7 @@ import type {
 	Ranking,
 	RankingQuery,
 	Session,
+	Settings,
 	TrainerEvent,
 	TurnView,
 } from "@hatchlight/core/types";
@@ -110,6 +111,9 @@ export class HatchlightClient implements Reel {
 		);
 		return this.request<Ranking>(`/api/ranking?${search}`);
 	};
+
+	/** The person's choices, such as hiding model names until a pick. */
+	settings = () => this.request<Settings>("/api/settings");
 
 	/** Marks the best result of a turn; null clears it. */
 	pick = (turnId: string, assetId: string | null) =>

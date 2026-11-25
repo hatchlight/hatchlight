@@ -1,4 +1,5 @@
 import type { AssetStore } from "./assets";
+import { hasChoice } from "./blind";
 import type { GalleryQuery, Repository } from "./db/repository";
 import type { JobEngine } from "./engine";
 import { NotFoundError, ValidationError } from "./errors";
@@ -433,9 +434,10 @@ export class ReelService {
 				"pickNotInTurn",
 			);
 		}
-		if (turn.jobs.flatMap((j) => j.assets).length < 2) {
+		// Only a comparison between models counts toward the ranking.
+		if (!hasChoice(turn)) {
 			throw new ValidationError(
-				"Only a turn with several results has a best one",
+				"Only a comparison between models has a best result to pick",
 				"pickNeedsComparison",
 			);
 		}

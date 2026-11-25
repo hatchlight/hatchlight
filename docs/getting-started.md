@@ -156,20 +156,24 @@ macOS and Linux they need a cloud key.
 
 ## Which model you prefer
 
-When you compare models, mark the result you like best with **This one**
-under it; press it again to clear it, or pick another. It works in both
-views, with the mouse or the keyboard.
+When you compare two models or more, mark the result you like best with
+**This one** under it; press it again to clear it, or pick another. It works
+in both views, with the mouse or the keyboard. Only comparisons between
+models can be picked, since only they say which model you prefer.
 
 **Models you prefer** in the sidebar ranks the models by your picks: how
 many comparisons each won, and its median time and cost per picture on your
 computer. Narrow it to pictures or videos, the last 30 days, or a kind of
-prompt, such as portraits, text in the picture or editing. A model with few
+prompt, such as portraits, text in the picture or editing. Times include
+loading the model and waiting in line. A model with few
 comparisons is marked and ranks lower until there are more, so one lucky win
 does not top the list.
 
 To choose without knowing which model made what, turn on **Settings >
 Comparisons > Hide model names until I pick**: the results show as Model A,
-Model B…, in an order of their own, until you pick.
+Model B…, in an order of their own, until you pick. It cannot hide
+everything: a local model's picture forms on screen as it is made, and the
+models run in the order you chose them.
 
 **Copy as Markdown** and **Download image** share the ranking with only the
 model names, the numbers, your GPU and the date; tick **Include one example

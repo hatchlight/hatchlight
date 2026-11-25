@@ -594,7 +594,13 @@ export interface Ranking {
 	minComparisons: number;
 }
 
-export type GalleryItem = Asset;
+export type GalleryItem = Asset & {
+	/**
+	 * Made in a comparison of models whose best result is not picked yet:
+	 * its model is not shown while the person hides names until a pick.
+	 */
+	unpicked?: boolean;
+};
 
 export interface CreateTurnInput extends GenerationParamsInput {
 	/** Omit to start a new session. */

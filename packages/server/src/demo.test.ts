@@ -419,7 +419,7 @@ test("a visitor never sees another visitor's sessions, pictures or gallery", asy
 	).toBe(200);
 });
 
-test("a visitor picks the best of their own pictures, never another's", async () => {
+test("a visitor cannot pick among one model's pictures, nor in another's turn", async () => {
 	const { call, visitor, make } = await demoApp();
 	const ana = await visitor();
 	const bia = await visitor();
@@ -438,8 +438,11 @@ test("a visitor picks the best of their own pictures, never another's", async ()
 			body: { assetId },
 		});
 	expect((await pick(bia)).status).toBe(404);
-	expect((await pick(ana)).status).toBe(204);
-	// One model has nothing to be ranked against; hidden names stay off.
+	// The demo's one model is compared with nothing, so there is no best.
+	const own = await pick(ana);
+	expect(own.status).toBe(400);
+	expect(await codeOf(own)).toBe("pickNeedsComparison");
+	// Nothing is ranked, and hidden names stay off.
 	for (const who of [ana, bia]) {
 		const ranking = await call("/api/ranking", { cookie: who.cookie });
 		expect(await ranking.json()).toMatchObject({ comparisons: 0, models: [] });

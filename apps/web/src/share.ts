@@ -18,7 +18,10 @@ export function rankRows(i18n: Formatter, ranking: Ranking): RankRow[] {
 	const { t, number } = i18n;
 	return ranking.models.map((m) => ({
 		name: m.name,
-		wins: t("ranking.winsOf", { wins: m.wins, comparisons: m.comparisons }),
+		wins: t("ranking.winsOf", {
+			wins: number(m.wins),
+			comparisons: number(m.comparisons),
+		}),
 		rate: number(m.winRate, { style: "percent" }),
 		time:
 			m.msPerOutput == null ? t("ranking.none") : duration(i18n, m.msPerOutput),
@@ -87,7 +90,7 @@ export function rankingMarkdown(
 		`|${header.map(() => " --- ").join("|")}|`,
 		...rows.map((row) => `| ${row.map(cell).join(" | ")} |`),
 		"",
-		t("ranking.sortNote", { count: ranking.minComparisons }),
+		`${t("ranking.sortNote", { count: ranking.minComparisons })} ${t("ranking.timeNote")}`,
 		"",
 	].join("\n");
 }

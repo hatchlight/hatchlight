@@ -147,6 +147,7 @@ export function useComparison(
 					},
 			);
 			void client.invalidateQueries({ queryKey: ["ranking"] });
+			void client.invalidateQueries({ queryKey: ["gallery"] });
 		},
 	});
 	const blind = settings.data?.blindPicks === true;
@@ -191,11 +192,14 @@ function PickButton(props: {
 			}
 			disabled={props.busy}
 			onClick={props.onClick}
-			// Small enough to share the caption's line on a narrow card.
-			className="h-8 gap-1 px-2.5 font-sans text-xs max-md:h-10"
+			// On a narrow card only its mark shows, so the name keeps its room;
+			// the label says it all to a screen reader either way.
+			className="h-8 gap-1 px-2.5 font-sans text-xs max-md:h-10 @max-[17rem]:w-8 @max-[17rem]:px-0 max-md:@max-[17rem]:w-10"
 		>
-			{props.picked && <Check aria-hidden="true" />}
-			{props.picked ? t("compare.picked") : t("compare.pick")}
+			<Check aria-hidden="true" />
+			<span className="@max-[17rem]:hidden">
+				{props.picked ? t("compare.picked") : t("compare.pick")}
+			</span>
 		</Button>
 	);
 }
@@ -395,8 +399,11 @@ export function JobCard(props: {
 							<figure
 								key={asset.id}
 								className={cn(
-									"flex min-w-0 flex-col gap-1.5 rounded-[1.15rem] transition-shadow",
-									picked && "ring-2 ring-orange ring-offset-4 ring-offset-bg",
+									// The mark of a pick is drawn inside the card, so nothing
+									// around it cuts it off or covers the caption.
+									"@container flex min-w-0 flex-col gap-1.5 rounded-[1.15rem] transition-shadow",
+									compare?.canPick && "p-1.5",
+									picked && "ring-2 ring-orange",
 								)}
 							>
 								{video ? (
@@ -427,13 +434,17 @@ export function JobCard(props: {
 										/>
 									</button>
 								)}
-								<figcaption className="flex min-h-8 items-center gap-1 font-mono text-xs text-dim">
+								{/* The actions move under the name when the card is too narrow
+								    for both: they never cover it, nor each other. */}
+								<figcaption className="flex min-h-8 flex-wrap items-center gap-1 font-mono text-xs text-dim">
 									{/* The name on its own line, so narrow cards keep it whole. */}
-									<span className="flex min-w-0 flex-1 flex-col gap-0.5">
+									<span className="flex min-w-0 flex-[1_1_5rem] flex-col gap-0.5">
 										<span className="truncate text-[#a1a1aa]">{label}</span>
-										{took && <span className="tabular-nums">{took}</span>}
+										{took && (
+											<span className="truncate tabular-nums">{took}</span>
+										)}
 									</span>
-									<span className="flex shrink-0 items-center gap-0.5">
+									<span className="flex min-w-0 flex-wrap items-center gap-0.5">
 										{compare?.canPick && (
 											<PickButton
 												label={label}
