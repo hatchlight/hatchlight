@@ -329,8 +329,11 @@ function FitBadge({
 			</Badge>
 		);
 	}
-	const text =
-		fit === "gpu"
+	// Language models are made to run on the processor: that is no warning.
+	const writes = model.media === "text" && fit === "cpu";
+	const text = writes
+		? t("models.badge.cpuText")
+		: fit === "gpu"
 			? t("models.badge.great")
 			: fit === "offload"
 				? t("models.badge.slow")
@@ -338,7 +341,9 @@ function FitBadge({
 					? t("models.badge.cpu")
 					: t("models.badge.none");
 	return (
-		<Badge className={cn("h-6 px-2.5 font-normal", FIT_BADGE[fit])}>
+		<Badge
+			className={cn("h-6 px-2.5 font-normal", FIT_BADGE[writes ? "gpu" : fit])}
+		>
 			<span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
 			{text}
 		</Badge>
@@ -377,6 +382,8 @@ export function ModelCard({
 
 	const installed = model.state === "installed";
 	const active = !installed && model.state !== "available";
+	/** A language model on the processor runs as it is meant to. */
+	const writes = (fit: Fit) => model.media === "text" && fit === "cpu";
 	const variant = model.variants.find((v) => v.id === model.variant);
 	const engineToFetch =
 		engine && !engine.installed && !installed ? engine.size : 0;
@@ -499,9 +506,16 @@ export function ModelCard({
 							<p className="text-sm">
 								<span className="font-medium">{variant.label}</span>{" "}
 								<span
-									className={variant.fit === "gpu" ? "text-dim" : "text-danger"}
+									className={
+										variant.fit === "gpu" || writes(variant.fit)
+											? "text-dim"
+											: "text-danger"
+									}
 								>
-									· {fitText(t, variant.fit)}
+									·{" "}
+									{writes(variant.fit)
+										? t("models.fit.cpuText")
+										: fitText(t, variant.fit)}
 								</span>
 							</p>
 							<Collapsible className="text-xs text-dim">
@@ -540,7 +554,10 @@ export function ModelCard({
 												>
 													<span>
 														<span className="text-ink">{other.label}</span> ·{" "}
-														{bytes(other.size)} · {fitText(t, other.fit)}
+														{bytes(other.size)} ·{" "}
+														{writes(other.fit)
+															? t("models.fit.cpuText")
+															: fitText(t, other.fit)}
 														{other.id === model.variant &&
 															` · ${installed ? t("models.variantInstalled") : t("models.recommended")}`}
 													</span>

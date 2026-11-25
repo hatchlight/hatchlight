@@ -28,6 +28,7 @@ import {
 	createRuntime,
 	DataDirInUseError,
 	databaseFile,
+	FakeChatModel,
 	lockDataDir,
 	type Runtime,
 	type RuntimeOptions,
@@ -1593,4 +1594,39 @@ test("the language models for each job are the person's choice, falling back to 
 	expect((await runtime.settings.get(me)).eyesModel).toBe("eyes-b");
 	await post("/api/settings", { eyesModel: null }, "PUT");
 	expect((await runtime.settings.get(me)).eyesModel).toBeNull();
+});
+
+test("the fake assistant asks for the model and shape first, then makes the picture", async () => {
+	const fake = new FakeChatModel();
+	fake.delayMs = 0;
+	const user = (text: string) => ({
+		role: "user" as const,
+		content: [{ type: "text" as const, text }],
+	});
+	const first = await fake.chat("", [user("a fox")]);
+	expect(first.toolCalls[0]).toMatchObject({
+		name: "ask_user",
+		arguments: {
+			options: ["Fake alpha, square", "Fake alpha, wide", "Fake beta, wide"],
+		},
+	});
+	const asked = [
+		user("a fox"),
+		{ role: "assistant" as const, text: "", toolCalls: first.toolCalls },
+		{
+			role: "tool" as const,
+			callId: first.toolCalls[0]?.id ?? "",
+			name: "ask_user",
+			content: [{ type: "text" as const, text: "Asked." }],
+		},
+		user("Fake beta, wide"),
+	];
+	expect((await fake.chat("", asked)).toolCalls[0]).toMatchObject({
+		name: "generate",
+		arguments: {
+			prompt: "a fox",
+			models: ["fake/beta"],
+			aspect_ratio: "16:9",
+		},
+	});
 });

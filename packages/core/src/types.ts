@@ -1198,6 +1198,8 @@ export interface AssistantEntryBody {
 	turnId?: string;
 	/** A paid generation waiting for the person's yes. */
 	confirm?: AssistantConfirm;
+	/** A question to the person, with answers to pick from. */
+	question?: AssistantQuestion;
 	/** The assistant stopped on this; the code says it in the reader's language. */
 	error?: { message: string; code: string | null };
 	/** Something said to the person only, never to the language model. */
@@ -1210,6 +1212,17 @@ export interface AssistantConfirm {
 	modelNames: string[];
 	usd: number;
 	state: "asked" | "approved" | "declined";
+}
+
+/**
+ * What the assistant asked before making a picture. The answer, picked or
+ * written, comes as the person's next message.
+ */
+export interface AssistantQuestion {
+	text: string;
+	/** Short answers to pick from; the person may write another. */
+	options: string[];
+	state: "asked" | "answered";
 }
 
 export interface AssistantEntry extends AssistantEntryBody {

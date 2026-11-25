@@ -155,6 +155,49 @@ function Confirm(props: {
 	);
 }
 
+/** A pill with a short answer or idea, sent as the person's message. */
+const CHIP =
+	"h-auto min-h-10 rounded-full border-line-strong bg-panel px-4 py-2 text-left font-normal whitespace-normal hover:border-gold/60";
+
+/** What the assistant asked before making a picture, with answers to pick. */
+function Question(props: {
+	entry: AssistantEntry;
+	busy: boolean;
+	onPick(answer: string): void;
+}) {
+	const { t } = useI18n();
+	const question = props.entry.question;
+	if (!question) return null;
+	const open = question.state === "asked";
+	return (
+		<div className="flex max-w-xl flex-col gap-3">
+			<MessageContent className="pt-1 text-[#e4e4e7]">
+				{question.text}
+			</MessageContent>
+			{open && question.options.length > 0 && (
+				<ul
+					aria-label={t("assistant.answers")}
+					className="flex flex-wrap gap-2"
+				>
+					{question.options.map((option) => (
+						<li key={option}>
+							<Button
+								variant="outline"
+								disabled={props.busy}
+								onClick={() => props.onPick(option)}
+								className={CHIP}
+							>
+								{option}
+							</Button>
+						</li>
+					))}
+				</ul>
+			)}
+			{open && <p className="text-xs text-dim">{t("assistant.orWrite")}</p>}
+		</div>
+	);
+}
+
 /** One entry of the conversation, as the person sees it. */
 function Entry(props: {
 	entry: AssistantEntry;
@@ -162,6 +205,7 @@ function Entry(props: {
 	models: Map<string, ModelSpec>;
 	answering: boolean;
 	onAnswer(entry: AssistantEntry, approve: boolean): void;
+	onPick(answer: string): void;
 	onOpen(item: LightboxItem): void;
 	onUseAsReference(assetId: string): void;
 }) {
@@ -212,6 +256,13 @@ function Entry(props: {
 		);
 	}
 	const turn = entry.turnId ? props.turns.get(entry.turnId) : undefined;
+	if (entry.question) {
+		return (
+			<AssistantRow mark>
+				<Question entry={entry} busy={props.answering} onPick={props.onPick} />
+			</AssistantRow>
+		);
+	}
 	if (entry.confirm) {
 		return (
 			<AssistantRow>
@@ -315,6 +366,13 @@ export function Assistant({ sessionId, addReference }: Props) {
 		sendMessage.mutate(words);
 	};
 	const loadError = view.error ?? session.error;
+	// Open ideas, so the assistant asks what it needs before the picture.
+	const starters = [
+		t("assistant.starter.poster"),
+		t("assistant.starter.pet"),
+		t("assistant.starter.room"),
+		t("assistant.starter.logo"),
+	];
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col bg-[radial-gradient(60%_40%_at_70%_-10%,rgb(255_61_139/0.10),transparent_70%)]">
@@ -332,6 +390,27 @@ export function Assistant({ sessionId, addReference }: Props) {
 							<p className="max-w-xl text-[17px] leading-relaxed text-soft">
 								{t("assistant.intro")}
 							</p>
+							{brain.data?.brain && (
+								<div className="flex flex-col gap-2.5 pt-2">
+									<p className="font-mono text-[11px] tracking-[0.18em] text-dim uppercase">
+										{t("assistant.starters")}
+									</p>
+									<ul className="flex flex-wrap gap-2">
+										{starters.map((idea) => (
+											<li key={idea}>
+												<Button
+													variant="outline"
+													disabled={sendMessage.isPending}
+													onClick={() => sendMessage.mutate(idea)}
+													className={CHIP}
+												>
+													{idea}
+												</Button>
+											</li>
+										))}
+									</ul>
+								</div>
+							)}
 						</div>
 					)}
 					{loadError && (
@@ -348,6 +427,9 @@ export function Assistant({ sessionId, addReference }: Props) {
 							onAnswer={(e, approve) =>
 								answer.mutate({ entryId: e.id, approve })
 							}
+							onPick={(words) => {
+								if (!sendMessage.isPending) sendMessage.mutate(words);
+							}}
 							onOpen={setOpen}
 							onUseAsReference={addReference}
 						/>

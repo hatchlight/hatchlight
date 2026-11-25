@@ -82,13 +82,17 @@ Hatchlight at that folder and it uses them where they are, without copying.
 
 **An assistant.** Talk to it in the Chat view: "make the fox bigger", "now in
 16:9, with FLUX". It picks models, writes the prompts and makes the pictures.
-It can look at what came out and suggest a fix. Making a series with one
-character, such as a comic or a mascot, it checks that each new picture still
-shows the same character and fixes what drifted. The Advanced view
+When an idea leaves something open (the shape, the look, which model), it asks
+first, with answers you pick in one click. It can look at what came out and
+suggest a fix. Making a series with one character, such as a comic or a
+mascot, it checks that each new picture still shows the same character and
+fixes what drifted. The Advanced view
 shows the same session with every setting. It asks before anything paid and
 keeps to a spend limit. Write in your own language: each model gets the prompt
 in the words it understands, and **Improve prompt** turns a short idea into a
-detailed one.
+detailed one. The language models that do this on your computer are chosen
+in **Settings**, as cards to install: Qwen3 4B writes, and Qwen2.5-VL or
+Qwen3-VL (4B or 8B) look at pictures.
 
 ![Hatchlight: a chat with the assistant, showing three takes of a fox in the snow from three models on this computer](.github/assets/chat.webp)
 

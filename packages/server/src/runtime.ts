@@ -205,31 +205,75 @@ export function localReel(
 
 /**
  * Stands in for the assistant's language model when trying the app without
- * keys: makes what it is asked on the first fake model, then says so.
+ * keys: asks once which fake model and shape, then makes what it was asked
+ * with the answer, and says so.
  */
-class FakeChatModel implements ChatModel {
+export class FakeChatModel implements ChatModel {
 	readonly vision = false;
+	delayMs = 600;
 	async chat(
 		_instructions: string,
 		messages: ChatMessage[],
 	): Promise<ChatReply> {
-		await Bun.sleep(600);
+		await Bun.sleep(this.delayMs);
 		const last = messages.at(-1);
-		if (last?.role === "user") {
-			const text = last.content
-				.map((part) => (part.type === "text" ? part.text : ""))
-				.join(" ");
+		if (last?.role !== "user") return this.afterTool(messages);
+		const said = (message: ChatMessage | undefined) =>
+			message?.role === "user"
+				? message.content
+						.map((part) => (part.type === "text" ? part.text : ""))
+						.join(" ")
+				: "";
+		// Asked once since the last picture: the person's message answers it.
+		const lastMade = messages.findLastIndex(
+			(m) => m.role === "tool" && m.name === "generate",
+		);
+		const asked = messages.findLastIndex(
+			(m) => m.role === "tool" && m.name === "ask_user",
+		);
+		if (asked <= lastMade) {
 			return {
 				text: "",
 				toolCalls: [
 					{
 						id: `call_${messages.length}`,
-						name: "generate",
-						arguments: { prompt: text, models: ["fake/alpha"] },
+						name: "ask_user",
+						arguments: {
+							question: "Which model, and what shape? (A fake assistant.)",
+							options: [
+								"Fake alpha, square",
+								"Fake alpha, wide",
+								"Fake beta, wide",
+							],
+						},
 					},
 				],
 			};
 		}
+		// Named in the answer, so the model is the person's choice.
+		const answer = said(last).toLowerCase();
+		const model = answer.includes("beta") ? "fake/beta" : "fake/alpha";
+		const ratio = answer.includes("wide") ? "16:9" : "1:1";
+		const idea = messages.slice(0, asked).findLast((m) => m.role === "user");
+		return {
+			text: "",
+			toolCalls: [
+				{
+					id: `call_${messages.length}`,
+					name: "generate",
+					arguments: {
+						prompt: said(idea) || said(last),
+						models: [model],
+						aspect_ratio: ratio,
+					},
+				},
+			],
+		};
+	}
+
+	/** After a tool: a character check once there are two pictures, else done. */
+	private afterTool(messages: ChatMessage[]): ChatReply {
+		const last = messages.at(-1);
 		// Once a session has an earlier picture, the new one is checked
 		// against the first, to show the character check.
 		const ids = messages.flatMap((m) =>
