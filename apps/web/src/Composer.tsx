@@ -467,7 +467,7 @@ export function Composer(props: Props) {
 								key={value}
 								value={value}
 								variant="outline"
-								className="h-[52px] min-w-0 rounded-[10px] border-line bg-panel px-1 font-mono text-xs text-soft aria-pressed:border-ink aria-pressed:bg-panel-2 aria-pressed:text-ink"
+								className="h-[52px] min-w-0 rounded-[10px] border-line bg-panel px-1 font-mono text-xs leading-tight whitespace-normal text-soft aria-pressed:border-ink aria-pressed:bg-panel-2 aria-pressed:text-ink"
 							>
 								{value === DEFAULT_RATIO ? t("composer.ratioDefault") : value}
 							</ToggleGroupItem>
