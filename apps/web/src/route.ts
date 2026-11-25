@@ -11,7 +11,7 @@ export type Route =
 	| { view: "hub"; target: HubTarget | null }
 	| { view: "settings" };
 
-function parse(hash: string): Route {
+export function parse(hash: string): Route {
 	const path = hash.replace(/^#\/?/, "");
 	if (path.startsWith("hf/")) {
 		const [repo = "", query = ""] = path.slice(3).split("?", 2);
@@ -23,9 +23,14 @@ function parse(hash: string): Route {
 	const [, first, second, third] = hash.replace(/^#/, "").split("/");
 	if (first === "gallery") return { view: "gallery" };
 	if (first === "models") {
-		return second
-			? { view: "models", focus: decodeURIComponent(second) }
-			: { view: "models" };
+		// A broken escape in someone's link opens the page, not a blank screen.
+		let focus: string | undefined;
+		try {
+			focus = second ? decodeURIComponent(second) : undefined;
+		} catch {
+			focus = undefined;
+		}
+		return focus ? { view: "models", focus } : { view: "models" };
 	}
 	if (first === "settings") return { view: "settings" };
 	if (first === "talk") return { view: "chat", talk: true };

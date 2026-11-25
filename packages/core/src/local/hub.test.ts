@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HubTarget } from "../hugging-face";
 import type { LocalModelEvent, LocalModelSpec } from "../types";
-import { catalogModelFor, hubFetch, resolveHub } from "./hub";
+import { catalogModelFor, hubFetch, plain, resolveHub } from "./hub";
 import { LocalModelStore } from "./store";
 import { safetensors } from "./testing";
 
@@ -445,6 +445,24 @@ describe("adding a file from Hugging Face", () => {
 		expect(lora).toMatchObject({ kind: "lora", item: { id: "style" } });
 	});
 
+	test("a file larger than the free disk space is refused before downloading", async () => {
+		const { models } = await store({
+			"someone/checkpoint": {
+				files: { "juggernaut.safetensors": safetensors(SDXL) },
+			},
+		});
+		// The disk is full: nothing may be fetched past the header.
+		(models as unknown as { freeBytes: () => Promise<number> }).freeBytes =
+			async () => 0;
+		await expect(
+			models.addFromHub(
+				target("someone/checkpoint", "juggernaut.safetensors"),
+				SHA,
+			),
+		).rejects.toMatchObject({ code: "notEnoughDisk" });
+		expect(await models.checkpoints.list()).toEqual([]);
+	});
+
 	test("a file that does not match its hash is not kept", async () => {
 		const { models } = await store({
 			"someone/lora": {
@@ -479,4 +497,12 @@ describe("adding a file from Hugging Face", () => {
 			code: "hubInvalid",
 		});
 	});
+});
+
+test("text from Hugging Face loses controls and invisible format characters", () => {
+	// A right-to-left override could hide "non-commercial" in a license.
+	expect(plain("cc-by-nc\u202E-4.0\u2066")).toBe("cc-by-nc-4.0");
+	expect(plain("\u001b[31mred\u0007")).toBe("[31mred");
+	// Cut by characters: an emoji is never split in half.
+	expect(plain("ab😀cd", 3)).toBe("ab😀");
 });

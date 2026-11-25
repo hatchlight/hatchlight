@@ -1226,9 +1226,10 @@ export class LocalModelStore {
 			);
 		}
 		const key = `${target.repo}/${target.file}`.toLowerCase();
-		if (this.hubDownloads.has(key)) {
+		// Files can be many gigabytes: two at a time at most.
+		if (this.hubDownloads.has(key) || this.hubDownloads.size >= 2) {
 			throw new ValidationError(
-				"This file is already being downloaded",
+				"This file, or two others, are already being downloaded from Hugging Face",
 				"hubBusy",
 			);
 		}
@@ -1243,6 +1244,14 @@ export class LocalModelStore {
 				);
 			}
 			const { repo, file, size, sha256 } = choice;
+			const freeBytes = await this.freeBytes();
+			if (size > freeBytes) {
+				throw new ValidationError(
+					`Not enough disk space: ${formatBytes(size)} needed, ${formatBytes(freeBytes)} free`,
+					"notEnoughDisk",
+					{ neededBytes: size, freeBytes },
+				);
+			}
 			const name = file.split("/").at(-1) as string;
 			const response = await hubFetch(
 				this.fetch,

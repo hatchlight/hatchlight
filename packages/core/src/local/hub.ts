@@ -89,16 +89,13 @@ interface HubInfo {
 	license: string | null;
 }
 
-/** Text from Hugging Face, made safe to print: no control characters. */
-const plain = (text: string, max = 80) =>
-	[...text]
-		.filter((char) => {
-			const code = char.codePointAt(0) ?? 0;
-			return code > 0x1f && (code < 0x7f || code > 0x9f);
-		})
-		.join("")
-		.trim()
-		.slice(0, max);
+/**
+ * Text from Hugging Face, made safe to print: no control characters, and no
+ * invisible format characters (such as bidi overrides) that could reorder
+ * what the person reads. Cut by characters, never inside one.
+ */
+export const plain = (text: string, max = 80) =>
+	[...text.replace(/[\p{Cc}\p{Cf}]/gu, "").trim()].slice(0, max).join("");
 
 function licenseOf(raw: Record<string, unknown>): string | null {
 	const card = (
