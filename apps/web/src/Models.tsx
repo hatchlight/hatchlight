@@ -448,7 +448,7 @@ function ModelCard({
 								href={model.licenseUrl}
 								target="_blank"
 								rel="noreferrer"
-								className="underline underline-offset-2 hover:text-ink"
+								className="py-1.5 underline underline-offset-2 hover:text-ink"
 							>
 								{model.license}
 							</a>{" "}
@@ -457,7 +457,7 @@ function ModelCard({
 								href={model.homepage}
 								target="_blank"
 								rel="noreferrer"
-								className="underline underline-offset-2 hover:text-ink"
+								className="py-1.5 underline underline-offset-2 hover:text-ink"
 							>
 								{t("models.page")}
 							</a>

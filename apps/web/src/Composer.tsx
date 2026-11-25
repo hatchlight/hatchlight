@@ -83,6 +83,8 @@ interface Props {
 	/** The chosen picture: a column on wide screens, a sheet on narrow ones. */
 	inspector: {
 		content: ReactNode;
+		/** False while no picture is chosen: narrow screens hide its button. */
+		chosen: boolean;
 		/** A small copy of the chosen picture, for the button that opens it. */
 		thumb?: string;
 		open: boolean;
@@ -719,20 +721,22 @@ export function Composer(props: Props) {
 								<SlidersHorizontal />
 								{summary}
 							</Button>
-							<Button
-								variant="outline"
-								onClick={() => inspector.onOpenChange(true)}
-								className="h-10 shrink-0 gap-2 rounded-full border-[#2c2c32] bg-panel px-3.5 dark:bg-panel"
-							>
-								{inspector.thumb && (
-									<img
-										src={inspector.thumb}
-										alt=""
-										className="size-5 rounded-md object-cover"
-									/>
-								)}
-								{t("inspector.chip")}
-							</Button>
+							{inspector.chosen && (
+								<Button
+									variant="outline"
+									onClick={() => inspector.onOpenChange(true)}
+									className="h-10 shrink-0 gap-2 rounded-full border-[#2c2c32] bg-panel px-3.5 dark:bg-panel"
+								>
+									{inspector.thumb && (
+										<img
+											src={inspector.thumb}
+											alt=""
+											className="size-5 rounded-md object-cover"
+										/>
+									)}
+									{t("inspector.chip")}
+								</Button>
+							)}
 						</div>
 					)}
 					{suggestion != null && (

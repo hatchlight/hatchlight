@@ -782,6 +782,7 @@ export function Chat({
 										}}
 									/>
 								),
+								chosen: shown != null,
 								thumb:
 									shown?.mime.startsWith("image/") === true
 										? assetUrl(shown.assetId)
