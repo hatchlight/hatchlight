@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chooseVariant, roleOption } from "@hatchlight/core";
+import { chooseVariant, engineArguments, roleOption } from "@hatchlight/core";
 import en from "../../../../apps/web/src/locales/en.json";
 import ptBR from "../../../../apps/web/src/locales/pt-BR.json";
 import { builtinLocalModels } from "./index";
@@ -133,6 +133,46 @@ describe("Z-Image Turbo, guided", () => {
 			expect(roleOption("control_net")).toBe("--control-net");
 			expect(variant.memoryBytes).toBeGreaterThan(same?.memoryBytes ?? 0);
 		}
+	});
+
+	test("runs within a memory budget: on a 12 GB card it fits only so", async () => {
+		expect(guided?.defaults.vramBudget).toBe(true);
+		const variant = guided?.variants.find((v) => v.id === "q8");
+		if (!guided || !variant) throw new Error("no guided model");
+		const card = {
+			model: guided,
+			variant,
+			build: {} as never,
+			executable: "/engines/sd-cli",
+			throughWindows: false,
+			fit: "gpu" as const,
+			files: Object.fromEntries(
+				variant.files.map((f) => [f.role, `/m/${f.name}`]),
+			),
+			scratch: "/scratch",
+			gpuMemoryBytes: 12_282 * 2 ** 20,
+		};
+		const args = await engineArguments(
+			card,
+			guided.defaults,
+			{
+				prompt: "a fox",
+				count: 1,
+				referenceAssetIds: [],
+				extras: {},
+				guide: { assetId: "g", kind: "outlines", ready: false },
+			},
+			"/o.png",
+			async (p) => p,
+			[],
+			{ width: 1024, height: 1024 },
+			undefined,
+			[],
+			"/s/guide.png",
+		);
+		expect(args[args.indexOf("--max-vram") + 1]).toBe("8");
+		expect(args).toContain("--control-net");
+		expect(args).toContain("--control-image");
 	});
 
 	test("follows outlines it finds, and pose or depth from a map", () => {

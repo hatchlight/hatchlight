@@ -1142,11 +1142,16 @@ describe("running", () => {
 		const { store, dir } = await setup(GUIDED);
 		const executable = join(dir, "sd-cli");
 		await Bun.write(join(dir, "sd-server"), "");
+		const budgeted = {
+			...GUIDED,
+			defaults: { ...GUIDED.defaults, vramBudget: true },
+		};
 		store.runtime = async () => ({
-			...runtime(GUIDED, dir),
+			...runtime(budgeted, dir),
 			files: { diffusion_model: "/m/z", control_net: "/m/control" },
 			executable,
 			throughWindows: false,
+			gpuMemoryBytes: 12_282 * 2 ** 20,
 		});
 		const asked: { argv: string[]; request: WarmRequest }[] = [];
 		const warm = {
@@ -1196,6 +1201,10 @@ describe("running", () => {
 		await runJob({});
 		const [guided, plain] = asked;
 		expect(guided?.argv).toContain("--control-net");
+		// The server keeps the model within the same memory budget.
+		expect(guided?.argv[(guided?.argv.indexOf("--max-vram") ?? 0) + 1]).toBe(
+			"8",
+		);
 		expect(guided?.request.controlImage?.length).toBeGreaterThan(0);
 		expect(guided?.request.controlStrength).toBe(0.6);
 		expect(guided?.request.imagePreprocess).toBeUndefined();

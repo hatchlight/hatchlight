@@ -320,14 +320,16 @@ export function starterModels(): LocalModelSpec[] {
 			...APACHE_2,
 			homepage:
 				"https://huggingface.co/alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1",
-			// Z-Image Turbo's memory and the control file's 2 GB beside it:
-			// estimated, until measured on a 12 GB card.
+			// Measured on a 12 GB card (RTX 4070 SUPER, the desktop holding
+			// about 2.2 GB): the 8-bit model, the control file and a 1024px
+			// picture's workspace need about 10.4 GB, and run only with a memory
+			// budget (31 s). The 4-bit one is estimated from it.
 			variants: [
 				{
 					id: "q8",
 					label: "8-bit",
 					engine: "sd-cpp",
-					memoryBytes: 11 * GB,
+					memoryBytes: 10.5 * GB,
 					files: [
 						Z_IMAGE_TURBO.q8,
 						SHARED.qwen3InstructQ8,
@@ -353,6 +355,10 @@ export function starterModels(): LocalModelSpec[] {
 				aspectRatios: ALL_RATIOS,
 				steps: 8,
 				cfgScale: 1,
+				// Without one, the model and the control file fill a 12 GB card
+				// and the picture's workspace no longer fits, even at 768px or
+				// with --offload-to-cpu.
+				vramBudget: true,
 				// The engine finds outlines itself; pose and depth come as maps.
 				guide: {
 					kinds: ["outlines", "pose", "depth"],
