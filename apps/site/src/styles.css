@@ -821,3 +821,129 @@ h2 {
 .languages a[aria-current="page"] {
 	color: var(--fg);
 }
+
+/* ---------- comparison pages ---------- */
+.versus h1 {
+	max-width: 16ch;
+	font-size: clamp(40px, 7vw, 88px);
+	text-wrap: balance;
+}
+
+.versus .section h2 {
+	font-size: clamp(28px, 4vw, 44px);
+}
+
+.sr {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
+
+.table {
+	margin-top: 32px;
+	overflow-x: auto;
+	background: var(--panel);
+	border: 1px solid var(--line);
+	border-radius: 18px;
+}
+
+.table table {
+	width: 100%;
+	min-width: 640px;
+	border-collapse: collapse;
+}
+
+.table th,
+.table td {
+	padding: 16px 18px;
+	text-align: left;
+	vertical-align: top;
+	border-top: 1px solid var(--line);
+}
+
+.table thead th {
+	border-top: 0;
+	font: 500 12px var(--mono);
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+	color: var(--dim);
+}
+
+.table tbody th {
+	width: 18%;
+	font: 500 13px var(--mono);
+	color: var(--dim);
+}
+
+.table td {
+	width: 41%;
+	color: var(--fg);
+}
+
+.choose {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+	gap: 40px;
+}
+
+.choose ul,
+.sources ul {
+	margin: 20px 0 0;
+	padding-left: 1.2em;
+	color: var(--dim);
+	font-size: 17px;
+}
+
+.choose li + li,
+.sources li + li {
+	margin-top: 10px;
+}
+
+.sources a,
+.note a {
+	color: var(--fg);
+}
+
+/* On a phone, each row of the table becomes a card. */
+@media (max-width: 640px) {
+	.table table {
+		min-width: 0;
+	}
+	.table thead {
+		display: none;
+	}
+	.table tr,
+	.table th,
+	.table td {
+		display: block;
+		width: auto;
+	}
+	.table tbody th {
+		width: auto;
+		padding-bottom: 0;
+	}
+	.table td {
+		border-top: 0;
+		padding-block: 10px 0;
+	}
+	.table td:last-child {
+		padding-bottom: 16px;
+	}
+	.table td::before {
+		content: attr(data-label);
+		display: block;
+		font: 500 11px var(--mono);
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: var(--dim);
+	}
+	.table tbody tr + tr th {
+		border-top: 1px solid var(--line);
+	}
+	.table tbody tr:first-child th {
+		border-top: 0;
+	}
+}

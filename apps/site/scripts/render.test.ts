@@ -3,10 +3,13 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { checkCatalog } from "@hatchlight/i18n";
 import { LANGUAGES } from "../src/languages";
+import { PAGES } from "../src/pages";
 import { loadCatalog, renderPage, robots, sitemap } from "./render";
 
 const ROOT = join(import.meta.dir, "..");
 const template = await readFile(join(ROOT, "src", "page.html"), "utf8");
+const comparison = await readFile(join(ROOT, "src", "compare.html"), "utf8");
+const COMPARISONS = PAGES.filter((page) => page.path);
 const script = await readFile(join(ROOT, "src", "main.ts"), "utf8");
 const en = await loadCatalog("en");
 
@@ -72,6 +75,11 @@ test("translations match the English catalog", async () => {
 test("every English message is used by the page or its script", () => {
 	const used = new Set([
 		...[...template.matchAll(/\{\{([\w.]+)/g)].map((m) => m[1]),
+		...COMPARISONS.flatMap((page) =>
+			[...comparison.matchAll(/\{\{([\w.]+)/g)].map((m) =>
+				m[1]?.replace(/^page\./, `${page.keys}.`),
+			),
+		),
 		...[...script.matchAll(/t\("([\w.]+)"/g)].map((m) => m[1]),
 	]);
 	// Captions are looked up by picture name.
@@ -125,4 +133,86 @@ test("the sitemap lists every language, and robots.txt points to it", () => {
 	expect(robots("https://hatchlight.app/")).toBe(
 		"User-agent: *\nAllow: /\nSitemap: https://hatchlight.app/sitemap.xml\n",
 	);
+});
+
+test("each comparison page renders in every language, at its own address", async () => {
+	expect(COMPARISONS.map((page) => page.path)).toEqual([
+		"compare/comfyui/",
+		"compare/fooocus/",
+	]);
+	for (const page of COMPARISONS) {
+		for (const language of LANGUAGES) {
+			const catalog =
+				language.code === "en" ? {} : await loadCatalog(language.code);
+			const html = renderPage(comparison, language, en, catalog, page);
+			expect(html).not.toContain("{{");
+			expect(html).toContain(`<html lang="${language.code}"`);
+			expect(html).toContain(
+				`<link rel="canonical" href="https://hatchlight.app/${language.path}${page.path}" />`,
+			);
+			for (const other of LANGUAGES)
+				expect(html).toContain(
+					`<link rel="alternate" hreflang="${other.code}" href="https://hatchlight.app/${other.path}${page.path}" />`,
+				);
+			expect(html).toContain(
+				`<link rel="alternate" hreflang="x-default" href="https://hatchlight.app/${page.path}" />`,
+			);
+			// Its title is its own, in its own language.
+			const title = (catalog[`${page.keys}.title`] ??
+				en[`${page.keys}.title`]) as string;
+			expect(html).toContain(`<title>${title}</title>`);
+			// Shared files and the main page are up the right number of folders.
+			const up = "../".repeat(
+				`${language.path}${page.path}`.split("/").filter(Boolean).length,
+			);
+			expect(html).toContain(`href="${up}src/styles.css"`);
+			expect(html).toContain(`<a class="logo" href="${up}${language.path}"`);
+			// The language links stay on this comparison.
+			expect(html).toContain(`href="${up}pt-BR/${page.path}" hreflang="pt-BR"`);
+			const json = html.match(
+				/<script type="application\/ld\+json">(.*?)<\/script>/,
+			)?.[1];
+			const data = JSON.parse(json ?? "null");
+			expect(data["@type"]).toBe("WebPage");
+			expect(data.url).toBe(
+				`https://hatchlight.app/${language.path}${page.path}`,
+			);
+			expect(data.inLanguage).toBe(language.code);
+			expect(data.about["@type"]).toBe("SoftwareApplication");
+		}
+	}
+	const portuguese = renderPage(
+		comparison,
+		LANGUAGES[1] as never,
+		en,
+		await loadCatalog("pt-BR"),
+		COMPARISONS[1],
+	);
+	expect(portuguese).toContain("Quando escolher o Fooocus");
+	expect(portuguese).toContain("https://github.com/lllyasviel/Fooocus");
+});
+
+test("the main page's footer links to the comparisons in its language", async () => {
+	const portuguese = renderPage(
+		template,
+		LANGUAGES[1] as never,
+		en,
+		await loadCatalog("pt-BR"),
+	);
+	expect(portuguese).toContain('href="../pt-BR/compare/comfyui/"');
+	expect(portuguese).toContain('href="../pt-BR/compare/fooocus/"');
+	const english = renderPage(template, LANGUAGES[0] as never, en, {});
+	expect(english).toContain(
+		'href="./compare/comfyui/">Hatchlight vs ComfyUI</a>',
+	);
+});
+
+test("the sitemap lists every comparison in every language", () => {
+	const xml = sitemap("https://hatchlight.app/");
+	for (const page of COMPARISONS)
+		for (const language of LANGUAGES)
+			expect(xml).toContain(
+				`<loc>https://hatchlight.app/${language.path}${page.path}</loc>`,
+			);
+	expect(xml.match(/<url>/g)).toHaveLength(PAGES.length * LANGUAGES.length);
 });

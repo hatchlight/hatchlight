@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="{{lang}}">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+		<title>{{page.title}}</title>
+		<meta name="description" content="{{page.description}}" />
+		<meta name="theme-color" content="#09090b" />
+		<meta property="og:title" content="{{page.title}}" />
+		<meta property="og:description" content="{{page.description}}" />
+		<meta property="og:locale" content="{{ogLocale}}" />
+		{{canonical}}
+		{{alternates}}
+		<meta property="og:image" content="{{ogImage}}" />
+		<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='a' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ff3d8b'/%3E%3Cstop offset='.55' stop-color='%23ff8a3d'/%3E%3Cstop offset='1' stop-color='%23ffc861'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='%2309090b'/%3E%3Cg transform='translate(4 3.5)'%3E%3Cpath d='M28 10 C 40 10, 44 24, 44 32 C 44 42, 37 47, 28 47 C 19 47, 12 42, 12 32 C 12 24, 16 10, 28 10 Z' fill='url(%23a)'/%3E%3Cpath d='M14 30 L 21 25 L 27 31 L 34 24 L 42 30' fill='none' stroke='%2309090b' stroke-width='3' stroke-linejoin='round'/%3E%3C/g%3E%3C/svg%3E" />
+		{{structuredData}}
+		<link rel="stylesheet" href="{{root}}src/styles.css" />
+	</head>
+	<body>
+		<div class="sky" aria-hidden="true"></div>
+		<a class="skip" href="#main">{{nav.skip}}</a>
+
+		<header class="nav gutter">
+			<a class="logo" href="{{home}}" aria-label="{{nav.home}}"><svg class="mark" viewBox="10 8 36 41" aria-hidden="true"><defs><linearGradient id="egg-top" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff3d8b"/><stop offset=".55" stop-color="#ff8a3d"/><stop offset="1" stop-color="#ffc861"/></linearGradient></defs><path d="M28 10 C 40 10, 44 24, 44 32 C 44 42, 37 47, 28 47 C 19 47, 12 42, 12 32 C 12 24, 16 10, 28 10 Z" fill="url(#egg-top)"/><path d="M14 30 L 21 25 L 27 31 L 34 24 L 42 30" fill="none" stroke="#09090b" stroke-width="3" stroke-linejoin="round"/></svg>Hatchlight</a>
+			<nav class="nav-links" aria-label="{{nav.sections}}">
+				<a href="{{repository}}">GitHub</a>
+			</nav>
+			<a class="btn btn-ghost" href="{{download}}">{{nav.download}}</a>
+		</header>
+
+		<main id="main" class="versus">
+			<section class="hero gutter">
+				<p class="eyebrow">{{vs.kicker}}</p>
+				<h1>{{page.heading}}</h1>
+				<p class="lede">{{page.intro}}</p>
+			</section>
+
+			<section class="section gutter">
+				<h2>{{vs.table.title}}</h2>
+				<div class="table">
+					<table>
+						<thead>
+							<tr><th scope="col"><span class="sr">{{vs.table.topic}}</span></th><th scope="col">{{page.name}}</th><th scope="col">Hatchlight</th></tr>
+						</thead>
+						<tbody>
+						<tr><th scope="row">{{vs.row.what}}</th><td data-label="{{page.name}}">{{page.what}}</td><td data-label="Hatchlight">{{vs.us.what}}</td></tr>
+						<tr><th scope="row">{{vs.row.models}}</th><td data-label="{{page.name}}">{{page.models}}</td><td data-label="Hatchlight">{{vs.us.models}}</td></tr>
+						<tr><th scope="row">{{vs.row.local}}</th><td data-label="{{page.name}}">{{page.local}}</td><td data-label="Hatchlight">{{vs.us.local}}</td></tr>
+						<tr><th scope="row">{{vs.row.install}}</th><td data-label="{{page.name}}">{{page.install}}</td><td data-label="Hatchlight">{{vs.us.install}}</td></tr>
+						<tr><th scope="row">{{vs.row.extend}}</th><td data-label="{{page.name}}">{{page.extend}}</td><td data-label="Hatchlight">{{vs.us.extend}}</td></tr>
+						<tr><th scope="row">{{vs.row.cloud}}</th><td data-label="{{page.name}}">{{page.cloud}}</td><td data-label="Hatchlight">{{vs.us.cloud}}</td></tr>
+						<tr><th scope="row">{{vs.row.development}}</th><td data-label="{{page.name}}">{{page.development}}</td><td data-label="Hatchlight">{{vs.us.development}}</td></tr>
+						<tr><th scope="row">{{vs.row.license}}</th><td data-label="{{page.name}}">{{page.license}}</td><td data-label="Hatchlight">{{vs.us.license}}</td></tr>
+						</tbody>
+					</table>
+				</div>
+			</section>
+
+			<section class="section gutter choose">
+				<div>
+					<h2>{{page.pickThem.title}}</h2>
+					<ul>
+						<li>{{page.pickThem.one}}</li>
+						<li>{{page.pickThem.two}}</li>
+						<li>{{page.pickThem.three}}</li>
+					</ul>
+				</div>
+				<div>
+					<h2>{{vs.pickUs}}</h2>
+					<ul>
+						<li>{{page.pickUs.one}}</li>
+						<li>{{page.pickUs.two}}</li>
+						<li>{{page.pickUs.three}}</li>
+					</ul>
+				</div>
+			</section>
+
+			<section class="section gutter sources">
+				<p class="kicker">{{vs.sources}}</p>
+				<p class="note">{{vs.sourcesNote.html}}</p>
+				<ul>
+					{{page.sources.html}}
+				</ul>
+			</section>
+
+			<section class="end gutter">
+				<h2>{{end.title}}</h2>
+				<div class="ctas">
+					<a class="btn btn-primary" href="{{download}}">{{cta.download}}</a>
+					<a class="btn btn-ghost" href="{{repository}}">{{end.source}}</a>
+				</div>
+				<p class="meta">{{end.unsigned}}</p>
+			</section>
+		</main>
+
+		<footer class="footer gutter">
+			<a class="logo" href="{{home}}"><svg class="mark" viewBox="10 8 36 41" aria-hidden="true"><defs><linearGradient id="egg-foot" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff3d8b"/><stop offset=".55" stop-color="#ff8a3d"/><stop offset="1" stop-color="#ffc861"/></linearGradient></defs><path d="M28 10 C 40 10, 44 24, 44 32 C 44 42, 37 47, 28 47 C 19 47, 12 42, 12 32 C 12 24, 16 10, 28 10 Z" fill="url(#egg-foot)"/><path d="M14 30 L 21 25 L 27 31 L 34 24 L 42 30" fill="none" stroke="#09090b" stroke-width="3" stroke-linejoin="round"/></svg>Hatchlight</a>
+			<span>{{footer.license}}</span>
+			<nav class="languages" aria-label="{{footer.languages}}">{{languageLinks}}</nav>
+		</footer>
+	</body>
+</html>
