@@ -704,9 +704,10 @@ h2 {
 
 .terminal pre {
 	margin: 14px 0 0;
-	/* Long commands wrap under themselves instead of scrolling. */
+	/* Long commands wrap under themselves instead of scrolling, breaking a
+	   word only when it cannot fit on a line of its own. */
 	white-space: pre-wrap;
-	word-break: break-all;
+	overflow-wrap: anywhere;
 	font: 400 13px / 1.7 var(--mono);
 	color: var(--fg);
 }
@@ -787,9 +788,74 @@ h2 {
 	color: var(--fg);
 }
 
+/* On a phone the sections move to a row of their own under the logo, which
+   scrolls sideways when they do not fit, so each stays one tap away. */
 @media (max-width: 640px) {
+	.nav {
+		flex-wrap: wrap;
+		row-gap: 4px;
+		padding-block: 16px 2px;
+	}
 	.nav-links {
+		order: 3;
+		flex: 1 0 100%;
+		gap: 6px;
+		margin-inline: calc(-1 * 16px);
+		/* The wider end lets the last section scroll clear of the fade. */
+		padding-inline: 16px 40px;
+		/* Room for a focused link's outline, which the scrolling row clips. */
+		padding-block: 6px;
+		overflow-x: auto;
+		scrollbar-width: none;
+		scroll-snap-type: x proximity;
+		scroll-padding-inline: 16px;
+		mask-image: linear-gradient(
+			90deg,
+			transparent,
+			#000 8px,
+			#000 calc(100% - 32px),
+			transparent
+		);
+	}
+	/* Pages whose only link is GitHub keep a one-row header. */
+	.nav-links:has(> a:only-child) {
 		display: none;
+	}
+	.nav-links::-webkit-scrollbar {
+		display: none;
+	}
+	.nav-links a {
+		flex: none;
+		display: inline-flex;
+		align-items: center;
+		min-height: 36px;
+		padding-inline: 14px;
+		border: 1px solid var(--line);
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--panel) 60%, transparent);
+		scroll-snap-align: start;
+		white-space: nowrap;
+	}
+	/* A command too long for a phone stays on one line and the box scrolls,
+	   so a URL or an address is never cut in two. */
+	.terminal pre {
+		white-space: pre;
+		overflow-x: auto;
+		margin-inline: -20px;
+		padding-inline: 20px;
+	}
+	.terminal code span {
+		padding-left: 0;
+		text-indent: 0;
+	}
+	.sheet {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 10px;
+	}
+	.sheet figcaption {
+		left: 8px;
+		right: 8px;
+		font-size: 10px;
 	}
 	.frame {
 		height: 120px;
@@ -813,6 +879,9 @@ h2 {
 }
 
 .languages a {
+	display: inline-flex;
+	align-items: center;
+	min-height: 32px;
 	color: var(--dim);
 	text-decoration: none;
 }
@@ -905,6 +974,12 @@ h2 {
 .sources a,
 .note a {
 	color: var(--fg);
+}
+
+/* Room for a finger on each source. */
+.sources li a {
+	display: inline-block;
+	padding-block: 6px;
 }
 
 /* On a phone, each row of the table becomes a card. */

@@ -95,6 +95,8 @@ interface Props {
 	/** The chosen picture: a column on wide screens, a sheet on narrow ones. */
 	inspector: {
 		content: ReactNode;
+		/** False while no picture is chosen: narrow screens hide its button. */
+		chosen: boolean;
 		/** A small copy of the chosen picture, for the button that opens it. */
 		thumb?: string;
 		open: boolean;
@@ -105,8 +107,14 @@ interface Props {
 }
 
 const STORAGE_KEY = "hatchlight.models";
-/** From this width the settings and the inspector sit beside the turns. */
+/** From this width the settings sit beside the turns. */
 const WIDE = "(min-width: 1024px)";
+/**
+ * From this width the chosen picture has a column of its own too; below it
+ * the picture opens in a sheet, so the turns keep room to breathe. Matches
+ * the `roomy` breakpoint in index.css.
+ */
+export const ROOMY = "(min-width: 1440px)";
 /** The ratio item that leaves the shape to each model. */
 const DEFAULT_RATIO = "default";
 /** The length item that leaves each model at its shortest. */
@@ -158,14 +166,14 @@ function savedModels(): string[] {
 	}
 }
 
-function useWide(): boolean {
+function useMedia(media: string): boolean {
 	return useSyncExternalStore(
 		(change) => {
-			const query = window.matchMedia(WIDE);
+			const query = window.matchMedia(media);
 			query.addEventListener("change", change);
 			return () => query.removeEventListener("change", change);
 		},
-		() => window.matchMedia(WIDE).matches,
+		() => window.matchMedia(media).matches,
 	);
 }
 
@@ -184,7 +192,8 @@ export function Composer(props: Props) {
 		guideMap: useId(),
 		guideStrength: useId(),
 	};
-	const wide = useWide();
+	const wide = useMedia(WIDE);
+	const roomy = useMedia(ROOMY);
 	// On narrow screens the settings open in a sheet.
 	const [setting, setSetting] = useState(false);
 	const [prompt, setPrompt] = useState("");
@@ -597,7 +606,7 @@ export function Composer(props: Props) {
 								key={value}
 								value={value}
 								variant="outline"
-								className="h-[52px] min-w-0 rounded-[10px] border-line bg-panel px-1 font-mono text-xs text-soft aria-pressed:border-ink aria-pressed:bg-panel-2 aria-pressed:text-ink"
+								className="h-[52px] min-w-0 rounded-[10px] border-line bg-panel px-1 font-mono text-xs leading-tight whitespace-normal text-soft aria-pressed:border-ink aria-pressed:bg-panel-2 aria-pressed:text-ink"
 							>
 								{value === DEFAULT_RATIO ? t("composer.ratioDefault") : value}
 							</ToggleGroupItem>
@@ -1011,30 +1020,34 @@ export function Composer(props: Props) {
 			>
 				<div className="min-h-0 flex-1 overflow-y-auto">{props.children}</div>
 				<div className="flex shrink-0 flex-col gap-2.5 px-3 pt-2.5 pb-3 max-lg:border-t max-lg:border-[#1a1a1e] max-lg:bg-[#0c0c0f] lg:px-7 lg:pt-2 lg:pb-6">
-					{!wide && (
+					{(!wide || (!roomy && inspector.chosen)) && (
 						<div className="flex gap-2 overflow-x-auto">
-							<Button
-								variant="outline"
-								onClick={() => setSetting(true)}
-								className="h-10 shrink-0 gap-2 rounded-full border-[#2c2c32] bg-panel px-3.5 dark:bg-panel"
-							>
-								<SlidersHorizontal />
-								{summary}
-							</Button>
-							<Button
-								variant="outline"
-								onClick={() => inspector.onOpenChange(true)}
-								className="h-10 shrink-0 gap-2 rounded-full border-[#2c2c32] bg-panel px-3.5 dark:bg-panel"
-							>
-								{inspector.thumb && (
-									<img
-										src={inspector.thumb}
-										alt=""
-										className="size-5 rounded-md object-cover"
-									/>
-								)}
-								{t("inspector.chip")}
-							</Button>
+							{!wide && (
+								<Button
+									variant="outline"
+									onClick={() => setSetting(true)}
+									className="h-10 shrink-0 gap-2 rounded-full border-[#2c2c32] bg-panel px-3.5 dark:bg-panel"
+								>
+									<SlidersHorizontal />
+									{summary}
+								</Button>
+							)}
+							{!roomy && inspector.chosen && (
+								<Button
+									variant="outline"
+									onClick={() => inspector.onOpenChange(true)}
+									className="h-10 shrink-0 gap-2 rounded-full border-[#2c2c32] bg-panel px-3.5 dark:bg-panel"
+								>
+									{inspector.thumb && (
+										<img
+											src={inspector.thumb}
+											alt=""
+											className="size-5 rounded-md object-cover"
+										/>
+									)}
+									{t("inspector.chip")}
+								</Button>
+							)}
 						</div>
 					)}
 					{suggestion != null && (
@@ -1146,7 +1159,7 @@ export function Composer(props: Props) {
 					</PromptInput>
 				</div>
 			</section>
-			{wide && (
+			{roomy && (
 				<aside
 					aria-label={t("inspector.label")}
 					className="min-h-0 overflow-y-auto border-l border-[#1a1a1e] bg-[#0c0c0f] px-5 py-6"
@@ -1155,38 +1168,41 @@ export function Composer(props: Props) {
 				</aside>
 			)}
 			{!wide && (
-				<>
-					<Sheet open={setting} onOpenChange={setSetting}>
-						<SheetContent
-							side="bottom"
-							className="max-h-[85dvh] gap-0 rounded-t-3xl border-line bg-rail"
-						>
-							<SheetHeader className="px-5 pt-5 pb-3">
-								<SheetTitle className="font-display text-xl font-bold">
-									{t("composer.parameters")}
-								</SheetTitle>
-							</SheetHeader>
-							<div className="min-h-0 overflow-y-auto px-5 pb-8">
-								{settings}
-							</div>
-						</SheetContent>
-					</Sheet>
-					<Sheet open={inspector.open} onOpenChange={inspector.onOpenChange}>
-						<SheetContent
-							side="bottom"
-							className="max-h-[85dvh] gap-0 rounded-t-3xl border-line bg-rail"
-						>
-							<SheetHeader className="px-5 pt-5 pb-3">
-								<SheetTitle className="font-display text-xl font-bold">
-									{t("inspector.label")}
-								</SheetTitle>
-							</SheetHeader>
-							<div className="min-h-0 overflow-y-auto px-5 pb-8">
-								{inspector.content}
-							</div>
-						</SheetContent>
-					</Sheet>
-				</>
+				<Sheet open={setting} onOpenChange={setSetting}>
+					<SheetContent
+						side="bottom"
+						className="max-h-[85dvh] gap-0 rounded-t-3xl border-line bg-rail"
+					>
+						<SheetHeader className="px-5 pt-5 pb-3">
+							<SheetTitle className="font-display text-xl font-bold">
+								{t("composer.parameters")}
+							</SheetTitle>
+						</SheetHeader>
+						<div className="min-h-0 overflow-y-auto px-5 pb-8">{settings}</div>
+					</SheetContent>
+				</Sheet>
+			)}
+			{!roomy && (
+				<Sheet open={inspector.open} onOpenChange={inspector.onOpenChange}>
+					{/* Slides in from the side next to the settings column, else from below. */}
+					<SheetContent
+						side={wide ? "right" : "bottom"}
+						className={
+							wide
+								? "gap-0 border-line bg-rail data-[side=right]:w-[min(26rem,90vw)] data-[side=right]:sm:max-w-[26rem]"
+								: "max-h-[85dvh] gap-0 rounded-t-3xl border-line bg-rail"
+						}
+					>
+						<SheetHeader className="px-5 pt-5 pb-3">
+							<SheetTitle className="font-display text-xl font-bold">
+								{t("inspector.label")}
+							</SheetTitle>
+						</SheetHeader>
+						<div className="min-h-0 overflow-y-auto px-5 pb-8">
+							{inspector.content}
+						</div>
+					</SheetContent>
+				</Sheet>
 			)}
 			{adjusting != null && (
 				<Adjust

@@ -68,6 +68,8 @@
 }
 
 @theme inline {
+	/* From here the Advanced screen gives the chosen picture a column (ROOMY). */
+	--breakpoint-roomy: 90rem;
 	--color-bg: var(--bg);
 	--color-rail: var(--rail);
 	--color-panel: var(--panel);
