@@ -4,6 +4,7 @@ import type {
 	ConsistencyResult,
 	CreateTurnInput,
 	GalleryItem,
+	LibraryEntry,
 	ModelSpec,
 	ProviderStatus,
 	Ranking,
@@ -34,6 +35,8 @@ export interface Reel {
 	sessionUrl(id: string): string;
 	/** How the person's picks rank the models they compared, where known. */
 	ranking?(query: RankingQuery): Promise<Ranking>;
+	/** The person's characters and styles, where kept. */
+	library?(): Promise<LibraryEntry[]>;
 	/** The person's choices, such as hiding model names until a pick. */
 	settings?(): Promise<Settings>;
 	/** Whether a picture shows the same character as pictures of it. */

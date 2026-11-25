@@ -273,6 +273,43 @@ To use a LoRA, choose it under **Styles (LoRA)** in the **Advanced** view,
 with a model of its family. Its trigger word is added to your prompt for
 you.
 
+## Characters and styles
+
+Make the same character, or keep the same style, without remembering the
+LoRA, its trigger word, the pictures and the seed each time. In
+**Characters and styles** (in the sidebar), save:
+
+- a **character**: up to 4 pictures of them, LoRAs with their strength, the
+  words that describe them, and a seed;
+- a **style**: its words, LoRAs and example pictures, and a shape.
+
+Each can also name the model to use when none is chosen. You can start one
+from a picture: **Save as character** or **Save as style** in the gallery or
+next to a result fills it in with that picture and what made it. After
+training a LoRA, the same buttons make one from the new LoRA and its
+trigger word.
+
+Then use them by name:
+
+- in the **Advanced** view, under **Character and style**;
+- in the chat: "Rex on the beach, in my watercolor style". The assistant
+  asks when a name could mean more than one;
+- in the terminal: `hatchlight generate "Rex asleep" --character Rex
+  --style Watercolor`;
+- from other apps, in a prompt sent through the AUTOMATIC1111 or OpenAI
+  image API: `a heron <style:Watercolor>`.
+
+What a character or style adds depends on the model. A model that follows
+given pictures (FLUX.2 klein, Qwen-Image-Edit, …) gets the character's
+pictures first, and the prompt calls them "the person in picture 1". A
+model that takes LoRAs gets the ones of its family, with their trigger
+words. Its words are added to your prompt, and its seed and shape are used
+when you set none. The picture remembers which character and style made it.
+
+A picture kept by a character or style cannot be deleted from the gallery
+until you take it out of them. When one of their LoRAs is removed,
+Hatchlight says so instead of making the picture without it.
+
 ## When something goes wrong
 
 **"… does not run on this computer".** The model, or the version you picked,

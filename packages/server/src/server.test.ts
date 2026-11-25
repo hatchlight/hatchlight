@@ -724,6 +724,51 @@ test("a person checks a character only with their own pictures", async () => {
 	expect(await errorCode(await check(ana))).toBe("noJudge");
 });
 
+test("a person sees, uses and changes only their own characters and styles", async () => {
+	const { call, setupOwner, invite } = await serverApp();
+	const owner = await setupOwner();
+	const ana = await invite(owner);
+	const bia = await invite(owner);
+	const created = await call("/api/library", {
+		method: "POST",
+		who: ana,
+		body: { kind: "style", name: "Ink", prompt: "ink lines" },
+	});
+	expect(created.status).toBe(201);
+	const ink = (await created.json()) as { id: string };
+	const list = async (who: Who) =>
+		(await (await call("/api/library", { who })).json()) as unknown[];
+	expect(await list(ana)).toHaveLength(1);
+	expect(await list(bia)).toEqual([]);
+	// The same name is free for someone else.
+	expect(
+		(
+			await call("/api/library", {
+				method: "POST",
+				who: bia,
+				body: { kind: "style", name: "ink" },
+			})
+		).status,
+	).toBe(201);
+	for (const response of [
+		await call(`/api/library/${ink.id}`, {
+			method: "PUT",
+			who: bia,
+			body: { kind: "style", name: "Mine now" },
+		}),
+		await call(`/api/library/${ink.id}`, { method: "DELETE", who: bia }),
+		await call("/api/turns", {
+			method: "POST",
+			who: bia,
+			body: { prompt: "a fox", modelIds: ["fake/alpha"], styleId: ink.id },
+		}),
+	]) {
+		expect(response.status).toBe(404);
+		expect(await errorCode(response)).toBe("libraryEntryNotFound");
+	}
+	expect(await list(ana)).toHaveLength(1);
+});
+
 test("a training shows only to whoever started it, and to admins", async () => {
 	let training: TrainingView = {
 		id: "trn_1",

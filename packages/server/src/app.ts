@@ -942,6 +942,27 @@ export function createApp(options: AppOptions): Hono {
 		return c.body(null, 204);
 	});
 
+	app.get("/api/library", (c) => c.json(service.listLibrary(user(c))));
+	app.post("/api/library", async (c) =>
+		c.json(
+			await service.saveLibraryEntry(user(c), (await json(c)) as never),
+			201,
+		),
+	);
+	app.put("/api/library/:id", async (c) =>
+		c.json(
+			await service.saveLibraryEntry(
+				user(c),
+				(await json(c)) as never,
+				c.req.param("id"),
+			),
+		),
+	);
+	app.delete("/api/library/:id", async (c) => {
+		await service.deleteLibraryEntry(user(c), c.req.param("id"));
+		return c.body(null, 204);
+	});
+
 	app.get("/api/ranking", async (c) => {
 		const media = c.req.query("media");
 		const period = c.req.query("period");

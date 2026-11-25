@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	Cpu,
 	Images,
+	Library as LibraryIcon,
 	MessageSquare,
 	MoreHorizontal,
 	Plus,
@@ -75,6 +76,9 @@ const HubOpen = lazy(() =>
 );
 const RankingView = lazy(() =>
 	import("./Ranking").then((m) => ({ default: m.Ranking })),
+);
+const LibraryView = lazy(() =>
+	import("./Library").then((m) => ({ default: m.Library })),
 );
 const Settings = lazy(() =>
 	import("./Settings").then((m) => ({ default: m.Settings })),
@@ -182,6 +186,7 @@ export function App() {
 							</>
 						)}
 						{route.view === "ranking" && <RankingView />}
+						{route.view === "library" && <LibraryView />}
 						{route.view === "settings" && <Settings />}
 					</Suspense>
 				</div>
@@ -221,6 +226,12 @@ function AppSidebar({ route, demo }: { route: Route; demo: boolean }) {
 			current: route.view === "gallery",
 		},
 		{
+			to: href.library,
+			label: t("nav.library"),
+			icon: LibraryIcon,
+			current: route.view === "library",
+		},
+		{
 			to: href.models,
 			label: t("nav.localModels"),
 			icon: Cpu,
@@ -232,9 +243,14 @@ function AppSidebar({ route, demo }: { route: Route; demo: boolean }) {
 			icon: Trophy,
 			current: route.view === "ranking",
 		},
-		// A demo has one model: nothing to install, and nothing to rank.
+		// A demo has one model: nothing to install, and nothing to rank. Its
+		// visitors keep nothing past their stay, so no library either.
 	].filter(
-		(place) => !demo || (place.to !== href.models && place.to !== href.ranking),
+		(place) =>
+			!demo ||
+			(place.to !== href.models &&
+				place.to !== href.ranking &&
+				place.to !== href.library),
 	);
 
 	return (

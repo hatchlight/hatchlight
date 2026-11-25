@@ -1,12 +1,15 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import type { ParseArgsOptionsConfig } from "node:util";
+import { findLibraryEntry, libraryModel } from "@hatchlight/core/library";
 import {
 	CONSISTENT_SCORE,
 	type EngineEvent,
 	GUIDE_KINDS,
 	type GuideKind,
 	type JobView,
+	type LibraryEntry,
+	type LibraryKind,
 	MAX_CHARACTER_REFERENCES,
 	type ModelSpec,
 	PROMPT_KINDS,
@@ -131,7 +134,7 @@ export async function save(
 }
 
 /** Picture ids as they are; files read and uploaded. */
-async function references(
+export async function references(
 	api: Api,
 	io: Io,
 	given: string[],
@@ -149,6 +152,23 @@ async function references(
 		ids.push((await api.upload(new Uint8Array(data))).id);
 	}
 	return ids;
+}
+
+/** The person's entry a name or id means; refused when it means several. */
+export function libraryEntryNamed(
+	entries: LibraryEntry[],
+	kind: LibraryKind,
+	name: string,
+): LibraryEntry {
+	const byId = entries.find((e) => e.id === name && e.kind === kind);
+	if (byId) return byId;
+	const found = findLibraryEntry(entries, kind, name);
+	if (found.entry) return found.entry;
+	throw new UsageError(
+		found.matches.length > 0
+			? `"${name}" could be ${found.matches.map((e) => e.name).join(" or ")}: give the whole name.`
+			: `No ${kind} named ${name}. See \`hatchlight library\`.`,
+	);
 }
 
 const seconds = (job: JobView) =>
@@ -221,6 +241,8 @@ interface GenerateInput {
 	seed?: number;
 	durationSeconds?: number;
 	strength?: number;
+	characterId?: string;
+	styleId?: string;
 	/** A picture to follow the outlines, pose or depth of. */
 	guide?: { image: string; kind: GuideKind; ready: boolean; strength?: number };
 }
@@ -331,6 +353,8 @@ async function make(
 				durationSeconds: input.durationSeconds,
 			}),
 			...(input.strength != null && { strength: input.strength }),
+			...(input.characterId && { characterId: input.characterId }),
+			...(input.styleId && { styleId: input.styleId }),
 			...(input.guide &&
 				guideId && {
 					guide: {
@@ -549,6 +573,8 @@ Makes pictures or videos, waits for them, and prints their ids. Without
   --guide-strength <s>
                     How closely the guide is followed, 0 to 1
   --duration <s>    Video length in seconds
+  --character <n>   A character from \`hatchlight library\`, by name
+  --style <n>       A style from \`hatchlight library\`, by name
 ${WAIT_HELP}
 ${PAID_HELP}
 ${COMMON_HELP}`,
@@ -564,6 +590,8 @@ ${COMMON_HELP}`,
 			"guide-map": { type: "boolean" },
 			"guide-strength": { type: "string" },
 			duration: { type: "string" },
+			character: { type: "string" },
+			style: { type: "string" },
 			batch: { type: "string" },
 			...WAIT_OPTIONS,
 		},
@@ -588,11 +616,34 @@ ${COMMON_HELP}`,
 					? undefined
 					: id(values.session as string, ID, "a session id");
 
+			const named = values.character != null || values.style != null;
+			const entries = named ? await context.api.library() : [];
+			const character =
+				values.character == null
+					? undefined
+					: libraryEntryNamed(entries, "character", values.character as string);
+			const style =
+				values.style == null
+					? undefined
+					: libraryEntryNamed(entries, "style", values.style as string);
+
 			const allowPaid = values["allow-paid"] === true;
 			const models = await usableModels(context.api, allowPaid);
 			let ids = (values.model as string[] | undefined) ?? [];
+			// The model the character or style prefers, when it can be used.
+			const kept =
+				ids.length === 0 &&
+				libraryModel(models, [character, style], {
+					references: given.length,
+					guide,
+				});
+			if (kept) ids = [kept.id];
 			if (ids.length === 0) {
-				const fit = bestLocalModel(models, given.length, guide);
+				// A character's pictures are followed by models that take them.
+				const fit =
+					(character?.pictureIds.length
+						? bestLocalModel(models, given.length + 1, guide)
+						: undefined) ?? bestLocalModel(models, given.length, guide);
 				if (!fit) {
 					throw new UsageError(
 						guide
@@ -625,6 +676,8 @@ ${COMMON_HELP}`,
 				durationSeconds: duration,
 				strength,
 				guide,
+				characterId: character?.id,
+				styleId: style?.id,
 			};
 			if (values.batch == null) {
 				return make(

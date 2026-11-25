@@ -146,6 +146,52 @@ describe("the character check", () => {
 		]);
 	});
 
+	test("compares with a library character's pictures and words", async () => {
+		const asked: unknown[] = [];
+		const rex = {
+			id: "lib_rex",
+			kind: "character" as const,
+			name: "Rex",
+			pictureIds: ["ast_1", "ast_2", "ast_3", "ast_4"],
+			loras: [],
+			prompt: "a corgi with a red scarf",
+			notes: null,
+			seed: null,
+			aspectRatio: null,
+			modelId: null,
+			createdAt: 1,
+			updatedAt: 1,
+		};
+		const hatchlight: Reel = {
+			...reel(),
+			library: async () => [
+				rex,
+				{ ...rex, id: "lib_bare", name: "Bare", pictureIds: [] },
+			],
+			checkConsistency: async (input) => {
+				asked.push(input);
+				return { score: 90, differences: [], verdict: "same" };
+			},
+		};
+		const result = await check(hatchlight, {
+			image: "ast_2",
+			character: "rex",
+		});
+		expect(result?.isError).toBeFalsy();
+		// Its other pictures, at most three, and what it looks like.
+		expect(asked).toEqual([
+			{
+				assetId: "ast_2",
+				referenceAssetIds: ["ast_1", "ast_3", "ast_4"],
+				traits: "a corgi with a red scarf",
+			},
+		]);
+		expect(
+			(await check(hatchlight, { image: "ast_9", character: "bare" }))?.text,
+		).toContain("Bare keeps no picture");
+		expect((await check(hatchlight, { image: "ast_9" }))?.isError).toBe(true);
+	});
+
 	test("refuses paths, itself, too many references, and a Hatchlight without it", async () => {
 		const hatchlight: Reel = {
 			...reel(),
@@ -280,5 +326,49 @@ describe("the spending guard", () => {
 		spend.hold("pending", [paid], 1, undefined);
 		spend.release("pending");
 		expect(spend.committed()).toBe(0);
+	});
+});
+
+describe("characters and styles", () => {
+	test("a free local model they prefer is used unnamed; a paid one only when named", async () => {
+		const asked: string[][] = [];
+		const style = (modelId: string) => ({
+			id: `lib_${modelId}`,
+			kind: "style" as const,
+			name: `Ink ${modelId}`,
+			pictureIds: [],
+			loras: [],
+			prompt: null,
+			notes: null,
+			seed: null,
+			aspectRatio: null,
+			modelId,
+			createdAt: 1,
+			updatedAt: 1,
+		});
+		const hatchlight = {
+			...reel(),
+			library: async () => [style("local/z"), style("fal/x")],
+			createTurn: async (input: { modelIds: string[] }) => {
+				asked.push(input.modelIds);
+				throw new Error("not in this test");
+			},
+		} as unknown as Reel;
+		const generate = createTools(hatchlight, {
+			allowPaid: true,
+			spend: new SpendGuard(null),
+			files: false,
+		}).find((t) => t.name === "generate");
+		await generate
+			?.run({ prompt: "a fox", style: "Ink local/z" }, context)
+			.catch(() => {});
+		expect(asked.at(-1)).toEqual(["local/z"]);
+		const result = await generate
+			?.run({ prompt: "a fox", style: "Ink fal/x" }, context)
+			.catch(() => null);
+		// The free one was used instead of the paid one it prefers.
+		expect(asked.at(-1)).toEqual(["local/z"]);
+		expect(asked).toHaveLength(2);
+		expect(result ?? null).toBeNull();
 	});
 });

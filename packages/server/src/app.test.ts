@@ -231,6 +231,83 @@ test("the best of a comparison is picked, cleared and ranked", async () => {
 	}
 });
 
+test("characters and styles are kept, used by a turn, and keep their pictures", async () => {
+	const { call, post, runtime } = await setup();
+	const upload = await call("/api/assets", {
+		method: "POST",
+		body: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 2]),
+	});
+	const picture = (await upload.json()) as { id: string };
+	const created = await post("/api/library", {
+		kind: "character",
+		name: "Rex",
+		pictureIds: [picture.id],
+		prompt: "a corgi",
+	});
+	expect(created.status).toBe(201);
+	const rex = (await created.json()) as { id: string; name: string };
+	expect(
+		(await post("/api/library", { kind: "character", name: "REX" })).status,
+	).toBe(400);
+	expect(
+		(await post("/api/library", { kind: "dragon", name: "x" })).status,
+	).toBe(400);
+	const renamed = await post(
+		`/api/library/${rex.id}`,
+		{
+			kind: "character",
+			name: "Rex",
+			pictureIds: [picture.id],
+			prompt: "a dog",
+		},
+		"PUT",
+	);
+	expect(((await renamed.json()) as { prompt: string }).prompt).toBe("a dog");
+	expect(
+		((await (await call("/api/library")).json()) as { id: string }[]).map(
+			(e) => e.id,
+		),
+	).toEqual([rex.id]);
+
+	const turn = await post("/api/turns", {
+		prompt: "Rex in the snow",
+		modelIds: ["fake/alpha"],
+		characterId: rex.id,
+	});
+	expect(turn.status).toBe(201);
+	const { turn: made } = (await turn.json()) as {
+		turn: {
+			jobs: { params: { prompt: string; referenceAssetIds: string[] } }[];
+		};
+	};
+	expect(made.jobs[0]?.params).toMatchObject({
+		prompt: "the person in picture 1 in the snow, a dog",
+		referenceAssetIds: [picture.id],
+	});
+	await runtime.engine.idle();
+
+	const kept = await call(`/api/assets/${picture.id}`, { method: "DELETE" });
+	expect(kept.status).toBe(400);
+	expect(((await kept.json()) as { code: string }).code).toBe(
+		"pictureInLibrary",
+	);
+	expect(
+		(await call(`/api/library/${rex.id}`, { method: "DELETE" })).status,
+	).toBe(204);
+	expect(
+		(await call(`/api/library/${rex.id}`, { method: "DELETE" })).status,
+	).toBe(404);
+	expect(
+		(await call(`/api/assets/${picture.id}`, { method: "DELETE" })).status,
+	).toBe(204);
+	const gone = await post("/api/turns", {
+		prompt: "Rex",
+		modelIds: ["fake/alpha"],
+		characterId: rex.id,
+	});
+	expect(gone.status).toBe(404);
+});
+
 test("hiding model names until a pick is a person's choice", async () => {
 	const { call, post } = await setup();
 	expect(

@@ -183,6 +183,60 @@ export interface LoraInfo {
 	linked?: LinkedFrom;
 }
 
+/** What a library entry keeps: a character to draw again, or a style. */
+export const LIBRARY_KINDS = ["character", "style"] as const;
+export type LibraryKind = (typeof LIBRARY_KINDS)[number];
+
+/** Pictures one library entry keeps, as models follow only a few. */
+export const MAX_LIBRARY_PICTURES = 4;
+
+export const libraryInputSchema = z.object({
+	kind: z.enum(LIBRARY_KINDS),
+	name: z
+		.string()
+		.trim()
+		.min(1)
+		.max(60)
+		// Plain names: tools and prompts write them as `<style:name>`.
+		.regex(/^[^<>:]+$/, "A name cannot have <, > or :"),
+	/** Pictures of the character, or in the style, by asset id. */
+	pictureIds: z.array(z.string()).max(MAX_LIBRARY_PICTURES).default([]),
+	loras: z
+		.array(
+			z.object({
+				id: z.string().regex(LORA_ID),
+				weight: z.number().min(-2).max(2).default(1),
+				/** The word that calls the LoRA up, added to prompts without it. */
+				trigger: z.string().trim().max(60).nullable().default(null),
+			}),
+		)
+		.max(MAX_LORAS)
+		.default([]),
+	/**
+	 * Words added to every prompt: what the character looks like, or the
+	 * style's own words.
+	 */
+	prompt: z.string().trim().max(1000).nullable().default(null),
+	/** The person's own notes; never sent to a model. */
+	notes: z.string().trim().max(1000).nullable().default(null),
+	seed: z.number().int().nonnegative().nullable().default(null),
+	aspectRatio: z
+		.string()
+		.regex(/^\d+:\d+$/)
+		.nullable()
+		.default(null),
+	/** The model used when none is chosen. */
+	modelId: z.string().nullable().default(null),
+});
+export type LibraryInput = z.input<typeof libraryInputSchema>;
+
+/** A character or a style a person keeps, to use again by name. */
+export type LibraryEntry = z.infer<typeof libraryInputSchema> & {
+	id: string;
+	createdAt: number;
+	updatedAt: number;
+};
+
 /** The families of single-file models that can be added by hand. */
 export const CHECKPOINT_BASES = ["sd1", "sdxl"] as const;
 export type CheckpointBase = (typeof CHECKPOINT_BASES)[number];
@@ -385,6 +439,12 @@ export const generationParamsSchema = z.object({
 		// Each model takes at most MAX_LORAS of its own family.
 		.max(MAX_LORAS * LORA_BASES.length)
 		.optional(),
+	/**
+	 * A character and a style from the person's library, by id: their
+	 * pictures, LoRAs, words and settings are added to these.
+	 */
+	characterId: z.string().optional(),
+	styleId: z.string().optional(),
 	/** Model-specific parameters, passed through to the provider untouched. */
 	extras: z.record(z.string(), z.unknown()).default({}),
 });
@@ -396,6 +456,11 @@ export type GenerationParams = z.infer<typeof generationParamsSchema> & {
 	 * `prompt` stays as written.
 	 */
 	translatedPrompt?: string;
+	/**
+	 * Set by Hatchlight when a character or style was used: the prompt as
+	 * written, before their words were added, and their names then.
+	 */
+	library?: { prompt: string; character?: string; style?: string };
 };
 export type GenerationParamsInput = z.input<typeof generationParamsSchema>;
 

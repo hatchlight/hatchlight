@@ -20,9 +20,11 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { api, assetUrl } from "./api";
+import { api, assetUrl, useDemo } from "./api";
+import { draftFromPicture, openLibraryDraft } from "./drafts";
 import { usd } from "./format";
 import { type I18n, useI18n } from "./i18n";
+import { useLoras } from "./Loras";
 
 export interface LightboxItem {
 	assetId: string;
@@ -46,6 +48,8 @@ export function itemFacts(i18n: I18n, item: LightboxItem): [string, unknown][] {
 					t("format.seconds", { seconds: item.params.durationSeconds }),
 			],
 			[t("lightbox.seed"), item.params?.seed],
+			[t("lightbox.character"), item.params?.library?.character],
+			[t("lightbox.style"), item.params?.library?.style],
 			[
 				t("lightbox.cost"),
 				item.costUsd == null
@@ -56,6 +60,36 @@ export function itemFacts(i18n: I18n, item: LightboxItem): [string, unknown][] {
 			],
 		] as [string, unknown][]
 	).filter(([, value]) => value != null);
+}
+
+/**
+ * Keeps a picture, and what made it, as a character or a style to use
+ * again: the Library opens with them filled in, to name and save.
+ */
+export function SaveToLibrary({
+	item,
+	className,
+}: {
+	item: LightboxItem;
+	className?: string;
+}) {
+	const { t } = useI18n();
+	const loras = useLoras();
+	// A demo's visitor keeps nothing past their stay.
+	const demo = useDemo() !== null;
+	if (demo || item.mime.startsWith("video/")) return null;
+	const save = (kind: "character" | "style") =>
+		openLibraryDraft(draftFromPicture(kind, item, loras.data ?? []));
+	return (
+		<div className={cn("grid grid-cols-2 gap-2", className)}>
+			<Button variant="outline" onClick={() => save("character")}>
+				{t("library.saveAsCharacter")}
+			</Button>
+			<Button variant="outline" onClick={() => save("style")}>
+				{t("library.saveAsStyle")}
+			</Button>
+		</div>
+	);
 }
 
 interface Props {
@@ -200,6 +234,7 @@ export function Lightbox({ item, onClose, onUseAsReference }: Props) {
 								{t("common.useAsReference")}
 							</Button>
 						)}
+						<SaveToLibrary item={item} />
 						<a
 							href={assetUrl(item.assetId)}
 							download={`hatchlight-${item.assetId}`}

@@ -8,6 +8,7 @@
 		"./types": "./src/types.ts",
 		"./ranking": "./src/ranking.ts",
 		"./blind": "./src/blind.ts",
+		"./library": "./src/library.ts",
 		"./testing": "./src/local/testing.ts",
 		"./errors": "./src/errors.ts",
 		"./hugging-face": "./src/hugging-face.ts",

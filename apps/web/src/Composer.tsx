@@ -1,8 +1,11 @@
 import { storedValue } from "@hatchlight/core/legacy";
+import { followsPictures } from "@hatchlight/core/library";
 import {
 	followsGuide,
 	GUIDE_KINDS,
 	type GuideKind,
+	type LibraryEntry,
+	type LibraryKind,
 	MAX_LORAS,
 	type Media,
 	type ModelSpec,
@@ -53,7 +56,7 @@ import { Toggle } from "@/components/ui/toggle";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
 import { Adjust } from "./Adjust";
-import { api, assetUrl, useDemo } from "./api";
+import { api, assetUrl, useDemo, useLibrary } from "./api";
 import { Extend } from "./Extend";
 import { outlines } from "./guide";
 import { useI18n } from "./i18n";
@@ -74,6 +77,9 @@ export interface Draft {
 	maskAssetId?: string;
 	/** LoRAs for the models that take them. */
 	loras?: ChosenLora[];
+	/** A character and a style from the library, added by the server. */
+	characterId?: string;
+	styleId?: string;
 	/** A picture whose outlines, pose or depth the new one follows. */
 	guide?: {
 		assetId: string;
@@ -217,6 +223,26 @@ export function Composer(props: Props) {
 	const [moved, setStrength] = useState<number | null>(null);
 	const [loras, setLoras] = useState<ChosenLora[]>([]);
 	const known = useLoras();
+	// A character and a style from the library, kept after sending like
+	// the guide: the next try usually keeps them.
+	const library = useLibrary();
+	const [applied, setApplied] = useState<Record<LibraryKind, string | null>>({
+		character: null,
+		style: null,
+	});
+	const entries = library.data ?? [];
+	const character = entries.find((e) => e.id === applied.character) ?? null;
+	const style = entries.find((e) => e.id === applied.style) ?? null;
+	/** Applies an entry: its ratio and model fill what is not chosen yet. */
+	const apply = (entry: LibraryEntry) => {
+		setApplied((current) => ({ ...current, [entry.kind]: entry.id }));
+		if (entry.aspectRatio && !aspectRatio) setAspectRatio(entry.aspectRatio);
+		const preferred = models.find((m) => m.id === entry.modelId);
+		if (preferred) {
+			setMedia(preferred.media);
+			setChosen([preferred.id]);
+		}
+	};
 	const fileInput = useRef<HTMLInputElement>(null);
 	// The area of the reference to redraw, for the reference it was marked on.
 	const [mask, setMask] = useState<{
@@ -270,7 +296,12 @@ export function Composer(props: Props) {
 		if (maskId && model.capabilities.mask == null) {
 			return t("composer.blocked.noMask", { model: model.name });
 		}
-		if (model.capabilities.needsReference && references.length === 0) {
+		if (
+			model.capabilities.needsReference &&
+			references.length === 0 &&
+			// The character's pictures, only where the server adds them.
+			!(character?.pictureIds.length && followsPictures(model.capabilities))
+		) {
 			return t("composer.blocked.needsReference", { model: model.name });
 		}
 		if (
@@ -454,6 +485,8 @@ export function Composer(props: Props) {
 			strength: redrawing && moved != null ? moved : undefined,
 			maskAssetId: maskId ?? undefined,
 			loras: sentLoras.length > 0 ? sentLoras : undefined,
+			characterId: character?.id,
+			styleId: style?.id,
 			// Unmoved, each model follows the guide by its own strength. The guide
 			// stays after sending, unlike references: the next try usually
 			// keeps the same layout.
@@ -992,6 +1025,76 @@ export function Composer(props: Props) {
 							event.target.value = "";
 						}}
 					/>
+				</div>
+			)}
+
+			{entries.length > 0 && (
+				<div className="flex flex-col gap-2.5">
+					<span className={LABEL}>{t("composer.library")}</span>
+					{(["character", "style"] as const).map((kind) => {
+						const on = kind === "character" ? character : style;
+						const offeredEntries = entries.filter((e) => e.kind === kind);
+						if (on) {
+							return (
+								<div
+									key={kind}
+									className="flex items-center gap-2 rounded-xl border border-line bg-panel py-1 pr-1 pl-1.5 text-sm"
+								>
+									{on.pictureIds[0] ? (
+										<img
+											src={assetUrl(on.pictureIds[0])}
+											alt=""
+											className="size-8 shrink-0 rounded-lg object-cover"
+										/>
+									) : null}
+									<span className="min-w-0 flex-1 truncate" title={on.name}>
+										{kind === "character"
+											? t("composer.characterApplied", { name: on.name })
+											: t("composer.styleApplied", { name: on.name })}
+									</span>
+									<Button
+										variant="ghost"
+										size="icon"
+										onClick={() =>
+											setApplied((current) => ({ ...current, [kind]: null }))
+										}
+										aria-label={t("composer.libraryRemove", { name: on.name })}
+									>
+										<X aria-hidden="true" />
+									</Button>
+								</div>
+							);
+						}
+						if (offeredEntries.length === 0) return null;
+						const label =
+							kind === "character"
+								? t("composer.chooseCharacter")
+								: t("composer.chooseStyle");
+						return (
+							<Select
+								key={kind}
+								value={null}
+								onValueChange={(next: string | null) => {
+									const entry = offeredEntries.find((e) => e.id === next);
+									if (entry) apply(entry);
+								}}
+							>
+								<SelectTrigger
+									aria-label={label}
+									className="h-10 w-full rounded-xl bg-panel data-[size=default]:h-10"
+								>
+									<SelectValue placeholder={label} />
+								</SelectTrigger>
+								<SelectContent alignItemWithTrigger={false}>
+									{offeredEntries.map((entry) => (
+										<SelectItem key={entry.id} value={entry.id}>
+											{entry.name}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						);
+					})}
 				</div>
 			)}
 

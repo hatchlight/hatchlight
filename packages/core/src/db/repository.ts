@@ -28,6 +28,7 @@ import {
 	type UserContext,
 } from "../types";
 import { SqliteAccounts } from "./accounts";
+import { SqliteLibrary } from "./library";
 import * as schema from "./schema";
 import { SqliteVisitors } from "./visitors";
 
@@ -124,6 +125,11 @@ export class SqliteRepository implements Repository {
 	/** The accounts of a server, kept in the same database. */
 	accounts(): SqliteAccounts {
 		return new SqliteAccounts(this.sqlite);
+	}
+
+	/** Each person's characters and styles, kept in the same database. */
+	library(): SqliteLibrary {
+		return new SqliteLibrary(this.sqlite);
 	}
 
 	/** The visitors of a public demo, kept in the same database. */

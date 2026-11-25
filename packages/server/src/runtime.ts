@@ -185,6 +185,7 @@ export function localReel(
 		},
 		sessionUrl: (id) => `#/s/${encodeURIComponent(id)}`,
 		ranking: (query) => service.ranking(ctx, query),
+		library: async () => service.listLibrary(ctx),
 		...(settings && { settings: () => settings.get(ctx) }),
 		...(checkConsistency && {
 			checkConsistency: (check, signal) =>
@@ -1016,6 +1017,8 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		registry,
 		keys,
 		engine,
+		library: repo.library(),
+		loras: () => models.loras.list(),
 		// On a server, a member whose room is full adds no new pictures.
 		storageRefusal: options.server
 			? (userId) => accounts.storageRefusal(userId)
@@ -1147,8 +1150,17 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		visitors,
 		sweepVisitors: async (before) => {
 			const gone = (error: unknown) => {
-				// Deleted meanwhile, as by its visitor: nothing left to do.
-				if (!(error instanceof NotFoundError)) throw error;
+				// Deleted meanwhile, as by its visitor: nothing left to do. A
+				// picture a library keeps is left for next time.
+				if (
+					!(error instanceof NotFoundError) &&
+					!(
+						error instanceof ValidationError &&
+						error.code === "pictureInLibrary"
+					)
+				) {
+					throw error;
+				}
 			};
 			const sessions = visitors.staleSessions(before);
 			for (const { id, userId } of sessions) {

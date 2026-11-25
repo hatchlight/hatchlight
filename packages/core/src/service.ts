@@ -1,10 +1,12 @@
 import type { AssetStore } from "./assets";
 import { hasChoice } from "./blind";
+import type { SqliteLibrary } from "./db/library";
 import type { GalleryQuery, Repository } from "./db/repository";
 import type { JobEngine } from "./engine";
 import { NotFoundError, ValidationError } from "./errors";
 import { newId } from "./ids";
 import type { KeyStore } from "./keys";
+import { applyLibrary } from "./library";
 import { sniffMime } from "./mime";
 import type { ProviderRegistry } from "./provider";
 import { rankModels } from "./ranking";
@@ -16,6 +18,11 @@ import {
 	generationParamsSchema,
 	type Job,
 	type JobView,
+	type LibraryEntry,
+	type LibraryInput,
+	type LibraryKind,
+	type LoraInfo,
+	libraryInputSchema,
 	type ModelSpec,
 	type ProviderStatus,
 	type Ranking,
@@ -37,6 +44,13 @@ export interface ReelServiceDeps {
 	 * Checked by everything that makes new ones: turns, retries, uploads.
 	 */
 	storageRefusal?: (userId: string) => Error | null;
+	/** Each person's characters and styles; without it, none can be kept. */
+	library?: Pick<
+		SqliteLibrary,
+		"list" | "get" | "findByName" | "put" | "delete"
+	>;
+	/** The LoRAs installed, which characters and styles may name. */
+	loras?: () => Promise<LoraInfo[]>;
 }
 
 const UPLOAD_MIMES = ["image/png", "image/jpeg", "image/webp"];
@@ -300,7 +314,13 @@ export class ReelService {
 				"referenceNotImage",
 			);
 		}
-		const jobParams = models.map((model) => adaptParams(model, params));
+		const used = await this.libraryUsed(ctx, params);
+		const jobParams = models.map((model) =>
+			adaptParams(
+				model,
+				used ? applyLibrary(params, model, used, used.loras) : params,
+			),
+		);
 
 		const now = Date.now();
 		let session: Session;
@@ -357,6 +377,146 @@ export class ReelService {
 		};
 	}
 
+	/**
+	 * The character and style a generation names, each checked to be the
+	 * person's, of its kind, and with its pictures and LoRAs still there.
+	 */
+	private async libraryUsed(ctx: UserContext, params: GenerationParams) {
+		if (params.characterId == null && params.styleId == null) return null;
+		const entry = (id: string | undefined, kind: LibraryKind) => {
+			if (id == null) return null;
+			const found = this.deps.library?.get(ctx, id);
+			if (!found || found.kind !== kind) {
+				throw new NotFoundError(
+					`No ${kind} with id ${id}`,
+					"libraryEntryNotFound",
+				);
+			}
+			return found;
+		};
+		const character = entry(params.characterId, "character");
+		const style = entry(params.styleId, "style");
+		const loras = await this.installedLoras();
+		for (const used of [character, style]) {
+			if (used) await this.checkLibraryParts(ctx, used, loras);
+		}
+		return { character, style, loras };
+	}
+
+	private async installedLoras(): Promise<Map<string, LoraInfo>> {
+		const list = (await this.deps.loras?.()) ?? [];
+		return new Map(list.map((lora) => [lora.id, lora]));
+	}
+
+	/** Refuses an entry whose pictures or LoRAs are not there (any more). */
+	private async checkLibraryParts(
+		ctx: UserContext,
+		entry: Pick<LibraryEntry, "name" | "pictureIds" | "loras">,
+		loras: Map<string, LoraInfo>,
+	) {
+		const missing = entry.loras.find((l) => !loras.has(l.id));
+		if (missing) {
+			throw new ValidationError(
+				`The LoRA ${missing.id} of ${entry.name} is not installed`,
+				"libraryLoraMissing",
+				{ name: entry.name, lora: missing.id },
+			);
+		}
+		const ids = [...new Set(entry.pictureIds)];
+		const pictures = await this.deps.repo.getAssets(ctx, ids);
+		if (
+			pictures.length !== ids.length ||
+			pictures.some((asset) => !asset.mime.startsWith("image/"))
+		) {
+			throw new ValidationError(
+				`A picture of ${entry.name} is not in the gallery`,
+				"libraryPictureMissing",
+				{ name: entry.name },
+			);
+		}
+	}
+
+	private get library() {
+		const library = this.deps.library;
+		if (!library) throw new Error("No library is kept here");
+		return library;
+	}
+
+	/** The person's characters and styles, by kind and name. */
+	listLibrary(ctx: UserContext): LibraryEntry[] {
+		return this.deps.library?.list(ctx) ?? [];
+	}
+
+	/**
+	 * Keeps a character or style, new or (with `id`) changed. Its name must
+	 * be the person's only one of its kind, whatever the case; its pictures
+	 * the person's own; its LoRAs and model installed.
+	 */
+	async saveLibraryEntry(
+		ctx: UserContext,
+		input: LibraryInput,
+		id?: string,
+	): Promise<LibraryEntry> {
+		const parsed = libraryInputSchema.safeParse(input);
+		if (!parsed.success) {
+			throw new ValidationError(
+				parsed.error.issues[0]?.message ?? "Invalid input",
+			);
+		}
+		const fields = parsed.data;
+		const before = id != null ? this.library.get(ctx, id) : null;
+		if (id != null && !before) {
+			throw new NotFoundError("Not in the library", "libraryEntryNotFound");
+		}
+		// What an entry is stays: uses of it say so.
+		const kind = before?.kind ?? fields.kind;
+		const same = this.library.findByName(ctx, kind, fields.name);
+		if (same && same.id !== id) {
+			throw new ValidationError(
+				`There already is a ${kind} named ${same.name}`,
+				"libraryNameTaken",
+				{ name: same.name },
+			);
+		}
+		if (fields.modelId != null && !this.deps.registry.model(fields.modelId)) {
+			throw new ValidationError(
+				`Unknown model: ${fields.modelId}`,
+				"unknownModel",
+				{ model: fields.modelId },
+			);
+		}
+		const entry: LibraryEntry = {
+			...fields,
+			kind,
+			pictureIds: [...new Set(fields.pictureIds)],
+			loras: fields.loras.filter(
+				(l, i, all) => all.findIndex((o) => o.id === l.id) === i,
+			),
+			id: before?.id ?? newId("lib"),
+			createdAt: before?.createdAt ?? Date.now(),
+			updatedAt: Date.now(),
+		};
+		await this.checkLibraryParts(ctx, entry, await this.installedLoras());
+		try {
+			this.library.put(ctx, entry);
+		} catch (error) {
+			// Taken meanwhile, by a save made at the same time.
+			if (!/UNIQUE constraint failed/.test(String(error))) throw error;
+			throw new ValidationError(
+				`There already is a ${kind} named ${entry.name}`,
+				"libraryNameTaken",
+				{ name: entry.name },
+			);
+		}
+		return entry;
+	}
+
+	async deleteLibraryEntry(ctx: UserContext, id: string): Promise<void> {
+		if (!this.library.delete(ctx, id)) {
+			throw new NotFoundError("Not in the library", "libraryEntryNotFound");
+		}
+	}
+
 	async cancelJob(ctx: UserContext, jobId: string): Promise<void> {
 		const job = await this.deps.repo.findJob(jobId);
 		if (!job || job.userId !== ctx.userId)
@@ -400,6 +560,15 @@ export class ReelService {
 	async deleteAsset(ctx: UserContext, id: string): Promise<void> {
 		const [asset] = await this.deps.repo.getAssets(ctx, [id]);
 		if (!asset) throw new NotFoundError("Asset not found", "assetNotFound");
+		// A character or style keeps its pictures: taken away from it first.
+		const keeper = this.listLibrary(ctx).find((e) => e.pictureIds.includes(id));
+		if (keeper) {
+			throw new ValidationError(
+				`This picture is kept by ${keeper.name} in the library`,
+				"pictureInLibrary",
+				{ name: keeper.name },
+			);
+		}
 		const { sharing } = await this.deps.repo.deleteAsset(ctx, id);
 		if (sharing === 0) await this.deps.assets.remove(ctx, asset.hash);
 	}

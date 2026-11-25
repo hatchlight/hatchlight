@@ -5,6 +5,7 @@ import type {
 	CreateTurnInput,
 	EngineEvent,
 	GalleryItem,
+	LibraryEntry,
 	LocalModelEvent,
 	ModelSpec,
 	ProviderStatus,
@@ -113,6 +114,9 @@ export class HatchlightClient implements Reel {
 		);
 		return this.request<Ranking>(`/api/ranking?${search}`);
 	};
+
+	/** The person's characters and styles. */
+	library = () => this.request<LibraryEntry[]>("/api/library");
 
 	/** The person's choices, such as hiding model names until a pick. */
 	settings = () => this.request<Settings>("/api/settings");

@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { blindLetter, blindOrder, namesHidden } from "@hatchlight/core/blind";
+import { findLibraryEntry, libraryModel } from "@hatchlight/core/library";
 import { promptKinds } from "@hatchlight/core/ranking";
 import {
 	CONSISTENT_SCORE,
@@ -8,6 +9,8 @@ import {
 	GUIDE_KINDS,
 	type GuideKind,
 	type JobView,
+	type LibraryEntry,
+	type LibraryKind,
 	MAX_CHARACTER_REFERENCES,
 	MAX_TRAITS_LENGTH,
 	type ModelSpec,
@@ -278,6 +281,20 @@ export async function preferredModel(
 	return null;
 }
 
+/** A character or style in a line an agent can read. */
+function libraryLine(entry: LibraryEntry): string {
+	const parts = [
+		entry.pictureIds.length > 0 && `${entry.pictureIds.length} picture(s)`,
+		entry.loras.length > 0 &&
+			`LoRAs ${entry.loras.map((l) => `${l.id} ${l.weight}${l.trigger ? ` (trigger ${l.trigger})` : ""}`).join(", ")}`,
+		entry.prompt && `words "${entry.prompt}"`,
+		entry.seed != null && `seed ${entry.seed}`,
+		entry.aspectRatio && `ratio ${entry.aspectRatio}`,
+		entry.modelId && `prefers ${entry.modelId}`,
+	].filter(Boolean);
+	return `- ${entry.kind} "${entry.name}"${parts.length > 0 ? `: ${parts.join("; ")}` : ""}`;
+}
+
 /** A ranking in lines an agent can read. */
 function rankingLines(ranking: Ranking, kind?: PromptKind): string[] {
 	const what = kind ? ` for ${kind} prompts` : "";
@@ -424,6 +441,8 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 			durationSeconds?: number;
 			strength?: number;
 			guide?: GuideAsk & { image: string; strength?: number };
+			characterId?: string;
+			styleId?: string;
 			wait: boolean;
 		},
 		models: ModelSpec[],
@@ -470,6 +489,8 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 					durationSeconds: input.durationSeconds,
 				}),
 				...(input.strength != null && { strength: input.strength }),
+				...(input.characterId && { characterId: input.characterId }),
+				...(input.styleId && { styleId: input.styleId }),
 				...(input.guide &&
 					guideId && {
 						guide: {
@@ -541,6 +562,32 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 			);
 		}
 		return { text: lines.join("\n"), images, turnId: turn.id };
+	}
+
+	/**
+	 * The person's entry a name (or id) means, or why there is none: a
+	 * name that could mean several is asked about, not guessed.
+	 */
+	async function libraryEntry(
+		kind: LibraryKind,
+		name: string | undefined,
+	): Promise<LibraryEntry | ToolResult | null> {
+		if (!name) return null;
+		if (!reel.library) return failure("No library is kept here.");
+		const entries = await reel.library();
+		const byId = entries.find((e) => e.id === name && e.kind === kind);
+		if (byId) return byId;
+		const found = findLibraryEntry(entries, kind, name);
+		if (found.entry) return found.entry;
+		if (found.matches.length > 0) {
+			return failure(
+				`"${name}" could be the ${kind} ${found.matches.map((e) => `"${e.name}"`).join(" or ")}. Ask the user which one, then call again with its whole name.`,
+			);
+		}
+		const names = entries.filter((e) => e.kind === kind).map((e) => e.name);
+		return failure(
+			`The user has no ${kind} named "${name}".${names.length > 0 ? ` Their ${kind}s: ${names.join(", ")}.` : ""} They keep characters and styles in the Hatchlight app's Library.`,
+		);
 	}
 
 	const tools: Tool[] = [
@@ -648,6 +695,18 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 					.describe(
 						"A session id (ses_…) from an earlier result, to add to it. Without one, a new session starts.",
 					),
+				character: z
+					.string()
+					.optional()
+					.describe(
+						"A character from the user's library, by name: its pictures, LoRAs and words are added. See list_library.",
+					),
+				style: z
+					.string()
+					.optional()
+					.describe(
+						"A style from the user's library, by name: its words, LoRAs and pictures are added.",
+					),
 				wait: z
 					.boolean()
 					.optional()
@@ -656,6 +715,10 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 					),
 			},
 			async run(args, context) {
+				const character = await libraryEntry("character", args.character);
+				if (character && !("id" in character)) return character;
+				const style = await libraryEntry("style", args.style);
+				if (style && !("id" in style)) return style;
 				const models = await usable();
 				const given = args.reference_images ?? [];
 				const named = notIds(given);
@@ -669,22 +732,50 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 						}
 					: undefined;
 				let ids = args.models ?? [];
+				// The model a character or style prefers, when it fits. Unnamed,
+				// only a free one on this computer is used, as for any default.
+				let note: string | null = null;
+				const preferred =
+					ids.length === 0
+						? libraryModel(await reel.models(), [character, style], {
+								references: given.length,
+								guide,
+							})
+						: null;
+				if (
+					preferred &&
+					isLocal(preferred) &&
+					models.some((m) => m.id === preferred.id)
+				) {
+					ids = [preferred.id];
+				} else if (preferred && !isLocal(preferred)) {
+					const by = [character, style].find(
+						(e) => e?.modelId === preferred.id,
+					);
+					note = `${by?.name} prefers ${preferred.name} (${preferred.id}), which is paid: name it in models to use it. Without it, a free local model is used.`;
+				}
 				if (ids.length === 0) {
-					// What the person picked most in comparisons, else the best on paper.
-					const fit =
+					// What the person picked most in comparisons, else the best on
+					// paper; for a character's pictures, one that follows them first.
+					const pick = async (references: number) =>
 						(await preferredModel(
 							reel,
-							models.filter((m) => fitsByDefault(m, given.length, guide)),
+							models.filter((m) => fitsByDefault(m, references, guide)),
 							args.prompt,
-							given.length,
-						)) ?? bestLocalModel(models, given.length, guide);
+							references,
+						)) ?? bestLocalModel(models, references, guide);
+					const fit =
+						(character?.pictureIds.length
+							? await pick(given.length + 1)
+							: undefined) ?? (await pick(given.length));
 					if (!fit) {
 						return failure(
-							guide
-								? `No installed local model can follow a ${guide.kind} guide${guide.ready ? "" : " made from this picture"}. Name one with models (a cloud model may make the map), or the user can install Z-Image Turbo, guided in the Hatchlight app.`
-								: given.length > 0
-									? "No installed local model can start from a picture. Name one with models, or the user can install one in the Hatchlight app."
-									: "No local model is installed. The user can install one from Local models in the Hatchlight app.",
+							(note ? `${note}\n` : "") +
+								(guide
+									? `No installed local model can follow a ${guide.kind} guide${guide.ready ? "" : " made from this picture"}. Name one with models (a cloud model may make the map), or the user can install Z-Image Turbo, guided in the Hatchlight app.`
+									: given.length > 0
+										? "No installed local model can start from a picture. Name one with models, or the user can install one in the Hatchlight app."
+										: "No local model is installed. The user can install one from Local models in the Hatchlight app."),
 						);
 					}
 					ids = [fit.id];
@@ -696,7 +787,7 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 						`Cannot use ${unknown.join(", ")}: not installed, without a key, or paid while paid models are off. Call list_models for what can be used.`,
 					);
 				}
-				return run(
+				const result = await run(
 					{
 						prompt: args.prompt,
 						modelIds: ids,
@@ -708,11 +799,39 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 						durationSeconds: args.duration_seconds,
 						strength: args.strength,
 						guide,
+						characterId: character?.id,
+						styleId: style?.id,
 						wait: args.wait ?? true,
 					},
 					models,
 					context,
 				);
+				return note ? { ...result, text: `${note}\n${result.text}` } : result;
+			},
+		}),
+		tool({
+			name: "list_library",
+			title: "List characters and styles",
+			description:
+				"Lists the characters and styles the user keeps in their library, with what each adds to a picture: pictures, LoRAs, words, seed, ratio and preferred model. Give a name to generate as character or style. Changes nothing.",
+			input: {
+				kind: z
+					.enum(["character", "style"])
+					.optional()
+					.describe("Only characters, or only styles."),
+			},
+			readOnly: true,
+			async run({ kind }) {
+				if (!reel.library) return failure("No library is kept here.");
+				const entries = (await reel.library()).filter(
+					(e) => kind == null || e.kind === kind,
+				);
+				if (entries.length === 0) {
+					return text(
+						"The library is empty. The user can save characters and styles in the Hatchlight app's Library, or from a picture in the gallery.",
+					);
+				}
+				return text(entries.map(libraryLine).join("\n"));
 			},
 		}),
 		tool({
@@ -865,8 +984,15 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 					.array(z.string().regex(ASSET_ID))
 					.min(1)
 					.max(MAX_CHARACTER_REFERENCES)
+					.optional()
 					.describe(
-						"Ids (ast_…) of pictures showing the character as it must look.",
+						"Ids (ast_…) of pictures showing the character as it must look. Or give character.",
+					),
+				character: z
+					.string()
+					.optional()
+					.describe(
+						"A character from the user's library, by name: its pictures are compared with, and its words are the traits, unless like or traits are given.",
 					),
 				traits: z
 					.string()
@@ -877,10 +1003,29 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 					),
 			},
 			readOnly: true,
-			async run({ image, like, traits }, context) {
+			async run(
+				{ image, like: given, traits: told, character: name },
+				context,
+			) {
 				if (!reel.checkConsistency) {
 					return failure("Characters cannot be compared here.");
 				}
+				const character = await libraryEntry("character", name);
+				if (character && !("id" in character)) return character;
+				const like =
+					given ??
+					character?.pictureIds
+						.filter((id) => id !== image)
+						.slice(0, MAX_CHARACTER_REFERENCES) ??
+					[];
+				if (like.length === 0) {
+					return failure(
+						character
+							? `${character.name} keeps no picture to compare with: give like.`
+							: "Give like (pictures of the character) or character.",
+					);
+				}
+				const traits = told ?? character?.prompt?.slice(0, MAX_TRAITS_LENGTH);
 				if (like.includes(image)) {
 					return failure(
 						"Compare the picture with other pictures, not itself.",
