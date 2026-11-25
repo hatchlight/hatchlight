@@ -88,6 +88,49 @@ interface Work {
 	turnId: string | null;
 }
 
+/** Answers offered with a question, and questions asked before a picture. */
+export const MAX_OPTIONS = 6;
+export const MAX_QUESTIONS = 3;
+
+/**
+ * Asks the person something before making a picture. Only the assistant
+ * inside the app has it: its answer comes as the person's next message.
+ */
+export const ASK_USER: ToolSpec = {
+	name: "ask_user",
+	description: `Asks the person one short question, with up to ${MAX_OPTIONS} short answers to pick from (they may also write their own), and waits for the answer. Use it before the first picture when an important choice is open.`,
+	parameters: {
+		type: "object",
+		properties: {
+			question: {
+				type: "string",
+				description: "The question, in the person's language.",
+			},
+			options: {
+				type: "array",
+				items: { type: "string" },
+				maxItems: MAX_OPTIONS,
+				description: "Short answers to pick from, a few words each.",
+			},
+		},
+		required: ["question", "options"],
+	},
+};
+
+/** The question a call asks, or null when it says none. */
+export function questionOf(
+	args: Record<string, unknown>,
+): { text: string; options: string[] } | null {
+	const text = typeof args.question === "string" ? args.question.trim() : "";
+	if (!text) return null;
+	const options = (Array.isArray(args.options) ? args.options : [])
+		.filter((o): o is string => typeof o === "string")
+		.map((o) => o.trim().slice(0, 80))
+		.filter((o, i, all) => o && all.indexOf(o) === i)
+		.slice(0, MAX_OPTIONS);
+	return { text: text.slice(0, 500), options };
+}
+
 /** What the language model is told before the conversation. */
 export function assistantInstructions(language?: string): string {
 	let reader = "the language the person writes in";
@@ -105,13 +148,14 @@ export function assistantInstructions(language?: string): string {
 		`- Always write to the person in ${reader}. Keep it short: a sentence or two. Do not describe a picture you have not seen.`,
 		"- Write each prompt for generate in English, as a full description of the picture: subject, setting, light, style. To change a picture, describe the whole new picture, not only the change.",
 		"- To change a picture made before, give its id (ast_…) in reference_images when the model can redraw pictures; otherwise make it again with a new prompt.",
-		"- Leave models out unless the person names one: the best free model on this computer is used. Use paid models only when the person asks; they are asked to approve the cost.",
+		"- Leave models out unless the person names one or picks one when you ask: the best free model on this computer is used. Use paid models only when the person asks; they are asked to approve the cost.",
+		`- Before the first picture of a new idea, when the request leaves important choices open (shape or ratio, style or look, which model, how many), ask with ask_user first: one short question with 2 to ${MAX_OPTIONS} short options, written in ${reader}. One question per message, at most ${MAX_QUESTIONS} before a picture; then make it with what you know. Do not ask about what the person already said (a character or style from their library settles the look), when they say to just make it, or when they are changing a picture already made.`,
 		"- Call list_models when the person asks what can be used, or names a model you do not know.",
 		"- The pictures you make appear to the person on their own: do not repeat their ids or links.",
 		"- When you can see the results, look before you answer: say in one sentence whether they match what was asked, and if something is clearly off (cut off, wrong count, misspelled text, wrong colors) offer one concrete fix as a question. Do not make it again unasked.",
 		"- To change a picture you made, start from it: give its id in reference_images, with a model that edits or redraws pictures, rather than making a new one from words.",
 		'- To keep the same person or character in a new picture ("the same girl, now sitting"), give a picture of them in reference_images to a model that follows given pictures, and name them in the prompt as "the person in picture 1", then describe the whole new scene.',
-		'- The person may keep characters and styles in a library ("Rex", "my watercolor style"). When they name one, give its name in character or style to generate; call list_library when unsure what they have. When a name could mean several, ask which one before making anything.',
+		'- The person may keep characters and styles in a library ("Rex", "my watercolor style"). When they name one, give its name in character or style to generate; call list_library when unsure what they have. When a name could mean several, ask which one with ask_user, the names as options, before making anything.',
 		'- To follow the pose, outlines or depth of a picture ("in this pose", "keep this layout"), give it as guide_image with guide_kind, to a model that follows a guide picture. When the picture already is a skeleton, edge drawing or depth map, set guide_is_map.',
 		"- When several models made the same prompt, say which result fits the request best and why, in a sentence.",
 		"- When the person makes a series with the same character (a comic, a storyboard, a mascot) or asks to keep the character, call check_consistency after each new picture, against the first picture of the character or the one they approved (for a character from their library, give its name in character). Below 70, fix it in steps: first restate the missing traits in the prompt; then give the reference in reference_images (and a higher strength where the model has one); then suggest a model that follows references better. Retry on your own at most twice in all for this request, then tell the person the score and the differences. Never retry without saying so.",
@@ -372,6 +416,13 @@ export class Assistant {
 						"The person wrote again instead of approving; nothing was made.",
 					);
 				}
+				// This message is the answer.
+				if (entry.question?.state === "asked") {
+					await this.store.update(ctx, entry.id, {
+						...bodyOf(entry),
+						question: { ...entry.question, state: "answered" },
+					});
+				}
 			}
 			await this.add(ctx, sessionId, {
 				message: { role: "user", content: [{ type: "text", text }] },
@@ -406,6 +457,15 @@ export class Assistant {
 				);
 			}
 			entry = found;
+			// A question left waiting is passed over by this answer.
+			for (const other of entries) {
+				if (other.question?.state === "asked") {
+					await this.store.update(ctx, other.id, {
+						...bodyOf(other),
+						question: { ...other.question, state: "answered" },
+					});
+				}
+			}
 			othersWaiting = entries.some(
 				(e) => e.id !== entryId && e.confirm?.state === "asked",
 			);
@@ -671,11 +731,19 @@ export class Assistant {
 				if (signal.aborted) await say({ note: "stopped" });
 				return;
 			}
-			const specs = tools.map(toolSpec);
+			const specs = [...tools.map(toolSpec), ASK_USER];
 			const kept = await this.store.list(ctx, sessionId);
 			const messages = conversation(kept);
 			if (brain.vision) await this.showAgain(ctx, sessionId, kept, messages);
 			const instructions = assistantInstructions(language);
+			// Questions since the last generation, made or failed: a few,
+			// then it makes one.
+			const lastMade = kept.findLastIndex(
+				(e) => e.message.role === "tool" && e.message.name === "generate",
+			);
+			let questions = kept
+				.slice(lastMade + 1)
+				.filter((e) => e.question != null).length;
 			const words = kept
 				.flatMap((entry) =>
 					entry.message.role === "user" ? entry.message.content : [],
@@ -703,9 +771,62 @@ export class Assistant {
 				await this.add(ctx, sessionId, { message: said });
 				if (said.toolCalls.length === 0) return;
 
+				/** Something waits for the person: a question, or a cost. */
 				let asked = false;
+				let questioned = false;
+				const unrun = async (call: ToolCall, text: string) => {
+					const message: ChatMessage = {
+						role: "tool",
+						callId: call.id,
+						name: call.name,
+						content: [{ type: "text", text }],
+					};
+					messages.push(message);
+					await this.add(ctx, sessionId, { message });
+				};
 				for (const call of said.toolCalls) {
 					if (signal.aborted) break;
+					// Asked something: the rest waits for the answer.
+					if (questioned) {
+						await unrun(call, "Not run: waiting for the person's answer.");
+						continue;
+					}
+					if (call.name === ASK_USER.name) {
+						const question = questionOf(call.arguments);
+						const refusal = !question
+							? "Error: say the question to ask."
+							: asked
+								? "Not asked: waiting for the person's approval of the cost first."
+								: questions >= MAX_QUESTIONS
+									? "Error: not asked. You asked enough: make the picture now with what you know."
+									: null;
+						const message: ChatMessage = {
+							role: "tool",
+							callId: call.id,
+							name: call.name,
+							content: [
+								{
+									type: "text",
+									text:
+										refusal ??
+										"Asked. The person's answer comes as their next message.",
+								},
+							],
+						};
+						messages.push(message);
+						if (refusal || !question) {
+							await this.add(ctx, sessionId, { message });
+							continue;
+						}
+						asked = true;
+						questioned = true;
+						questions++;
+						await this.add(ctx, sessionId, {
+							message,
+							question: { ...question, state: "asked" },
+						});
+						continue;
+					}
 					const cost = await this.paidCost(reel, call, guard);
 					if (signal.aborted) break;
 					if (cost) {

@@ -314,7 +314,7 @@ ${COMMON_HELP}`,
 			const describing = values.describe === true;
 			if (describing && !(await api.captionerReady())) {
 				throw new UsageError(
-					"--describe needs the model that looks at pictures (Qwen2.5-VL); install it in the app.",
+					"--describe needs a model that looks at pictures (Qwen2.5-VL or Qwen3-VL); install one in the app, in Settings.",
 				);
 			}
 

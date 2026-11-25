@@ -8,7 +8,7 @@ import type {
 } from "@hatchlight/core/types";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { CheckIcon, ChevronDownIcon, SparklesIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -329,8 +329,11 @@ function FitBadge({
 			</Badge>
 		);
 	}
-	const text =
-		fit === "gpu"
+	// Language models are made to run on the processor: that is no warning.
+	const writes = model.media === "text" && fit === "cpu";
+	const text = writes
+		? t("models.badge.cpuText")
+		: fit === "gpu"
 			? t("models.badge.great")
 			: fit === "offload"
 				? t("models.badge.slow")
@@ -338,19 +341,23 @@ function FitBadge({
 					? t("models.badge.cpu")
 					: t("models.badge.none");
 	return (
-		<Badge className={cn("h-6 px-2.5 font-normal", FIT_BADGE[fit])}>
+		<Badge
+			className={cn("h-6 px-2.5 font-normal", FIT_BADGE[writes ? "gpu" : fit])}
+		>
 			<span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
 			{text}
 		</Badge>
 	);
 }
 
-function ModelCard({
+export function ModelCard({
 	model,
 	engine,
 	freeBytes,
 	recommended,
 	focused,
+	badges,
+	actions,
 }: {
 	model: LocalModelStatus;
 	engine: LocalEngineStatus | undefined;
@@ -358,6 +365,10 @@ function ModelCard({
 	recommended: boolean;
 	/** Opened from a link: brought into view and marked. */
 	focused: boolean;
+	/** More to say at the top, beside how it runs here. */
+	badges?: ReactNode;
+	/** More to do, beside installing and deleting. */
+	actions?: ReactNode;
 }) {
 	const i18n = useI18n();
 	const { t, bytes, explain } = i18n;
@@ -371,6 +382,8 @@ function ModelCard({
 
 	const installed = model.state === "installed";
 	const active = !installed && model.state !== "available";
+	/** A language model on the processor runs as it is meant to. */
+	const writes = (fit: Fit) => model.media === "text" && fit === "cpu";
 	const variant = model.variants.find((v) => v.id === model.variant);
 	const engineToFetch =
 		engine && !engine.installed && !installed ? engine.size : 0;
@@ -413,9 +426,11 @@ function ModelCard({
 					focused && "ring-2 ring-gold",
 				)}
 			>
-				<Demos model={model} />
+				{/* Language models write: they have no pictures to show. */}
+				{model.media !== "text" && <Demos model={model} />}
 				<div className="flex flex-1 flex-col gap-4 p-5">
 					<div className="flex flex-wrap gap-1.5">
+						{badges}
 						<FitBadge model={model} recommended={recommended} />
 						<Badge
 							variant="outline"
@@ -439,7 +454,9 @@ function ModelCard({
 									? t("models.installed")
 									: model.media === "video"
 										? t("models.media.video")
-										: t("models.media.image")}
+										: model.media === "text"
+											? t("models.media.text")
+											: t("models.media.image")}
 							</span>
 						</div>
 						<p className="mt-1 text-xs text-dim">
@@ -489,9 +506,16 @@ function ModelCard({
 							<p className="text-sm">
 								<span className="font-medium">{variant.label}</span>{" "}
 								<span
-									className={variant.fit === "gpu" ? "text-dim" : "text-danger"}
+									className={
+										variant.fit === "gpu" || writes(variant.fit)
+											? "text-dim"
+											: "text-danger"
+									}
 								>
-									· {fitText(t, variant.fit)}
+									·{" "}
+									{writes(variant.fit)
+										? t("models.fit.cpuText")
+										: fitText(t, variant.fit)}
 								</span>
 							</p>
 							<Collapsible className="text-xs text-dim">
@@ -530,7 +554,10 @@ function ModelCard({
 												>
 													<span>
 														<span className="text-ink">{other.label}</span> ·{" "}
-														{bytes(other.size)} · {fitText(t, other.fit)}
+														{bytes(other.size)} ·{" "}
+														{writes(other.fit)
+															? t("models.fit.cpuText")
+															: fitText(t, other.fit)}
 														{other.id === model.variant &&
 															` · ${installed ? t("models.variantInstalled") : t("models.recommended")}`}
 													</span>
@@ -642,6 +669,7 @@ function ModelCard({
 							/>
 						)}
 					</div>
+					{actions}
 				</div>
 			</Card>
 		</li>

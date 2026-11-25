@@ -15,6 +15,7 @@ import type {
 	TurnView,
 } from "@hatchlight/core/types";
 import {
+	ASK_USER,
 	Assistant,
 	type AssistantStore,
 	assistantInstructions,
@@ -813,5 +814,237 @@ describe("eyes for an assistant that cannot see", () => {
 		} finally {
 			errors.mockRestore();
 		}
+	});
+});
+
+describe("questions before a picture", () => {
+	const ask = (question: string, options: string[], id = "q1") =>
+		call("ask_user", { question, options }, id);
+
+	test("a question waits for the person; their answer leads to the picture", async () => {
+		const brain = scripted(
+			{
+				text: "",
+				toolCalls: [
+					{
+						id: "q1",
+						name: "ask_user",
+						arguments: {
+							question: "Que formato?",
+							options: ["Quadrado", "Largo", "Alto", " ", "Largo"],
+						},
+					},
+				],
+			},
+			call("generate", { prompt: "a wide fox", aspect_ratio: "16:9" }, "g1"),
+			{ text: "Aqui está.", toolCalls: [] },
+		);
+		const { assistant, inputs, idle } = setup(brain);
+		const { sessionId } = await assistant.send(ctx, {
+			text: "uma raposa",
+			language: "pt-BR",
+		});
+		await idle(sessionId);
+		let view = await assistant.view(ctx, sessionId);
+		// It stopped at the question, and nothing was made yet.
+		expect(roles(view.entries)).toEqual(["user", "assistant", "tool"]);
+		expect(view.entries.at(-1)?.question).toEqual({
+			text: "Que formato?",
+			options: ["Quadrado", "Largo", "Alto"],
+			state: "asked",
+		});
+		expect(inputs).toHaveLength(0);
+		expect(brain.seen).toHaveLength(1);
+
+		await assistant.send(ctx, { sessionId, text: "Largo" });
+		await idle(sessionId);
+		view = await assistant.view(ctx, sessionId);
+		expect(view.entries.find((e) => e.question)?.question?.state).toBe(
+			"answered",
+		);
+		expect(inputs[0]).toMatchObject({ prompt: "a wide fox" });
+		// The model saw its question answered by the person's message.
+		const second = brain.seen[1] ?? [];
+		expect(second.at(-2)).toMatchObject({ role: "tool", name: "ask_user" });
+		expect(second.at(-1)).toMatchObject({
+			role: "user",
+			content: [{ type: "text", text: "Largo" }],
+		});
+		expect(view.entries.at(-1)?.message).toMatchObject({ text: "Aqui está." });
+	});
+
+	test("one question at a time: a second in the same reply is not asked", async () => {
+		const brain = scripted({
+			text: "",
+			toolCalls: [
+				{
+					id: "q1",
+					name: "ask_user",
+					arguments: { question: "Shape?", options: ["Square"] },
+				},
+				{
+					id: "q2",
+					name: "ask_user",
+					arguments: { question: "Style?", options: ["Photo"] },
+				},
+			],
+		});
+		const { assistant, idle } = setup(brain);
+		const { sessionId } = await assistant.send(ctx, { text: "a fox" });
+		await idle(sessionId);
+		const view = await assistant.view(ctx, sessionId);
+		expect(view.entries.filter((e) => e.question)).toHaveLength(1);
+		expect(JSON.stringify(view.entries.at(-1)?.message)).toContain(
+			"waiting for the person's answer",
+		);
+	});
+
+	test("what comes after a question in the same reply waits for the answer", async () => {
+		const brain = scripted({
+			text: "",
+			toolCalls: [
+				{
+					id: "q1",
+					name: "ask_user",
+					arguments: { question: "Shape?", options: ["Square", "Wide"] },
+				},
+				{ id: "g1", name: "generate", arguments: { prompt: "a fox" } },
+			],
+		});
+		const { assistant, inputs, idle } = setup(brain);
+		const { sessionId } = await assistant.send(ctx, { text: "a fox" });
+		await idle(sessionId);
+		const view = await assistant.view(ctx, sessionId);
+		expect(inputs).toHaveLength(0);
+		expect(view.entries.at(-1)?.message).toMatchObject({
+			role: "tool",
+			callId: "g1",
+			content: [
+				{ type: "text", text: "Not run: waiting for the person's answer." },
+			],
+		});
+		expect(view.entries.find((e) => e.question)?.question?.state).toBe("asked");
+	});
+
+	test("a question after a paid call in the same reply waits for the approval", async () => {
+		const brain = scripted({
+			text: "",
+			toolCalls: [
+				{
+					id: "g1",
+					name: "generate",
+					arguments: { prompt: "a fox", models: ["fal/x"] },
+				},
+				{
+					id: "q1",
+					name: "ask_user",
+					arguments: { question: "Shape?", options: ["Square"] },
+				},
+			],
+		});
+		const { assistant, idle } = setup(brain);
+		const { sessionId } = await assistant.send(ctx, { text: "a fox with X" });
+		await idle(sessionId);
+		const view = await assistant.view(ctx, sessionId);
+		expect(view.entries.some((e) => e.question)).toBe(false);
+		expect(view.entries.find((e) => e.confirm)?.confirm?.state).toBe("asked");
+		expect(JSON.stringify(view.entries.at(-1)?.message)).toContain(
+			"waiting for the person's approval",
+		);
+	});
+
+	test("after a generation, it may ask again", async () => {
+		const brain = scripted(
+			ask("Shape?", ["Square"], "q1"),
+			ask("Style?", ["Photo"], "q2"),
+			ask("Light?", ["Warm"], "q3"),
+			call("generate", { prompt: "a fox", models: ["nope/x"] }, "g1"),
+			{ text: "That failed.", toolCalls: [] },
+			ask("Which model then?", ["Z"], "q4"),
+		);
+		const { assistant, idle } = setup(brain);
+		const { sessionId } = await assistant.send(ctx, { text: "a fox" });
+		await idle(sessionId);
+		for (const answer of ["Square", "Photo", "Warm", "try another"]) {
+			await assistant.send(ctx, { sessionId, text: answer });
+			await idle(sessionId);
+		}
+		const view = await assistant.view(ctx, sessionId);
+		expect(view.entries.filter((e) => e.question)).toHaveLength(4);
+	});
+
+	test("after a few questions, it is told to make the picture", async () => {
+		const brain = scripted(
+			ask("Shape?", ["Square"], "q1"),
+			ask("Style?", ["Photo"], "q2"),
+			ask("Light?", ["Warm"], "q3"),
+			ask("Model?", ["Any"], "q4"),
+			call("generate", { prompt: "a fox" }, "g1"),
+		);
+		const { assistant, inputs, idle } = setup(brain);
+		const { sessionId } = await assistant.send(ctx, { text: "a fox" });
+		await idle(sessionId);
+		for (const answer of ["Square", "Photo", "Warm"]) {
+			await assistant.send(ctx, { sessionId, text: answer });
+			await idle(sessionId);
+		}
+		const view = await assistant.view(ctx, sessionId);
+		expect(view.entries.filter((e) => e.question)).toHaveLength(3);
+		const refused = view.entries.find(
+			(e) => e.message.role === "tool" && e.message.callId === "q4",
+		);
+		expect(JSON.stringify(refused?.message)).toContain("make the picture now");
+		expect(inputs).toHaveLength(1);
+	});
+
+	test("an answer to a paid call passes over a question left waiting", async () => {
+		const brain = scripted(
+			call("generate", { prompt: "a fox", models: ["fal/x"] }),
+		);
+		const { assistant, store, idle } = setup(brain);
+		const { sessionId } = await assistant.send(ctx, { text: "use X" });
+		await idle(sessionId);
+		const confirm = store.entries.find((e) => e.confirm) as AssistantEntry;
+		// As an older version could leave it.
+		store.entries.push({
+			id: "msg_q",
+			sessionId,
+			createdAt: 0,
+			message: {
+				role: "tool",
+				callId: "q0",
+				name: "ask_user",
+				content: [{ type: "text", text: "Asked." }],
+			},
+			question: { text: "Shape?", options: ["Square"], state: "asked" },
+		});
+		await assistant.answer(ctx, sessionId, confirm.id, false);
+		await idle(sessionId);
+		expect(store.entries.find((e) => e.id === "msg_q")?.question?.state).toBe(
+			"answered",
+		);
+	});
+
+	test("a call without a question asks nothing", async () => {
+		const brain = scripted(call("ask_user", { question: " ", options: [] }));
+		const { assistant, idle } = setup(brain);
+		const { sessionId } = await assistant.send(ctx, { text: "a fox" });
+		await idle(sessionId);
+		const view = await assistant.view(ctx, sessionId);
+		expect(view.entries.some((e) => e.question)).toBe(false);
+		expect(roles(view.entries)).toEqual([
+			"user",
+			"assistant",
+			"tool",
+			"assistant",
+		]);
+	});
+
+	test("the instructions say when to ask, and the model is told of the tool", () => {
+		const said = assistantInstructions("pt-BR");
+		expect(said).toContain("ask_user");
+		expect(said).toContain("just make it");
+		expect(said).toContain("Portuguese");
+		expect(ASK_USER.parameters.required).toEqual(["question", "options"]);
 	});
 });

@@ -28,6 +28,7 @@ import {
 	createRuntime,
 	DataDirInUseError,
 	databaseFile,
+	FakeChatModel,
 	lockDataDir,
 	type Runtime,
 	type RuntimeOptions,
@@ -1515,4 +1516,201 @@ test("keys saved before encryption are encrypted on start; keys a new secret can
 		expect.objectContaining({ id: "fake", hasKey: true }),
 	);
 	third.close();
+});
+
+test("the language models for each job are the person's choice, falling back to one installed", async () => {
+	const text = (id: string, task: LocalModelSpec["tasks"][number]) => {
+		const [variant] = LOCAL_MODEL.variants;
+		const [file] = variant?.files ?? [];
+		return {
+			...LOCAL_MODEL,
+			id,
+			name: id,
+			media: "text",
+			tasks: [task],
+			demos: [],
+			variants: [
+				{
+					...(variant as NonNullable<typeof variant>),
+					files: [
+						{ ...(file as NonNullable<typeof file>), name: `${id}.gguf` },
+					],
+				},
+			],
+		} satisfies LocalModelSpec;
+	};
+	const { post, call, runtime } = await setup({
+		localModels: [
+			LOCAL_MODEL,
+			text("writer", "prompt-translation"),
+			text("eyes-a", "picture-description"),
+			text("eyes-b", "picture-description"),
+		],
+	});
+	const me = { userId: "local" };
+	const now = () => runtime.languageModels(me);
+	const until = async (want: {
+		writer: string | null;
+		eyes: string | null;
+	}) => {
+		for (
+			let i = 0;
+			i < 200 && JSON.stringify(await now()) !== JSON.stringify(want);
+			i++
+		) {
+			await Bun.sleep(5);
+		}
+		expect(await now()).toEqual(want);
+	};
+	await until({ writer: null, eyes: null });
+	expect(await runtime.captioner?.ready(me)).toBe(false);
+
+	// The only one installed is used, chosen or not.
+	await runtime.models.install("eyes-b");
+	await runtime.models.idle();
+	await until({ writer: null, eyes: "eyes-b" });
+	expect(await runtime.captioner?.ready(me)).toBe(true);
+	// None chosen, the first in the catalog's order is.
+	await runtime.models.install("eyes-a");
+	await runtime.models.install("writer");
+	await runtime.models.idle();
+	await until({ writer: "writer", eyes: "eyes-a" });
+
+	const chosen = await post("/api/settings", { eyesModel: "eyes-b" }, "PUT");
+	expect(await chosen.json()).toMatchObject({ eyesModel: "eyes-b" });
+	await until({ writer: "writer", eyes: "eyes-b" });
+	// Only a model that does the job can be chosen for it.
+	for (const body of [
+		{ eyesModel: "tiny" },
+		{ eyesModel: "writer" },
+		{ writerModel: "eyes-a" },
+		{ writerModel: 3 },
+	]) {
+		const refused = await post("/api/settings", body, "PUT");
+		expect(refused.status).toBe(400);
+		expect(await refused.json()).toMatchObject({ code: "notLanguageModel" });
+	}
+	// The chosen one deleted, another one installed takes over.
+	await call("/api/local-models/eyes-b", { method: "DELETE" });
+	await until({ writer: "writer", eyes: "eyes-a" });
+	expect((await runtime.settings.get(me)).eyesModel).toBe("eyes-b");
+	await post("/api/settings", { eyesModel: null }, "PUT");
+	expect((await runtime.settings.get(me)).eyesModel).toBeNull();
+});
+
+test("the fake assistant asks for the model and shape first, then makes the picture", async () => {
+	const fake = new FakeChatModel();
+	fake.delayMs = 0;
+	const user = (text: string) => ({
+		role: "user" as const,
+		content: [{ type: "text" as const, text }],
+	});
+	const first = await fake.chat("", [user("a fox")]);
+	expect(first.toolCalls[0]).toMatchObject({
+		name: "ask_user",
+		arguments: {
+			options: ["Fake alpha, square", "Fake alpha, wide", "Fake beta, wide"],
+		},
+	});
+	const asked = [
+		user("a fox"),
+		{ role: "assistant" as const, text: "", toolCalls: first.toolCalls },
+		{
+			role: "tool" as const,
+			callId: first.toolCalls[0]?.id ?? "",
+			name: "ask_user",
+			content: [{ type: "text" as const, text: "Asked." }],
+		},
+		user("Fake beta, wide"),
+	];
+	expect((await fake.chat("", asked)).toolCalls[0]).toMatchObject({
+		name: "generate",
+		arguments: {
+			prompt: "a fox",
+			models: ["fake/beta"],
+			aspect_ratio: "16:9",
+		},
+	});
+});
+
+test("switching writers waits for the one in use, which lets go before the next starts", async () => {
+	const [variant] = LOCAL_MODEL.variants;
+	const [file] = variant?.files ?? [];
+	const writerSpec = (id: string) =>
+		({
+			...LOCAL_MODEL,
+			id,
+			name: id,
+			media: "text",
+			tasks: ["prompt-translation"],
+			demos: [],
+			variants: [
+				{
+					...(variant as NonNullable<typeof variant>),
+					files: [
+						{ ...(file as NonNullable<typeof file>), name: `${id}.gguf` },
+					],
+				},
+			],
+		}) satisfies LocalModelSpec;
+	const events: string[] = [];
+	let release = () => {};
+	const held = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const writer = (id: string) => ({
+		vision: false,
+		toEnglish: async (prompt: string) => prompt,
+		reply: async () => {
+			events.push(`${id} starts`);
+			if (id === "first") await held;
+			events.push(`${id} ends`);
+			return `a prompt by ${id}`;
+		},
+		chat: async () => ({ text: "", toolCalls: [] }),
+		// Told to stop while not installed yet: nothing ran.
+		stop: () => {},
+		stopAndWait: async () => {
+			await Bun.sleep(5);
+			events.push(`${id} let go`);
+		},
+	});
+	const { runtime } = await setup({
+		localModels: [LOCAL_MODEL, writerSpec("first"), writerSpec("second")],
+		writers: writer,
+	});
+	const me = { userId: "local" };
+	await runtime.models.install("first");
+	await runtime.models.install("second");
+	await runtime.models.idle();
+	for (
+		let i = 0;
+		i < 200 && (await runtime.languageModels(me)).writer !== "first";
+		i++
+	) {
+		await Bun.sleep(5);
+	}
+	await runtime.settings.set(me, {
+		improveWith: "local",
+		writerModel: "first",
+	});
+	const request = { prompt: "a fox", modelIds: [], editing: false };
+	const signal = new AbortController().signal;
+	const before = runtime.improvePrompt(me, request, signal);
+	while (!events.includes("first starts")) await Bun.sleep(1);
+	// Chosen while the first one still writes: the second one waits.
+	await runtime.settings.set(me, { writerModel: "second" });
+	const after = runtime.improvePrompt(me, request, signal);
+	await Bun.sleep(20);
+	expect(events).toEqual(["first starts"]);
+	release();
+	expect(await before).toBe("a prompt by first");
+	expect(await after).toBe("a prompt by second");
+	expect(events).toEqual([
+		"first starts",
+		"first ends",
+		"first let go",
+		"second starts",
+		"second ends",
+	]);
 });

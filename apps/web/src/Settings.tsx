@@ -1,8 +1,10 @@
 import {
 	type ApiTokenView,
 	type Settings as Choices,
+	chooseLocalModel,
 	type ImproveWith,
-	type LocalModelStatus,
+	type LocalModelsView,
+	type LocalModelTask,
 	type ProviderStatus,
 	TOKEN_EXPIRY_DAYS,
 	type TokenExpiryDays,
@@ -10,7 +12,9 @@ import {
 	type TranslateWith,
 } from "@hatchlight/core/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CheckIcon } from "lucide-react";
 import { useId, useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -29,9 +33,8 @@ import { cn } from "@/lib/utils";
 import { AccountSettings, UsersSettings, useAccount, useCan } from "./Accounts";
 import { type AgentPolicy, api, useServerMode } from "./api";
 import { type I18n, useI18n } from "./i18n";
-import { useModelProgress } from "./live";
-import { PageHeader } from "./Models";
-import { Bar, ConfirmButton, LABEL, SECTION } from "./Training";
+import { ModelCard, PageHeader } from "./Models";
+import { ConfirmButton, LABEL, SECTION } from "./Training";
 import { scopeText, TokenFacts } from "./tokens";
 
 /** A panel inside a section: one provider, one model, one agent. */
@@ -172,6 +175,7 @@ function Choice<T extends string>({
 }) {
 	const { t } = useI18n();
 	const id = useId();
+	const can = useCan();
 	return (
 		<div className="flex flex-col gap-2">
 			<p id={id} className="text-sm font-medium">
@@ -205,9 +209,11 @@ function Choice<T extends string>({
 							{!option.usable && (
 								<span className="text-xs">
 									{" "}
-									{option.value === "local"
-										? t("settings.translateLocalMissing")
-										: t("settings.translateNoKey")}
+									{option.value !== "local"
+										? t("settings.translateNoKey")
+										: can.admin
+											? t("settings.translateLocalMissing")
+											: t("settings.translateLocalAskAdmin")}
 								</span>
 							)}
 						</span>
@@ -228,12 +234,9 @@ function Translation() {
 		queryKey: ["local-models"],
 		queryFn: api.localModels,
 	});
-	const model = view.data?.models.find((m) =>
-		m.tasks.includes("prompt-translation"),
-	);
-	const eyes = view.data?.models.find((m) =>
-		m.tasks.includes("picture-description"),
-	);
+	const writers =
+		view.data?.models.filter((m) => m.tasks.includes("prompt-translation")) ??
+		[];
 	const client = useQueryClient();
 	const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
 	const providers = useQuery({
@@ -247,14 +250,14 @@ function Translation() {
 			void client.invalidateQueries({ queryKey: ["assistant-brain"] });
 		},
 	});
-	if (!model) return null;
+	if (writers.length === 0) return null;
 	const chosen = settings.data?.translateWith ?? "local";
 	const hasKey = (provider: string) =>
 		providers.data?.some((p) => p.id === provider && p.hasKey) ?? false;
 	const local = {
 		value: "local",
 		label: t("settings.translateLocal"),
-		usable: model.ready,
+		usable: writers.some((m) => m.ready),
 	} as const;
 	const clouds = (["openai", "google", "openrouter"] as const).map((value) => ({
 		value,
@@ -318,118 +321,157 @@ function Translation() {
 					{choose.error && (
 						<p className="text-sm text-danger">{explain(choose.error)}</p>
 					)}
-					<HelperModel
-						model={model}
-						label={t("settings.translation")}
-						on={t("settings.translationOn")}
-						off={t("settings.translationOff")}
-						install={(size) => t("settings.translationInstall", { size })}
-					/>
 				</CardContent>
 			</Card>
-			{eyes && (
-				<Card className={SECTION}>
-					<SectionHeader
-						title={t("settings.eyes")}
-						intro={t("settings.eyesIntro")}
-					/>
-					<CardContent>
-						<HelperModel
-							model={eyes}
-							label={t("settings.eyes")}
-							on={t("settings.eyesOn")}
-							off={t("settings.eyesOff")}
-							install={(size) => t("settings.eyesInstall", { size })}
-						/>
-					</CardContent>
-				</Card>
+			{view.data && (
+				<LanguageModels
+					view={view.data}
+					choices={settings.data}
+					disabled={choose.isPending}
+					onChoose={(change) => choose.mutate(change)}
+				/>
 			)}
 		</>
 	);
 }
 
-/** A model that helps the others, installed and removed here. */
-function HelperModel({
-	model,
-	label,
-	on,
-	off,
-	install: installText,
+/** A job a language model on this computer does, and who can do it. */
+interface Job {
+	field: "writerModel" | "eyesModel";
+	task: LocalModelTask;
+	title: string;
+	intro: string;
+	use: string;
+}
+
+/**
+ * The language models this computer can run, as cards like the Models
+ * screen's: installed here, and chosen for the job each does.
+ */
+function LanguageModels({
+	view,
+	choices,
+	disabled,
+	onChoose,
 }: {
-	model: LocalModelStatus;
-	label: string;
-	on: string;
-	off: string;
-	install(size: string): string;
+	view: LocalModelsView;
+	choices: Choices | undefined;
+	disabled: boolean;
+	onChoose(change: Partial<Choices>): void;
 }) {
-	const { t, bytes, explain } = useI18n();
-	const live = useModelProgress(model.id);
+	const { t } = useI18n();
 	const can = useCan();
-	const install = useMutation({ mutationFn: () => api.installModel(model.id) });
-	const cancel = useMutation({ mutationFn: () => api.cancelModel(model.id) });
-	const remove = useMutation({ mutationFn: () => api.deleteModel(model.id) });
-	const busy = ["queued", "downloading", "verifying"].includes(
-		live?.state ?? model.state,
-	);
-	const received = live?.receivedBytes ?? model.receivedBytes;
-	const size = live?.size ?? model.size;
-	const percent = Math.round((received / Math.max(size, 1)) * 100);
-	const error = install.error ?? remove.error;
+	const jobs: Job[] = [
+		{
+			field: "writerModel",
+			task: "prompt-translation",
+			title: t("settings.languageWriter"),
+			intro: t("settings.languageWriterIntro"),
+			use: t("settings.useForWriting"),
+		},
+		{
+			field: "eyesModel",
+			task: "picture-description",
+			title: t("settings.languageEyes"),
+			intro: t("settings.eyesIntro"),
+			use: t("settings.useForSeeing"),
+		},
+	];
 	return (
-		<div className={PANEL}>
-			<div className="flex items-baseline justify-between gap-4">
-				<h3 className="font-medium">{model.name}</h3>
-				<span
-					className={`font-mono text-xs ${model.ready ? "text-good" : "text-dim"}`}
-				>
-					{model.ready ? on : off}
-				</span>
-			</div>
-			{busy ? (
-				<div className="mt-3 flex flex-wrap items-center gap-3">
-					<Bar value={percent} label={label} className="min-w-40 flex-1" />
-					<span className="font-mono text-xs text-dim">
-						{bytes(received)} / {bytes(size)}
-					</span>
-					{can.admin && (
-						<Button variant="outline" onClick={() => cancel.mutate()}>
-							{t("common.cancel")}
-						</Button>
-					)}
-				</div>
-			) : !can.admin ? (
-				!model.ready && (
-					<p className="mt-3 text-sm text-dim">{t("models.askAdmin")}</p>
-				)
-			) : model.ready ? (
-				<Button
-					variant="outline"
-					onClick={() => remove.mutate()}
-					disabled={remove.isPending}
-					className="mt-3 text-dim hover:text-danger"
-				>
-					{t("settings.remove")}
-				</Button>
-			) : (
-				<Button
-					onClick={() => install.mutate()}
-					disabled={install.isPending}
-					className="mt-3"
-				>
-					{installText(bytes(size))}
-				</Button>
-			)}
-			{model.error && !busy && (
-				<p className="mt-2 text-sm text-danger">
-					{explain({
-						message: model.error,
-						code: model.errorCode ?? null,
-						params: model.errorParams ?? null,
-					})}
-				</p>
-			)}
-			{error && <p className="mt-2 text-sm text-danger">{explain(error)}</p>}
-		</div>
+		<Card className={SECTION}>
+			<SectionHeader
+				title={t("settings.languageModels")}
+				intro={t("settings.languageModelsIntro")}
+			/>
+			<CardContent className="flex flex-col gap-10">
+				{jobs.map((job) => {
+					const candidates = view.models.filter((m) =>
+						m.tasks.includes(job.task),
+					);
+					if (candidates.length === 0) return null;
+					const chosen = choices?.[job.field] ?? null;
+					const inUse = chooseLocalModel(
+						candidates.map((m) => m.id),
+						chosen,
+						(id) => candidates.some((m) => m.id === id && m.ready),
+					);
+					return (
+						<section
+							key={job.field}
+							aria-label={job.title}
+							className="flex flex-col gap-5"
+						>
+							<div className="flex flex-col gap-1">
+								<h3 className="font-display text-xl font-bold tracking-tight">
+									{job.title}
+								</h3>
+								<p className="max-w-2xl text-sm leading-relaxed text-dim">
+									{job.intro}
+								</p>
+								<div className="flex min-h-10 flex-wrap items-center gap-3 text-sm">
+									{chosen == null ? (
+										<span className="text-dim">
+											{t("settings.languageAutomatic")}
+										</span>
+									) : (
+										<Button
+											variant="outline"
+											disabled={disabled}
+											onClick={() => onChoose({ [job.field]: null })}
+										>
+											{t("settings.languageBackToAutomatic")}
+										</Button>
+									)}
+								</div>
+							</div>
+							<ul className="grid gap-5 md:grid-cols-2">
+								{candidates.map((model) => (
+									<ModelCard
+										key={model.id}
+										model={model}
+										engine={view.engines.find((engine) =>
+											model.variants.some(
+												(v) =>
+													v.id === model.variant && v.engine === engine.engine,
+											),
+										)}
+										freeBytes={view.disk.freeBytes}
+										recommended={false}
+										focused={false}
+										badges={
+											model.id === inUse ? (
+												<Badge className="h-6 bg-gold/15 px-2.5 text-gold">
+													<CheckIcon aria-hidden="true" />
+													{t("settings.inUse")}
+												</Badge>
+											) : model.id === chosen ? (
+												<Badge variant="outline" className="h-6 px-2.5">
+													{can.admin
+														? t("settings.chosenNotReady")
+														: t("settings.chosenAskAdmin")}
+												</Badge>
+											) : null
+										}
+										actions={
+											model.ready &&
+											model.id !== inUse && (
+												<Button
+													variant="outline"
+													disabled={disabled}
+													onClick={() => onChoose({ [job.field]: model.id })}
+												>
+													{job.use}
+												</Button>
+											)
+										}
+									/>
+								))}
+							</ul>
+						</section>
+					);
+				})}
+			</CardContent>
+		</Card>
 	);
 }
 

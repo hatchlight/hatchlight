@@ -9,7 +9,7 @@ import {
 	parseConsistency,
 } from "../consistency";
 import { CodedError } from "../errors";
-import type { ConsistencyResult } from "../types";
+import type { ConsistencyResult, UserContext } from "../types";
 import { type PathMapper, windowsPath } from "./provider";
 import type { LocalModelStore } from "./store";
 import { type RunOnce, runOnce } from "./translator";
@@ -66,9 +66,16 @@ export function lookPrompt(asked: string): string {
 
 /** Writes training captions; absent where no model can see. */
 export interface Captioner {
-	/** Whether the model and its engine are installed. */
-	ready(): Promise<boolean>;
-	caption(picture: SeenPicture, signal: AbortSignal): Promise<string>;
+	/**
+	 * Whether the model and its engine are installed. Given who asks, the
+	 * model is the one they chose.
+	 */
+	ready(ctx?: UserContext): Promise<boolean>;
+	caption(
+		picture: SeenPicture,
+		signal: AbortSignal,
+		ctx?: UserContext,
+	): Promise<string>;
 }
 
 export interface LocalEyesOptions {
@@ -77,10 +84,30 @@ export interface LocalEyesOptions {
 	model: string;
 	run?: RunOnce;
 	windowsPath?: PathMapper;
+	/** Where its runs wait their turn; by default, with every other model's. */
+	queue?: RunQueue;
 }
 
 /**
- * A model on this computer that looks at pictures (Qwen2.5-VL), run once
+ * Runs one after another: a model that looks at pictures takes gigabytes of
+ * memory, so one runs at a time, whichever model and whoever asked.
+ */
+export class RunQueue {
+	private last: Promise<unknown> = Promise.resolve();
+
+	/** Runs `job` after the runs before it, whether they worked or not. */
+	add<T>(job: () => Promise<T>): Promise<T> {
+		const run = this.last.then(job);
+		this.last = run.catch(() => {});
+		return run;
+	}
+}
+
+/** The queue every model that looks at pictures shares, unless given one. */
+const SHARED_QUEUE = new RunQueue();
+
+/**
+ * A model on this computer that looks at pictures (Qwen2.5-VL, Qwen3-VL), run once
  * per picture with llama.cpp's multimodal program: it works from WSL too,
  * where llama.cpp's server on the Windows side cannot be reached.
  */
@@ -89,17 +116,14 @@ export class LocalEyes implements Eyes, Captioner, Judge {
 	private model: string;
 	private run: RunOnce;
 	private windowsPath: PathMapper;
-	/**
-	 * The run before the next one: a 7B model takes gigabytes of memory, so
-	 * one runs at a time, whoever asked.
-	 */
-	private queue: Promise<unknown> = Promise.resolve();
+	private queue: RunQueue;
 
 	constructor(options: LocalEyesOptions) {
 		this.store = options.store;
 		this.model = options.model;
 		this.run = options.run ?? runOnce;
 		this.windowsPath = options.windowsPath ?? windowsPath;
+		this.queue = options.queue ?? SHARED_QUEUE;
 	}
 
 	/** Whether the model and its engine are installed. */
@@ -179,14 +203,11 @@ export class LocalEyes implements Eyes, Captioner, Judge {
 		maxTokens: number,
 		signal: AbortSignal,
 	): Promise<string> {
-		const run = this.queue.then(() => {
+		return this.queue.add(() => {
 			// Given up while waiting its turn: nothing to run.
 			signal.throwIfAborted();
 			return this.askNow(pictures, prompt, maxTokens, signal);
 		});
-		// The next run waits for this one, whether it worked or not.
-		this.queue = run.catch(() => {});
-		return run;
 	}
 
 	/** Runs the model once on some pictures, and returns what it said. */

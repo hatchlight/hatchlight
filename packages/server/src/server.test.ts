@@ -6,13 +6,15 @@ import {
 	base32Decode,
 	FakeProvider,
 	LOCAL_USER,
+	type LocalEngineSpec,
+	type LocalModelSpec,
 	type TokenScope,
 	type TrainerEvent,
 	type TrainerStatus,
 	type TrainingView,
 	totp,
 } from "@hatchlight/core";
-import { FAST_HASHER, safetensors } from "@hatchlight/core/testing";
+import { FAST_HASHER, safetensors, zip } from "@hatchlight/core/testing";
 import {
 	type Access,
 	type Agents,
@@ -21,6 +23,7 @@ import {
 	ROUTE_ACCESS,
 	ROUTE_SCOPE,
 	type Runtime,
+	type RuntimeOptions,
 	serverConfig,
 } from "./index";
 
@@ -59,6 +62,8 @@ async function serverApp(
 		/** Stands in for the internet, the cloud services included. */
 		fetch?: (url: string, init?: RequestInit) => Promise<Response>;
 		passwordHasher?: typeof FAST_HASHER;
+		/** More of the runtime, such as models to install. */
+		runtime?: Partial<RuntimeOptions>;
 	} = {},
 ) {
 	const root = await mkdtemp(join(tmpdir(), "hatchlight-server-mode-"));
@@ -98,6 +103,7 @@ async function serverApp(
 		trainerOptions: {
 			fetch: async () => new Response("not here", { status: 404 }),
 		},
+		...options.runtime,
 	});
 	// Requests still under way finish before the database closes.
 	const inFlight = new Set<Promise<unknown>>();
@@ -2410,4 +2416,167 @@ test("deleting pictures frees room once no picture of theirs shares the file", a
 	expect(await (await call("/api/gallery", { who: member })).json()).toEqual(
 		[],
 	);
+});
+
+test("each person's language models are their own; installing them is the admins'", async () => {
+	const weights = new TextEncoder().encode("the weights of a language model");
+	const engine = zip([{ name: "run", data: new TextEncoder().encode("run") }]);
+	const sha = (data: Uint8Array) =>
+		new Bun.CryptoHasher("sha256").update(data).digest("hex");
+	const engines: LocalEngineSpec[] = [
+		{
+			id: "run",
+			name: "Runner",
+			homepage: "https://engine.example",
+			license: "MIT",
+			builds: [
+				{
+					id: "run-cpu",
+					engine: "run",
+					version: "1",
+					backend: "cpu",
+					os: "linux",
+					arch: "x64",
+					executable: "run",
+					files: [
+						{
+							name: "run.zip",
+							url: "https://models.example/run.zip",
+							size: engine.byteLength,
+							sha256: sha(engine),
+						},
+					],
+				},
+			],
+		},
+	];
+	const text = (
+		id: string,
+		task: "prompt-translation" | "picture-description",
+	): LocalModelSpec => ({
+		id,
+		name: id,
+		author: "Example",
+		media: "text",
+		tasks: [task],
+		summary: "A model for tests.",
+		license: "MIT",
+		licenseUrl: "https://license.example",
+		commercial: { kind: "allowed" },
+		homepage: "https://models.example",
+		variants: [
+			{
+				id: "full",
+				label: "Full",
+				engine: "run",
+				memoryBytes: 1,
+				files: [
+					{
+						name: `${id}.gguf`,
+						url: `https://models.example/${id}.gguf`,
+						size: weights.byteLength,
+						sha256: sha(weights),
+						role: "model",
+					},
+				],
+			},
+		],
+		demos: [],
+		defaults: { size: 0, aspectRatios: [], steps: 0, cfgScale: 0 },
+	});
+	const { call, setupOwner, invite, runtime, userId } = await serverApp({
+		runtime: {
+			localModels: [
+				text("writer-a", "prompt-translation"),
+				text("writer-b", "prompt-translation"),
+				text("eyes-a", "picture-description"),
+				text("eyes-b", "picture-description"),
+			],
+			engines,
+			fetch: async (url) =>
+				new Response(url.endsWith(".zip") ? engine : weights),
+			// Says which model wrote the caption.
+			eyes: (model) => ({
+				look: async () => model,
+				caption: async () => `captioned by ${model}`,
+				compare: async () => ({ score: 90, differences: [], verdict: "same" }),
+				ready: async () => true,
+			}),
+		},
+	});
+	const owner = await setupOwner();
+	// Allowed to train, so allowed to caption training pictures.
+	const member = await invite(owner, { canTrain: true });
+	// Installing is for admins.
+	const refused = await call("/api/local-models/eyes-a/install", {
+		method: "POST",
+		who: member,
+	});
+	expect(refused.status).toBe(403);
+	for (const id of ["writer-a", "writer-b", "eyes-a", "eyes-b"]) {
+		const installed = await call(`/api/local-models/${id}/install`, {
+			method: "POST",
+			who: owner,
+		});
+		expect(installed.status).toBe(202);
+	}
+	await runtime.models.idle();
+	const put = (who: typeof owner, body: unknown) =>
+		call("/api/settings", { method: "PUT", body, who });
+	expect(
+		(await put(owner, { writerModel: "writer-b", eyesModel: "eyes-b" })).status,
+	).toBe(200);
+	expect(
+		(await put(member, { writerModel: "writer-a", eyesModel: "eyes-a" }))
+			.status,
+	).toBe(200);
+	const settingsOf = async (who: typeof owner) =>
+		(await (await call("/api/settings", { who })).json()) as {
+			writerModel: string;
+			eyesModel: string;
+		};
+	expect(await settingsOf(owner)).toMatchObject({
+		writerModel: "writer-b",
+		eyesModel: "eyes-b",
+	});
+	expect(await settingsOf(member)).toMatchObject({
+		writerModel: "writer-a",
+		eyesModel: "eyes-a",
+	});
+	const ownerId = userId("owner");
+	const memberId = userId(member.username);
+	for (let i = 0; i < 200; i++) {
+		if ((await runtime.languageModels({ userId: ownerId })).eyes === "eyes-b")
+			break;
+		await Bun.sleep(5);
+	}
+	expect(await runtime.languageModels({ userId: ownerId })).toEqual({
+		writer: "writer-b",
+		eyes: "eyes-b",
+	});
+	expect(await runtime.languageModels({ userId: memberId })).toEqual({
+		writer: "writer-a",
+		eyes: "eyes-a",
+	});
+	// Captions come from the asker's own choice.
+	const captioned = async (who: typeof owner) => {
+		expect(await (await call("/api/captioner", { who })).json()).toEqual({
+			ready: true,
+		});
+		const upload = await call("/api/assets", {
+			method: "POST",
+			who,
+			body: PNG,
+			headers: { "content-type": "image/png" },
+		});
+		const asset = (await upload.json()) as { id: string };
+		const response = await call("/api/captions", {
+			method: "POST",
+			who,
+			body: { assetId: asset.id },
+		});
+		return ((await response.json()) as { caption: string }).caption;
+	};
+	expect(await captioned(owner)).toBe("captioned by eyes-b");
+	expect(await captioned(member)).toBe("captioned by eyes-a");
 });

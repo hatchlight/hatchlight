@@ -900,9 +900,9 @@ Compares a picture with 1 to ${MAX_CHARACTER_REFERENCES} pictures of a character
 a comic or a mascot, and says how much it looks the same (0 to 100) and what
 differs. From ${CONSISTENT_SCORE} up the character holds. Pictures are ids (ast_…) or files.
 
-It uses the model that describes pictures (Qwen2.5-VL) when installed, which
-takes about a minute without a graphics card; else the assistant's cloud
-model, on your key.
+It uses the model that looks at pictures chosen in Settings (Qwen2.5-VL or
+Qwen3-VL) when one is installed, which takes about a minute without a
+graphics card; else the assistant's cloud model, on your key.
 
   --like <ids>      The pictures of the character, comma-separated or repeated
   --traits <text>   What must stay the same, such as "green coat, red scarf"

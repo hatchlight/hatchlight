@@ -209,3 +209,42 @@ test("one run at a time, whoever asks, and a failed one does not stop the next",
 	await expect(second).rejects.toThrow();
 	expect(runs).toBe(4);
 });
+
+test("two models that look at pictures never run at once", async () => {
+	const scratch = await mkdtemp(join(tmpdir(), "hatchlight-eyes-"));
+	dirs.push(scratch);
+	let running = 0;
+	let most = 0;
+	const store = {
+		list: async () => ({
+			models: [
+				{ id: "small", ready: true },
+				{ id: "large", ready: true },
+			],
+		}),
+		runtime: async (id: string) => ({
+			executable: "/engines/llama/llama-server",
+			files: { model: `/m/${id}.gguf`, llm_vision: `/m/${id}-mmproj.gguf` },
+			scratch,
+			throughWindows: false,
+		}),
+	};
+	const run = async () => {
+		running++;
+		most = Math.max(most, running);
+		await Bun.sleep(10);
+		running--;
+		return { code: 0, stdout: "sitting, soft light", stderr: "" };
+	};
+	// No queue given: they share the one every such model shares.
+	const [small, large] = ["small", "large"].map(
+		(model) => new LocalEyes({ store: store as never, model, run }),
+	) as [LocalEyes, LocalEyes];
+	const signal = new AbortController().signal;
+	await Promise.all([
+		small.caption(fox, signal),
+		large.caption(fox, signal),
+		small.caption(fox, signal),
+	]);
+	expect(most).toBe(1);
+});

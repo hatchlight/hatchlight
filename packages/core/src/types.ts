@@ -1162,6 +1162,30 @@ export interface Settings {
 	otherAppsModel: string | null;
 	/** Hide which model made which result of a comparison until one is picked. */
 	blindPicks: boolean;
+	/**
+	 * The model on this computer that translates, improves prompts and
+	 * thinks for the assistant; null for the first one installed.
+	 */
+	writerModel: string | null;
+	/**
+	 * The model on this computer that looks at pictures; null for the first
+	 * one installed.
+	 */
+	eyesModel: string | null;
+}
+
+/**
+ * Which model on this computer does a job: the one chosen while it is
+ * installed, else the first candidate installed (the catalog's order), else
+ * none. A chosen model that was deleted falls back, it does not stop the job.
+ */
+export function chooseLocalModel(
+	candidates: readonly string[],
+	chosen: string | null,
+	ready: (id: string) => boolean,
+): string | null {
+	if (chosen && candidates.includes(chosen) && ready(chosen)) return chosen;
+	return candidates.find(ready) ?? null;
 }
 
 /**
@@ -1174,6 +1198,8 @@ export interface AssistantEntryBody {
 	turnId?: string;
 	/** A paid generation waiting for the person's yes. */
 	confirm?: AssistantConfirm;
+	/** A question to the person, with answers to pick from. */
+	question?: AssistantQuestion;
 	/** The assistant stopped on this; the code says it in the reader's language. */
 	error?: { message: string; code: string | null };
 	/** Something said to the person only, never to the language model. */
@@ -1186,6 +1212,17 @@ export interface AssistantConfirm {
 	modelNames: string[];
 	usd: number;
 	state: "asked" | "approved" | "declined";
+}
+
+/**
+ * What the assistant asked before making a picture. The answer, picked or
+ * written, comes as the person's next message.
+ */
+export interface AssistantQuestion {
+	text: string;
+	/** Short answers to pick from; the person may write another. */
+	options: string[];
+	state: "asked" | "answered";
 }
 
 export interface AssistantEntry extends AssistantEntryBody {
