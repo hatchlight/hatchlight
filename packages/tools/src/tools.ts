@@ -9,10 +9,10 @@ import {
 	GUIDE_KINDS,
 	type GuideKind,
 	type JobView,
-	MAX_CHARACTER_REFERENCES,
-	MAX_TRAITS_LENGTH,
 	type LibraryEntry,
 	type LibraryKind,
+	MAX_CHARACTER_REFERENCES,
+	MAX_TRAITS_LENGTH,
 	type ModelSpec,
 	PROMPT_KINDS,
 	type PromptKind,
@@ -984,8 +984,15 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 					.array(z.string().regex(ASSET_ID))
 					.min(1)
 					.max(MAX_CHARACTER_REFERENCES)
+					.optional()
 					.describe(
-						"Ids (ast_…) of pictures showing the character as it must look.",
+						"Ids (ast_…) of pictures showing the character as it must look. Or give character.",
+					),
+				character: z
+					.string()
+					.optional()
+					.describe(
+						"A character from the user's library, by name: its pictures are compared with, and its words are the traits, unless like or traits are given.",
 					),
 				traits: z
 					.string()
@@ -996,10 +1003,29 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 					),
 			},
 			readOnly: true,
-			async run({ image, like, traits }, context) {
+			async run(
+				{ image, like: given, traits: told, character: name },
+				context,
+			) {
 				if (!reel.checkConsistency) {
 					return failure("Characters cannot be compared here.");
 				}
+				const character = await libraryEntry("character", name);
+				if (character && !("id" in character)) return character;
+				const like =
+					given ??
+					character?.pictureIds
+						.filter((id) => id !== image)
+						.slice(0, MAX_CHARACTER_REFERENCES) ??
+					[];
+				if (like.length === 0) {
+					return failure(
+						character
+							? `${character.name} keeps no picture to compare with: give like.`
+							: "Give like (pictures of the character) or character.",
+					);
+				}
+				const traits = told ?? character?.prompt?.slice(0, MAX_TRAITS_LENGTH);
 				if (like.includes(image)) {
 					return failure(
 						"Compare the picture with other pictures, not itself.",
