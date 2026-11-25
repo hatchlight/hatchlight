@@ -145,6 +145,15 @@ export function Composer(props: Props) {
 	const [setting, setSetting] = useState(false);
 	const [prompt, setPrompt] = useState("");
 	const [chosen, setChosen] = useState<string[]>(savedModels);
+	// A public demo has one model: chosen from the start, and nothing else
+	// to choose.
+	const demo = useDemo() !== null;
+	useEffect(() => {
+		if (!demo || models.length === 0) return;
+		if (!models.some((m) => chosen.includes(m.id))) {
+			setChosen(models.map((m) => m.id));
+		}
+	}, [demo, models, chosen]);
 	const [aspectRatio, setAspectRatio] = useState("");
 	const [count, setCount] = useState(1);
 	const [media, setMedia] = useState<Media>("image");
@@ -173,7 +182,6 @@ export function Composer(props: Props) {
 	const [improveError, setImproveError] = useState<unknown>(null);
 	// A public demo takes no uploads, and has no language model to write with:
 	// references are the visitor's own pictures, used as they are.
-	const demo = useDemo() !== null;
 	const [only] = references.length === 1 ? references : [];
 	const marked = only != null && mask?.reference === only ? mask : null;
 	const maskId = marked?.id ?? null;
@@ -417,6 +425,7 @@ export function Composer(props: Props) {
 					})}
 				<Button
 					variant="outline"
+					hidden={demo}
 					onClick={() => {
 						leaveSheet();
 						setPicking(true);
