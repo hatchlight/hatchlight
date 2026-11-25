@@ -37,3 +37,21 @@ export function onUpdateReady(handler: (version: string) => void): () => void {
 export async function installUpdate(): Promise<void> {
 	await tauri()?.core.invoke("install_update");
 }
+
+/**
+ * Calls `handler` with each link the app was opened with, such as
+ * `hatchlight://hf/owner/repo`: those waiting from before the page loaded,
+ * then each new one. Returns a way to stop.
+ */
+export function onLinks(handler: (link: string) => void): () => void {
+	const take = () =>
+		void tauri()
+			?.core.invoke<string[]>("take_links")
+			.then((links) => {
+				for (const link of links) handler(link);
+			})
+			.catch(() => {});
+	const listening = tauri()?.event.listen("links-waiting", take);
+	take();
+	return () => void listening?.then((stop) => stop());
+}

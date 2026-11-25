@@ -5,6 +5,7 @@
 //! The server is a compiled sidecar on a free loopback port; the window shows
 //! a splash until the server says where it listens, then opens the app there.
 
+mod links;
 mod update;
 
 use std::fs::{create_dir_all, File};
@@ -15,6 +16,7 @@ use std::sync::Mutex;
 use tauri::webview::NewWindowResponse;
 use tauri::window::Color;
 use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
@@ -181,26 +183,50 @@ fn restart_server(app: AppHandle) -> Result<(), String> {
 fn main() {
     let app = tauri::Builder::default()
         // A second launch brings the open window forward instead of starting
-        // another server on the same data directory.
+        // another server on the same data directory. A link it was started
+        // with, such as hatchlight://hf/..., comes to this one (on Windows and
+        // Linux the system starts the app again with the link).
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.set_focus();
             }
         }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Server(Mutex::new(None)))
+        .manage(links::Links::default())
         .manage(update::Pending::default())
         .manage(update::Updating::default())
         .manage(update::ServerExited::default())
         .invoke_handler(tauri::generate_handler![
             update::update_status,
             update::install_update,
-            restart_server
+            restart_server,
+            links::take_links
         ])
         .setup(|app| {
+            // An AppImage, or a build run from the source, is not installed:
+            // the system learns of hatchlight:// links here. Installers set
+            // it up themselves, and macOS reads it from the app's bundle.
+            #[cfg(target_os = "linux")]
+            let unpackaged = cfg!(debug_assertions) || app.env().appimage.is_some();
+            #[cfg(windows)]
+            let unpackaged = cfg!(debug_assertions);
+            #[cfg(any(windows, target_os = "linux"))]
+            if unpackaged {
+                if let Err(error) = app.deep_link().register_all() {
+                    update::log(app.handle(), &format!("Could not register hatchlight:// links: {error}"));
+                }
+            }
+            // The link the app was started with, then those that come later.
+            let opened = app.handle().clone();
+            app.deep_link().on_open_url(move |event| links::receive(&opened, event.urls()));
+            if let Ok(Some(urls)) = app.deep_link().get_current() {
+                links::receive(app.handle(), urls);
+            }
             let navigation = app.handle().clone();
             let popups = app.handle().clone();
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("splash.html".into()))

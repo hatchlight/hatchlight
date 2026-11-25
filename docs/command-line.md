@@ -52,12 +52,19 @@ starts one for the command, and only models on your computer unless you pass
 hatchlight doctor                 # the GPU, disk, models and what is missing
 hatchlight catalog                # models to download, and how they fit
 hatchlight install sdxl-turbo     # download one and wait until it is ready
+hatchlight install hf:owner/repo  # a model, checkpoint or LoRA from Hugging Face
 hatchlight keys set fal           # asks for the key without showing it
 hatchlight loras add style.safetensors
 hatchlight folders add ~/ComfyUI  # use the models of another app where they are
 hatchlight trainer install        # then train a LoRA from your pictures:
 hatchlight train photos/ --name "My dog" --trigger qzxdog --consent --samples out/
 ```
+
+`install hf:<owner>/<repo>` opens a Hugging Face repository: a model the
+catalog has is installed as usual, and a single SDXL or SD 1.5 checkpoint or
+a LoRA in a `.safetensors` file is added after it shows the file's size and
+license and you agree (`--yes` skips the question). Name the file when the
+repository has several: `hf:<owner>/<repo>/<file>`.
 
 `hatchlight completions zsh` (or `bash`, `fish`) prints tab completion for
 your shell; its `--help` says where to put it.

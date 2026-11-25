@@ -947,3 +947,32 @@ h2 {
 		border-top: 0;
 	}
 }
+
+/* ---------- opening a model from Hugging Face ---------- */
+/* Shown or hidden by its script, whatever the element's own display. */
+.versus [hidden] {
+	display: none;
+}
+
+.hub {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	gap: 8px 24px;
+	margin: 0 0 32px;
+	padding: 20px 24px;
+	background: var(--panel);
+	border: 1px solid var(--line);
+	border-radius: 18px;
+}
+
+.hub dt {
+	color: var(--dim);
+}
+
+.hub dd {
+	margin: 0;
+	min-width: 0;
+	overflow-wrap: anywhere;
+	font-family: var(--mono);
+	font-size: 14px;
+}

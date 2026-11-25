@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { ChatReply } from "@hatchlight/core";
 import { picture, safetensors } from "@hatchlight/core/testing";
 import { EXIT, UsageError } from "./commands";
-import { cleanups, idsIn, terminal } from "./testing";
+import { cleanups, idsIn, TINY, terminal } from "./testing";
 
 afterEach(async () => {
 	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
@@ -105,6 +105,88 @@ describe("LoRAs", () => {
 		await expect(
 			t.run("loras", ["add", "missing.safetensors"]),
 		).rejects.toThrow("Cannot read");
+	});
+});
+
+describe("installing from Hugging Face", () => {
+	const LORA = safetensors(["lora_unet_input_blocks_4_1_proj_in.alpha"]);
+	const SHA = "b".repeat(40);
+	/** Hugging Face's API and files for one repository; nothing leaves the machine. */
+	const hub = async (url: string) => {
+		const { hostname, pathname } = new URL(url);
+		if (hostname !== "huggingface.co") return null;
+		if (pathname === "/api/models/someone/style/revision/main") {
+			return Response.json({
+				sha: SHA,
+				cardData: { license: "mit" },
+				siblings: [{ rfilename: "ink.safetensors", size: LORA.byteLength }],
+			});
+		}
+		if (pathname === `/api/models/someone/style/revision/${SHA}`) {
+			return Response.json({
+				sha: SHA,
+				siblings: [{ rfilename: "ink.safetensors", size: LORA.byteLength }],
+			});
+		}
+		if (pathname === `/someone/style/resolve/${SHA}/ink.safetensors`) {
+			return new Response(LORA);
+		}
+		return Response.json({ error: "Not found" }, { status: 404 });
+	};
+
+	test("a LoRA is added once the person agrees to its size and license", async () => {
+		const t = await terminal({ typed: ["y"], fetch: hub });
+		expect(await t.run("install", ["hf:someone/style"])).toBe(EXIT.ok);
+		expect(t.err[0]).toContain(
+			"ink.safetensors from someone/style is a LoRA for SDXL",
+		);
+		expect(t.err[0]).toContain("License: mit");
+		expect(t.prompts).toEqual(["Download it? [y/N] "]);
+		expect(t.err.at(-1)).toContain("<lora:ink:1>");
+		await t.run("loras", ["--json"]);
+		expect(t.json()).toMatchObject([{ id: "ink", base: "sdxl" }]);
+	});
+
+	test("nothing is downloaded without a yes", async () => {
+		const no = await terminal({ typed: ["n"], fetch: hub });
+		expect(await no.run("install", ["hf:someone/style"])).toBe(EXIT.ok);
+		expect(no.err.at(-1)).toBe("Nothing was downloaded.");
+		// A script must say --yes.
+		const script = await terminal({ fetch: hub });
+		await expect(script.run("install", ["hf:someone/style"])).rejects.toThrow(
+			"Add --yes",
+		);
+		expect(await script.run("install", ["hf:someone/style", "--yes"])).toBe(
+			EXIT.ok,
+		);
+		await script.run("loras", ["--json"]);
+		expect(script.json()).toHaveLength(1);
+	});
+
+	test("a model the catalog has is installed from the catalog", async () => {
+		const t = await terminal({
+			localModels: [
+				{ ...TINY, homepage: "https://huggingface.co/example/tiny" },
+			],
+			fetch: hub,
+		});
+		expect(await t.run("install", ["hf:Example/Tiny"])).toBe(EXIT.ok);
+		expect(t.err.at(-1)).toContain("-m local/tiny");
+	});
+
+	test("what is not supported says why, and a wrong name is refused", async () => {
+		const t = await terminal({ fetch: hub });
+		expect(await t.run("install", ["hf:someone/nothing"])).toBe(EXIT.failed);
+		expect(t.err.join()).toContain(
+			"cannot be opened in Hatchlight yet. There is no such repository",
+		);
+		expect(t.err.join()).toContain("https://huggingface.co/someone/nothing");
+		await expect(t.run("install", ["hf:../etc"])).rejects.toThrow(
+			"Not a Hugging Face repository",
+		);
+		await expect(
+			t.run("install", ["hf:someone/style", "--variant", "q8"]),
+		).rejects.toThrow("--variant and --cancel are for models in the catalog");
 	});
 });
 

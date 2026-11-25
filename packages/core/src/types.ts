@@ -876,6 +876,14 @@ export type LocalModelEvent =
 			receivedBytes: number;
 			size: number;
 			bytesPerSecond: number;
+	  }
+	/** A file from Hugging Face is being downloaded into the models. */
+	| {
+			type: "hub.progress";
+			repo: string;
+			file: string;
+			receivedBytes: number;
+			size: number;
 	  };
 
 /**

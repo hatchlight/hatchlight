@@ -90,6 +90,10 @@ export interface TerminalOptions {
 	typed?: string[];
 	/** What is piped into the command. */
 	piped?: string;
+	/** The catalog, in place of the one tiny model. */
+	localModels?: LocalModelSpec[];
+	/** Answers for addresses the fake downloads do not know, such as Hugging Face's. */
+	fetch?: (url: string, init?: RequestInit) => Promise<Response | null>;
 }
 
 /** A person at a terminal, using a real Hatchlight whose models are fakes. */
@@ -99,7 +103,7 @@ export async function terminal(options: TerminalOptions = {}) {
 	const runtime = await createRuntime({
 		dataDir: join(dir, "data"),
 		providers: [provider],
-		localModels: [TINY],
+		localModels: options.localModels ?? [TINY],
 		engines: ENGINES,
 		hardware: async () => ({
 			os: "linux",
@@ -110,7 +114,8 @@ export async function terminal(options: TerminalOptions = {}) {
 		}),
 		// The test engine is not a real program.
 		checkEngine: async () => null,
-		fetch: async (url: string) =>
+		fetch: async (url: string, init?: RequestInit) =>
+			(await options.fetch?.(url, init)) ??
 			new Response(url.endsWith(".zip") ? ENGINE : WEIGHTS),
 		...(options.assistantModel && { assistantModel: options.assistantModel }),
 	});

@@ -8,6 +8,7 @@
 		"./types": "./src/types.ts",
 		"./testing": "./src/local/testing.ts",
 		"./errors": "./src/errors.ts",
+		"./hugging-face": "./src/hugging-face.ts",
 		"./legacy": "./src/legacy.ts"
 	},
 	"scripts": {

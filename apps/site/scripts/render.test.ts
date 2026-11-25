@@ -3,13 +3,15 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { checkCatalog } from "@hatchlight/i18n";
 import { LANGUAGES } from "../src/languages";
-import { PAGES } from "../src/pages";
+import { PAGES, type SitePage } from "../src/pages";
 import { loadCatalog, renderPage, robots, sitemap } from "./render";
 
 const ROOT = join(import.meta.dir, "..");
 const template = await readFile(join(ROOT, "src", "page.html"), "utf8");
 const comparison = await readFile(join(ROOT, "src", "compare.html"), "utf8");
-const COMPARISONS = PAGES.filter((page) => page.path);
+const opener = await readFile(join(ROOT, "src", "hf.html"), "utf8");
+const COMPARISONS = PAGES.filter((page) => page.template === "compare.html");
+const HF = PAGES.find((page) => page.template === "hf.html") as SitePage;
 const script = await readFile(join(ROOT, "src", "main.ts"), "utf8");
 const en = await loadCatalog("en");
 
@@ -79,6 +81,9 @@ test("every English message is used by the page or its script", () => {
 			[...comparison.matchAll(/\{\{([\w.]+)/g)].map((m) =>
 				m[1]?.replace(/^page\./, `${page.keys}.`),
 			),
+		),
+		...[...opener.matchAll(/\{\{([\w.]+)/g)].map((m) =>
+			m[1]?.replace(/^page\./, `${HF.keys}.`),
 		),
 		...[...script.matchAll(/t\("([\w.]+)"/g)].map((m) => m[1]),
 	]);
@@ -214,5 +219,48 @@ test("the sitemap lists every comparison in every language", () => {
 			expect(xml).toContain(
 				`<loc>https://hatchlight.app/${language.path}${page.path}</loc>`,
 			);
-	expect(xml.match(/<url>/g)).toHaveLength(PAGES.length * LANGUAGES.length);
+	expect(xml.match(/<url>/g)).toHaveLength(
+		PAGES.filter((page) => !page.unlisted).length * LANGUAGES.length,
+	);
+});
+
+test("the page Hugging Face links to renders in every language, unlisted", async () => {
+	expect(HF.path).toBe("hf/");
+	for (const language of LANGUAGES) {
+		const catalog =
+			language.code === "en" ? {} : await loadCatalog(language.code);
+		const html = renderPage(opener, language, en, catalog, HF);
+		expect(html).not.toContain("{{");
+		expect(html).toContain(`<html lang="${language.code}"`);
+		expect(html).toContain('<meta name="robots" content="noindex" />');
+		const up = "../".repeat(
+			`${language.path}${HF.path}`.split("/").filter(Boolean).length,
+		);
+		// Its only script is the site's own, next to the page.
+		expect(
+			[...html.matchAll(/<script[^>]*src="([^"]+)"/g)].map((m) => m[1]),
+		).toEqual([`${up}src/hf.ts`]);
+		expect(html).toContain(
+			'href="https://github.com/hatchlight/hatchlight/releases/latest"',
+		);
+	}
+	const portuguese = renderPage(
+		opener,
+		LANGUAGES[1] as never,
+		en,
+		await loadCatalog("pt-BR"),
+		HF,
+	);
+	expect(portuguese).toContain("Abrindo no Hatchlight");
+	expect(sitemap("https://hatchlight.app/")).not.toContain("/hf/");
+});
+
+test("the page's script writes the repository only as text", async () => {
+	const code = await readFile(join(ROOT, "src", "hf.ts"), "utf8");
+	expect(code).not.toMatch(
+		/innerHTML|outerHTML|insertAdjacentHTML|document\.write/,
+	);
+	expect(code).toContain("hubTarget(");
+	// The only place it sends the browser is Hatchlight's own scheme.
+	expect(code).toContain("const link = `hatchlight://hf/${target.repo}");
 });

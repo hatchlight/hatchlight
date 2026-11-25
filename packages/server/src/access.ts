@@ -103,6 +103,9 @@ export const ROUTE_ACCESS: Readonly<Record<string, Access>> = {
 	"POST /api/checkpoints": "admin",
 	"PATCH /api/checkpoints/:id": "admin",
 	"DELETE /api/checkpoints/:id": "admin",
+	// Looking a repository up and downloading from it, for what it installs.
+	"GET /api/hugging-face": "admin",
+	"POST /api/hugging-face/downloads": "admin",
 	// Other apps' folders on the machine: where to look is the admins' call.
 	"GET /api/model-folders/suggestions": "admin",
 	"POST /api/model-folders": "admin",
@@ -290,6 +293,8 @@ export const DEMO_ACCESS: Readonly<Record<string, DemoAccess>> = {
 	"POST /api/checkpoints": "refused",
 	"PATCH /api/checkpoints/:id": "refused",
 	"DELETE /api/checkpoints/:id": "refused",
+	"GET /api/hugging-face": "refused",
+	"POST /api/hugging-face/downloads": "refused",
 
 	// Training and captions hold the GPU for long.
 	"GET /api/trainer": "refused",
