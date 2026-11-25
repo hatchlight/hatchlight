@@ -466,7 +466,7 @@
 	"hub.download": "Download {size}",
 	"hub.downloading": "{received} of {size}",
 	"hub.file": "File",
-	"hub.from": "A link asked Hatchlight to open a model from huggingface.co.",
+	"hub.from": "A link asked Hatchlight to open a model from huggingface.co. Hatchlight reads the repository's details there first; nothing is downloaded until you say so.",
 	"hub.invalid": "This link does not name a Hugging Face repository Hatchlight can open.",
 	"hub.kind": "What it is",
 	"hub.license": "License",

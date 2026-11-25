@@ -3,7 +3,7 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HubTarget } from "../hugging-face";
-import type { LocalModelEvent, LocalModelSpec } from "../types";
+import type { HubAdded, LocalModelEvent, LocalModelSpec } from "../types";
 import { catalogModelFor, hubFetch, plain, resolveHub } from "./hub";
 import { LocalModelStore } from "./store";
 import { safetensors } from "./testing";
@@ -391,13 +391,17 @@ describe("asking Hugging Face", () => {
 });
 
 describe("adding a file from Hugging Face", () => {
-	async function store(repos: Record<string, FakeRepo>) {
+	type Fetch = (url: string, init?: RequestInit) => Promise<Response>;
+	async function store(
+		repos: Record<string, FakeRepo>,
+		wrap: (fetch: Fetch) => Fetch = (fetch) => fetch,
+	) {
 		const hub = fakeHub(repos);
 		const models = new LocalModelStore({
 			root: await scratch(),
 			catalog: [],
 			engines: [],
-			fetch: hub.fetch,
+			fetch: wrap(hub.fetch),
 			hardware: async () => ({
 				os: "linux",
 				arch: "x64",
@@ -411,7 +415,39 @@ describe("adding a file from Hugging Face", () => {
 		return { models, events, hub };
 	}
 
-	test("a checkpoint and a LoRA go to their shelves, with progress", async () => {
+	/** Starts a download and waits for it to end, as a person would. */
+	async function add(
+		models: LocalModelStore,
+		where: HubTarget,
+		revision = SHA,
+	) {
+		const download = await models.startFromHub(where, revision);
+		return download.done;
+	}
+
+	/** A file server that sends a first piece, then waits until stopped. */
+	const stalling =
+		(fetch: Fetch): Fetch =>
+		async (url, init) => {
+			// Like fetch, a stopped request is not sent.
+			init?.signal?.throwIfAborted();
+			const full = !new Headers(init?.headers).get("range");
+			if (!full || !url.startsWith("https://cas-bridge.xethub.hf.co/")) {
+				return fetch(url, init);
+			}
+			return new Response(
+				new ReadableStream({
+					start(controller) {
+						controller.enqueue(new Uint8Array(16));
+						init?.signal?.addEventListener("abort", () =>
+							controller.error(new DOMException("Stopped", "AbortError")),
+						);
+					},
+				}),
+			);
+		};
+
+	test("a checkpoint and a LoRA go to their shelves, with progress and an end", async () => {
 		const { models, events } = await store({
 			"someone/checkpoint": {
 				files: { "juggernaut.safetensors": safetensors(SDXL) },
@@ -420,9 +456,9 @@ describe("adding a file from Hugging Face", () => {
 				files: { "style.safetensors": safetensors(SDXL_LORA) },
 			},
 		});
-		const added = await models.addFromHub(
+		const added = await add(
+			models,
 			target("someone/checkpoint", "juggernaut.safetensors"),
-			SHA,
 		);
 		expect(added).toMatchObject({
 			kind: "checkpoint",
@@ -438,11 +474,68 @@ describe("adding a file from Hugging Face", () => {
 			receivedBytes: 0,
 			size: safetensors(SDXL).byteLength,
 		});
-		const lora = await models.addFromHub(
-			target("someone/lora", "style.safetensors"),
-			SHA,
-		);
+		expect(events).toContainEqual({
+			type: "hub.done",
+			repo: "someone/checkpoint",
+			file: "juggernaut.safetensors",
+			added: added as HubAdded,
+		});
+		const lora = await add(models, target("someone/lora", "style.safetensors"));
 		expect(lora).toMatchObject({ kind: "lora", item: { id: "style" } });
+	});
+
+	test("the start answers before the file is downloaded", async () => {
+		const { models, events } = await store(
+			{
+				"someone/checkpoint": {
+					files: { "juggernaut.safetensors": safetensors(SDXL) },
+				},
+			},
+			stalling,
+		);
+		const where = target("someone/checkpoint", "juggernaut.safetensors");
+		const download = await models.startFromHub(where, SHA);
+		expect(download).toMatchObject({
+			repo: "someone/checkpoint",
+			file: "juggernaut.safetensors",
+		});
+		// The same file again, while it downloads, is refused.
+		await expect(models.startFromHub(where, SHA)).rejects.toMatchObject({
+			code: "hubBusy",
+		});
+		await models.cancelFromHub("someone/checkpoint", "JUGGERNAUT.safetensors");
+		expect(await download.done).toBeNull();
+		expect(events.at(-1)).toEqual({
+			type: "hub.canceled",
+			repo: "someone/checkpoint",
+			file: "juggernaut.safetensors",
+		});
+		expect(await models.checkpoints.list()).toEqual([]);
+		// Once stopped, it may start again.
+		const again = await models.startFromHub(where, SHA);
+		await models.cancelFromHub(again.repo, again.file);
+		// Stopping what is not downloading does nothing.
+		await models.cancelFromHub("someone/checkpoint", "other.safetensors");
+	});
+	test("a download that stops sending is given up, and frees its place", async () => {
+		const { models, events } = await store(
+			{
+				"someone/checkpoint": {
+					files: { "juggernaut.safetensors": safetensors(SDXL) },
+				},
+			},
+			stalling,
+		);
+		(models as unknown as { hubStallMs: number }).hubStallMs = 20;
+		const where = target("someone/checkpoint", "juggernaut.safetensors");
+		expect(await add(models, where)).toBeNull();
+		expect(events.at(-1)).toMatchObject({
+			type: "hub.failed",
+			code: "downloadCutShort",
+		});
+		expect(await models.checkpoints.list()).toEqual([]);
+		const again = await models.startFromHub(where, SHA);
+		await models.cancelFromHub(again.repo, again.file);
 	});
 
 	test("a file larger than the free disk space is refused before downloading", async () => {
@@ -455,7 +548,7 @@ describe("adding a file from Hugging Face", () => {
 		(models as unknown as { freeBytes: () => Promise<number> }).freeBytes =
 			async () => 0;
 		await expect(
-			models.addFromHub(
+			models.startFromHub(
 				target("someone/checkpoint", "juggernaut.safetensors"),
 				SHA,
 			),
@@ -463,16 +556,22 @@ describe("adding a file from Hugging Face", () => {
 		expect(await models.checkpoints.list()).toEqual([]);
 	});
 
-	test("a file that does not match its hash is not kept", async () => {
-		const { models } = await store({
+	test("a file that does not match its hash is not kept, and says why", async () => {
+		const { models, events } = await store({
 			"someone/lora": {
 				files: { "style.safetensors": safetensors(SDXL_LORA) },
 				hashes: { "style.safetensors": "0".repeat(64) },
 			},
 		});
-		await expect(
-			models.addFromHub(target("someone/lora", "style.safetensors"), SHA),
-		).rejects.toMatchObject({ code: "hashMismatch" });
+		expect(
+			await add(models, target("someone/lora", "style.safetensors")),
+		).toBeNull();
+		expect(events.at(-1)).toMatchObject({
+			type: "hub.failed",
+			repo: "someone/lora",
+			file: "style.safetensors",
+			code: "hashMismatch",
+		});
 		expect(await models.loras.list()).toEqual([]);
 		const left = await readdir(join(models.loras.path("x"), "..")).catch(
 			() => [],
@@ -485,17 +584,23 @@ describe("adding a file from Hugging Face", () => {
 			"a/b": { files: { "vae.safetensors": safetensors(PART) } },
 		});
 		await expect(
-			models.addFromHub(target("a/b", "vae.safetensors"), SHA),
+			models.startFromHub(target("a/b", "vae.safetensors"), SHA),
 		).rejects.toMatchObject({
 			code: "hubUnsupported",
 			params: { reason: "unknownFile" },
 		});
 		await expect(
-			models.addFromHub(target("a/b", "vae.safetensors"), "main"),
+			models.startFromHub(target("a/b", "vae.safetensors"), "main"),
 		).rejects.toMatchObject({ code: "hubInvalid" });
-		await expect(models.addFromHub(target("a/b"), SHA)).rejects.toMatchObject({
-			code: "hubInvalid",
-		});
+		await expect(models.startFromHub(target("a/b"), SHA)).rejects.toMatchObject(
+			{
+				code: "hubInvalid",
+			},
+		);
+		// A refused file is not left counted as downloading.
+		await expect(
+			models.startFromHub(target("a/b", "vae.safetensors"), SHA),
+		).rejects.toMatchObject({ code: "hubUnsupported" });
 	});
 });
 

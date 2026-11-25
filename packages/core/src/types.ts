@@ -1106,7 +1106,25 @@ export type LocalModelEvent =
 			file: string;
 			receivedBytes: number;
 			size: number;
-	  };
+	  }
+	/** A file from Hugging Face was added to the checkpoints or LoRAs. */
+	| { type: "hub.done"; repo: string; file: string; added: HubAdded }
+	/** A download from Hugging Face failed; nothing of it was kept. */
+	| {
+			type: "hub.failed";
+			repo: string;
+			file: string;
+			message: string;
+			code: string | null;
+			params: ErrorParams | null;
+	  }
+	/** A download from Hugging Face was stopped; nothing of it was kept. */
+	| { type: "hub.canceled"; repo: string; file: string };
+
+/** What a file downloaded from Hugging Face became. */
+export type HubAdded =
+	| { kind: "checkpoint"; item: CheckpointInfo }
+	| { kind: "lora"; item: LoraInfo };
 
 /**
  * What puts prompts into English for the models that read only English: the

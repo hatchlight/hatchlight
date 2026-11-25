@@ -1468,7 +1468,8 @@ export function createApp(options: AppOptions): Hono {
 		return c.body(null, 204);
 	});
 	// Models opened from Hugging Face: what one is, then adding it once the
-	// person confirmed. The download stops if they go away.
+	// person confirmed. The download goes on after the answer, as a job:
+	// proxies cut requests that last as long as a big file takes.
 	app.get("/api/hugging-face", async (c) => {
 		const target = hubTarget(c.req.query("repo"), c.req.query("file"));
 		if (!target) {
@@ -1488,10 +1489,37 @@ export function createApp(options: AppOptions): Hono {
 				"hubInvalid",
 			);
 		}
-		return c.json(
-			await models.addFromHub(target, body.revision, c.req.raw.signal),
-			201,
-		);
+		const download = await models.startFromHub(target, body.revision);
+		// A LoRA added here counts as an upload by whoever asked for it.
+		const uploader = accounts ? c.get("viewer").user : null;
+		if (uploader) {
+			void download.done
+				.then((added) => {
+					if (added?.kind === "lora") {
+						accounts?.recordLoraUpload(
+							uploader.id,
+							added.item.id,
+							added.item.size,
+						);
+					}
+				})
+				.catch((error) =>
+					console.error("Could not record a LoRA from Hugging Face:", error),
+				);
+		}
+		return c.json({ repo: download.repo, file: download.file }, 202);
+	});
+	app.post("/api/hugging-face/downloads/cancel", async (c) => {
+		const body = await json(c);
+		const target = hubTarget(body.repo, body.file);
+		if (!target?.file) {
+			throw new ValidationError(
+				"Name a repository and a file in it",
+				"hubInvalid",
+			);
+		}
+		await models.cancelFromHub(target.repo, target.file);
+		return c.body(null, 204);
 	});
 	// Other apps' folders, whose models are used where they are. Machine-wide
 	// like the models: on a server, the paths are the server's.
@@ -1850,13 +1878,17 @@ export function createApp(options: AppOptions): Hono {
 			const unsubscribeJobs = engine.subscribe((target, event) => {
 				if (target === userId) send(event);
 			});
+			// Who sees the server's paths, the admins: they also download from
+			// Hugging Face, whose errors may name those paths.
 			const folders = seesFolders(c);
 			const unsubscribeModels = models.subscribe((event) =>
-				send(
-					event.type === "models.moving" && !folders
-						? { ...event, to: "" }
-						: event,
-				),
+				event.type.startsWith("hub.") && !folders
+					? undefined
+					: send(
+							event.type === "models.moving" && !folders
+								? { ...event, to: "" }
+								: event,
+						),
 			);
 			const unsubscribeTrainer = options.trainer?.subscribe((event) => {
 				const trainer = forViewer(c, event.trainer);

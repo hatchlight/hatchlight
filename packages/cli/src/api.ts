@@ -87,20 +87,21 @@ export class Api extends HatchlightClient {
 				...(target.file && { file: target.file }),
 			})}`,
 		);
-	/** Downloads a file found on Hugging Face; stopping `signal` stops it. */
-	addFromHub = (file: HubFile, signal?: AbortSignal) =>
-		this.request<
-			| { kind: "checkpoint"; item: CheckpointInfo }
-			| { kind: "lora"; item: LoraInfo }
-		>("/api/hugging-face/downloads", {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({
-				repo: file.repo,
-				file: file.file,
-				revision: file.revision,
-			}),
-			signal,
+	/**
+	 * Starts downloading a file found on Hugging Face. It goes on in the
+	 * background: how it ends comes as a `hub.done`, `hub.failed` or
+	 * `hub.canceled` event.
+	 */
+	startFromHub = (file: HubFile) =>
+		this.send<{ repo: string; file: string }>(
+			"POST",
+			"/api/hugging-face/downloads",
+			{ repo: file.repo, file: file.file, revision: file.revision },
+		);
+	cancelFromHub = (file: Pick<HubFile, "repo" | "file">) =>
+		this.send("POST", "/api/hugging-face/downloads/cancel", {
+			repo: file.repo,
+			file: file.file,
 		});
 
 	modelFolders = () => this.request<ModelFolder[]>("/api/model-folders");

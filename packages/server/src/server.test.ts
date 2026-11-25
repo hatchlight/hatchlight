@@ -2580,3 +2580,78 @@ test("each person's language models are their own; installing them is the admins
 	expect(await captioned(owner)).toBe("captioned by eyes-b");
 	expect(await captioned(member)).toBe("captioned by eyes-a");
 });
+
+test("a LoRA from Hugging Face downloads after the answer, and counts as its asker's", async () => {
+	const SHA = "a".repeat(40);
+	const lora = safetensors(["lora_unet_input_blocks_4_1_proj_in.alpha"], {
+		"modelspec.title": "Porcelain",
+	});
+	const hash = new Bun.CryptoHasher("sha256").update(lora).digest("hex");
+	// Hugging Face, with one LoRA: its details, and its bytes by range.
+	const fetch = async (url: string, init?: RequestInit) => {
+		const { pathname } = new URL(url);
+		if (pathname === `/api/models/someone/style/revision/${SHA}`) {
+			return Response.json({
+				sha: SHA,
+				gated: false,
+				siblings: [
+					{
+						rfilename: "style.safetensors",
+						size: lora.byteLength,
+						lfs: { sha256: hash, size: lora.byteLength },
+					},
+				],
+			});
+		}
+		if (pathname === `/someone/style/resolve/${SHA}/style.safetensors`) {
+			const range = new Headers(init?.headers)
+				.get("range")
+				?.match(/^bytes=(\d+)-(\d+)$/);
+			if (!range) return new Response(lora);
+			return new Response(lora.slice(Number(range[1]), Number(range[2]) + 1), {
+				status: 206,
+			});
+		}
+		return new Response("not here", { status: 404 });
+	};
+	const { call, setupOwner, runtime, userId } = await serverApp({ fetch });
+	const owner = await setupOwner();
+	const started = await call("/api/hugging-face/downloads", {
+		method: "POST",
+		who: owner,
+		body: { repo: "someone/style", file: "style.safetensors", revision: SHA },
+	});
+	expect(started.status).toBe(202);
+	expect(await started.json()).toEqual({
+		repo: "someone/style",
+		file: "style.safetensors",
+	});
+	const ids = async () => (await runtime.models.loras.list()).map((l) => l.id);
+	for (let i = 0; i < 100 && (await ids()).length === 0; i++) {
+		await Bun.sleep(10);
+	}
+	expect(await ids()).toEqual(["porcelain"]);
+	// Recorded once the download ended, like an upload.
+	for (let i = 0; i < 100; i++) {
+		if (
+			runtime.accounts.loraUsage(userId("owner"), new Set(await ids()))
+				.files === 1
+		)
+			break;
+		await Bun.sleep(10);
+	}
+	expect(
+		runtime.accounts.loraUsage(userId("owner"), new Set(await ids())),
+	).toEqual({ files: 1, bytes: lora.byteLength });
+	// Stopping what is not downloading is fine; a request without a file is not.
+	const stop = (body: Record<string, string>) =>
+		call("/api/hugging-face/downloads/cancel", {
+			method: "POST",
+			who: owner,
+			body,
+		});
+	expect(
+		(await stop({ repo: "someone/style", file: "style.safetensors" })).status,
+	).toBe(204);
+	expect((await stop({ repo: "someone/style" })).status).toBe(400);
+});

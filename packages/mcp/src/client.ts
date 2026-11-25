@@ -143,8 +143,14 @@ export class HatchlightClient implements Reel {
 	retryJob = (id: string) =>
 		this.post(`/api/jobs/${encodeURIComponent(id)}/retry`);
 
-	/** How jobs move, as the server tells it, until `signal` stops it. */
-	async *events(signal: AbortSignal): AsyncGenerator<ServerEvent> {
+	/**
+	 * How jobs move, as the server tells it, until `signal` stops it.
+	 * `onReady` is called once the server listens: nothing after it is missed.
+	 */
+	async *events(
+		signal: AbortSignal,
+		onReady?: () => void,
+	): AsyncGenerator<ServerEvent> {
 		const response = await this.fetch(`${this.baseUrl}/api/events`, {
 			signal,
 		});
@@ -161,6 +167,7 @@ export class HatchlightClient implements Reel {
 					if (end < 0) break;
 					const block = buffer.slice(0, end);
 					buffer = buffer.slice(end + 2);
+					if (block.split("\n").includes("event: ready")) onReady?.();
 					const data = block
 						.split("\n")
 						.filter((line) => line.startsWith("data:"))

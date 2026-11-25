@@ -4,7 +4,7 @@ import {
 	type HubUnsupported,
 	hubRepoUrl,
 } from "@hatchlight/core/hugging-face";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { ExternalLinkIcon } from "lucide-react";
 import { type ReactNode, useEffect, useRef } from "react";
 import { toast } from "sonner";
@@ -21,7 +21,7 @@ import { useCan } from "./Accounts";
 import { api } from "./api";
 import { type I18n, useI18n } from "./i18n";
 import { baseText } from "./Loras";
-import { useHubProgress } from "./live";
+import { forgetHubDownload, useHubEnd, useHubProgress } from "./live";
 import { href, redirect } from "./route";
 import { Bar } from "./Training";
 
@@ -117,8 +117,6 @@ function Downloading({ file }: { file: HubFile }) {
 export function HubOpen({ target }: { target: HubTarget | null }) {
 	const { t, bytes, explain } = useI18n();
 	const can = useCan();
-	const client = useQueryClient();
-	const stop = useRef<AbortController | null>(null);
 	const choice = useQuery({
 		queryKey: ["hub", target?.repo, target?.file],
 		queryFn: ({ signal }) => api.openFromHub(target as HubTarget, signal),
@@ -126,33 +124,48 @@ export function HubOpen({ target }: { target: HubTarget | null }) {
 		retry: false,
 		staleTime: 60_000,
 	});
-	const add = useMutation({
+	const found = choice.data;
+	const file =
+		found?.kind === "checkpoint" || found?.kind === "lora" ? found : null;
+	// The download goes on in the background; its end comes as an event.
+	// The start under way: stopping waits for it, else it would stop nothing.
+	const starting = useRef<Promise<unknown> | null>(null);
+	const start = useMutation({
 		mutationFn: (file: HubFile) => {
-			stop.current = new AbortController();
-			return api.addFromHub(file, stop.current.signal);
-		},
-		onSuccess: (added) => {
-			void client.invalidateQueries({
-				queryKey: [added.kind === "checkpoint" ? "checkpoints" : "loras"],
-			});
-			toast.success(t("hub.added", { name: added.item.name }));
-			redirect(href.models);
+			forgetHubDownload(file.repo, file.file);
+			const started = api.startFromHub(file);
+			starting.current = started;
+			return started;
 		},
 	});
-	const found = choice.data;
+	const end = useHubEnd(file?.repo ?? "", file?.file ?? "");
+	const started = start.isSuccess;
+	const ended = started ? end : undefined;
+	const downloading = start.isPending || (started && !ended);
 
 	// A model the catalog has: its card, with the variant that fits.
 	useEffect(() => {
 		if (found?.kind === "catalog") redirect(href.model(found.modelId));
 	}, [found]);
 
+	useEffect(() => {
+		if (ended?.type !== "hub.done") return;
+		toast.success(t("hub.added", { name: ended.added.item.name }));
+		redirect(href.models);
+	}, [ended, t]);
+
 	const close = () => {
-		stop.current?.abort();
+		if (file && downloading) {
+			void (starting.current ?? Promise.resolve()).then(
+				() => api.cancelFromHub(file).catch(() => {}),
+				// It did not start: there is nothing to stop.
+				() => {},
+			);
+		}
 		redirect(href.models);
 	};
-	const file =
-		found?.kind === "checkpoint" || found?.kind === "lora" ? found : null;
-	const stopped = add.error && stop.current?.signal.aborted;
+	const failure =
+		start.error ?? (ended?.type === "hub.failed" ? ended : undefined);
 
 	let body: ReactNode;
 	if (!target) {
@@ -187,10 +200,8 @@ export function HubOpen({ target }: { target: HubTarget | null }) {
 				<p>
 					<RepoLink repo={found.repo} />
 				</p>
-				{add.isPending && <Downloading file={found} />}
-				{add.error && !stopped && (
-					<p className="text-danger">{explain(add.error)}</p>
-				)}
+				{downloading && <Downloading file={found} />}
+				{failure && <p className="text-danger">{explain(failure)}</p>}
 			</div>
 		);
 	}
@@ -211,13 +222,13 @@ export function HubOpen({ target }: { target: HubTarget | null }) {
 				<div className="text-sm leading-relaxed">{body}</div>
 				<DialogFooter>
 					<Button variant="outline" onClick={close}>
-						{add.isPending ? t("hub.stop") : t("common.cancel")}
+						{downloading ? t("hub.stop") : t("common.cancel")}
 					</Button>
 					{file && (
 						<Button
 							variant="aurora"
-							onClick={() => add.mutate(file)}
-							disabled={add.isPending}
+							onClick={() => start.mutate(file)}
+							disabled={downloading || ended?.type === "hub.done"}
 						>
 							{t("hub.download", { size: bytes(file.size) })}
 						</Button>
