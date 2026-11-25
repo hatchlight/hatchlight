@@ -15,6 +15,7 @@
   <a href="https://github.com/hatchlight/hatchlight/actions/workflows/ci.yml"><img src="https://github.com/hatchlight/hatchlight/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/hatchlight/hatchlight"><img src="https://api.scorecard.dev/projects/github.com/hatchlight/hatchlight/badge" alt="OpenSSF Scorecard"></a>
   <a href="https://www.bestpractices.dev/projects/16935"><img src="https://www.bestpractices.dev/projects/16935/badge" alt="OpenSSF Best Practices"></a>
+  <a href="https://www.npmjs.com/package/hatchlight"><img src="https://img.shields.io/npm/v/hatchlight" alt="hatchlight on npm"></a>
   <a href="https://glama.ai/mcp/servers/hatchlight/hatchlight"><img src="https://glama.ai/mcp/servers/hatchlight/hatchlight/badges/score.svg" alt="Hatchlight MCP server on Glama"></a>
 </p>
 
@@ -190,7 +191,15 @@ your shell; its `--help` says where to put it.
 or Claude Desktop, make pictures and videos with your models: list them,
 generate and compare, redraw a picture, upscale it, and search and save from
 your gallery. In the app, **Settings → Use with AI agents** connects Claude
-Desktop for you and shows the command for Claude Code. From a source checkout:
+Desktop for you and shows the command for Claude Code. Without the app, the
+[npm package](https://www.npmjs.com/package/hatchlight) runs on
+[Bun](https://bun.sh):
+
+```sh
+claude mcp add hatchlight -- bunx hatchlight mcp
+```
+
+From a source checkout:
 
 ```sh
 claude mcp add hatchlight -- bun "$PWD/packages/cli/src/index.ts" mcp
