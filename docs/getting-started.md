@@ -32,6 +32,9 @@ time:
   Applications, run `xattr -cr /Applications/Hatchlight.app` in Terminal, and
   open it again.
 
+Signing the Windows installers is being set up; the
+[code signing policy](../CODE_SIGNING_POLICY.md) says how it will work.
+
 Hatchlight needs no account. Check [Where it runs](../README.md#where-it-runs)
 to see whether models can run on your computer; if they cannot, cloud models
 still work.
