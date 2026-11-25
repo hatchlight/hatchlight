@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
 	type ChatModel,
 	FakeProvider,
+	type Judge,
 	type LocalEngineSpec,
 	type LocalModelSpec,
 } from "@hatchlight/core";
@@ -86,6 +87,8 @@ export interface TerminalOptions {
 	startedServer?: boolean;
 	/** What the assistant says, in place of a language model. */
 	assistantModel?: ChatModel;
+	/** What compares characters, in place of a model that sees. */
+	judge?: Judge;
 	/** A person typing these lines, in order; unset, a script runs it. */
 	typed?: string[];
 	/** What is piped into the command. */
@@ -118,6 +121,7 @@ export async function terminal(options: TerminalOptions = {}) {
 			(await options.fetch?.(url, init)) ??
 			new Response(url.endsWith(".zip") ? ENGINE : WEIGHTS),
 		...(options.assistantModel && { assistantModel: options.assistantModel }),
+		...(options.judge && { judge: options.judge }),
 	});
 	await runtime.start();
 	const app = createApp(runtime);

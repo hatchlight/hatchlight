@@ -14,9 +14,11 @@ import {
 	appHomes,
 	assistantChoice,
 	type Captioner,
+	ChatJudge,
 	type ChatMessage,
 	type ChatModel,
 	type ChatReply,
+	type CompareOptions,
 	DEFAULT_PAID_ESTIMATE_USD,
 	FakeProvider,
 	FileKeyStore,
@@ -27,6 +29,7 @@ import {
 	improvePrompt,
 	installPlaces,
 	JobEngine,
+	type Judge,
 	type KeySource,
 	keysSecret,
 	type LanguageModel,
@@ -60,8 +63,13 @@ import {
 	type UnreadableKeys,
 	type UserContext,
 	ValidationError,
+	verdictOf,
 	writerChoice,
 } from "@hatchlight/core";
+import type {
+	ConsistencyCheck,
+	ConsistencyResult,
+} from "@hatchlight/core/types";
 import {
 	builtinEngines,
 	builtinLocalModels,
@@ -70,7 +78,7 @@ import {
 	CloudTranslator,
 	type CloudTranslatorId,
 } from "@hatchlight/providers";
-import { Assistant, type Reel } from "@hatchlight/tools";
+import { Assistant, type Reel, shrinkPicture } from "@hatchlight/tools";
 import { deviceKey } from "./devices";
 
 export interface Runtime {
@@ -111,6 +119,15 @@ export interface Runtime {
 		request: ImproveRequest,
 		signal: AbortSignal,
 	): Promise<string>;
+	/**
+	 * Whether a picture shows the same character as pictures of it, by a
+	 * model that sees: the one on this computer, else the person's cloud one.
+	 */
+	checkConsistency(
+		ctx: UserContext,
+		check: ConsistencyCheck,
+		signal: AbortSignal,
+	): Promise<ConsistencyResult>;
 	/** Starts moving the local models to another folder. */
 	moveModels(path: string): Promise<void>;
 	/** The anonymous visitors of a public demo. */
@@ -149,6 +166,7 @@ export function localReel(
 	service: ReelService,
 	ctx: UserContext,
 	settings?: SettingsStore,
+	checkConsistency?: Runtime["checkConsistency"],
 ): Reel {
 	return {
 		models: async () => service.listModels(),
@@ -168,6 +186,10 @@ export function localReel(
 		sessionUrl: (id) => `#/s/${encodeURIComponent(id)}`,
 		ranking: (query) => service.ranking(ctx, query),
 		...(settings && { settings: () => settings.get(ctx) }),
+		...(checkConsistency && {
+			checkConsistency: (check, signal) =>
+				checkConsistency(ctx, check, signal ?? new AbortController().signal),
+		}),
 	};
 }
 
@@ -198,7 +220,71 @@ class FakeChatModel implements ChatModel {
 				],
 			};
 		}
-		return { text: "Done: here it is. (A fake assistant.)", toolCalls: [] };
+		// Once a session has an earlier picture, the new one is checked
+		// against the first, to show the character check.
+		const ids = messages.flatMap((m) =>
+			m.role === "tool" && m.name === "generate"
+				? m.content.flatMap((p) =>
+						p.type === "text" ? (p.text.match(/ast_[A-Za-z0-9]+/g) ?? []) : [],
+					)
+				: [],
+		);
+		const first = ids[0];
+		const newest = ids.at(-1);
+		if (
+			last?.role === "tool" &&
+			last.name === "generate" &&
+			first &&
+			newest &&
+			first !== newest
+		) {
+			return {
+				text: "",
+				toolCalls: [
+					{
+						id: `call_${messages.length}`,
+						name: "check_consistency",
+						arguments: { image: newest, like: [first] },
+					},
+				],
+			};
+		}
+		const checked =
+			last?.role === "tool" && last.name === "check_consistency"
+				? ` ${last.content.map((p) => (p.type === "text" ? p.text : "")).join(" ")}`
+				: "";
+		return {
+			text: `Done: here it is.${checked} (A fake assistant.)`,
+			toolCalls: [],
+		};
+	}
+}
+
+/**
+ * Stands in for the model that compares characters when trying the app:
+ * a score that depends on the pictures, and the same differences each time.
+ */
+class FakeJudge implements Judge {
+	async compare(
+		references: { data: string }[],
+		candidate: { data: string },
+	): Promise<ConsistencyResult> {
+		await Bun.sleep(800);
+		const hash = new Bun.CryptoHasher("sha256")
+			.update(references.map((r) => r.data).join() + candidate.data)
+			.digest();
+		const score = 50 + ((hash[0] ?? 0) % 50);
+		return {
+			score,
+			differences:
+				score >= 85
+					? []
+					: ["coat is blue, should be green", "hair is shorter"].slice(
+							0,
+							score >= 70 ? 1 : 2,
+						),
+			verdict: verdictOf(score),
+		};
 	}
 }
 
@@ -208,6 +294,9 @@ class FakeChatModel implements ChatModel {
  * assistant step costs on the larger models.
  */
 export const LANGUAGE_CALL_USD = DEFAULT_PAID_ESTIMATE_USD;
+
+/** The side pictures are made as small as to compare a character. */
+const COMPARED_SIDE = 640;
 
 /** Another Hatchlight process is already using the data directory. */
 export class DataDirInUseError extends Error {}
@@ -525,6 +614,8 @@ export interface RuntimeOptions {
 	migrationsDir?: string;
 	/** What the assistant thinks with, in place of the person's choice. */
 	assistantModel?: ChatModel;
+	/** What compares characters, in place of the installed or cloud model. */
+	judge?: Judge;
 	/** Tries a freshly installed engine. Defaults to running it. */
 	checkEngine?: (executable: string) => Promise<string | null>;
 	/** Where the LoRA trainer is installed. Defaults to `trainer` in the data directory. */
@@ -937,13 +1028,67 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 	const eyes = eyesModel
 		? new LocalEyes({ store: models, model: eyesModel.id })
 		: null;
+	/**
+	 * What compares characters: the model on this computer that sees, for
+	 * free; else the person's cloud brain, which sees too.
+	 */
+	const judgeFor = async (ctx: UserContext): Promise<Judge | null> => {
+		if (options.judge) return options.judge;
+		if (eyes && (await eyes.ready())) return eyes;
+		const brain = await brainFor(ctx);
+		if (brain?.vision) return new ChatJudge(brain);
+		return fake ? new FakeJudge() : null;
+	};
+	const checkConsistency = async (
+		ctx: UserContext,
+		check: ConsistencyCheck,
+		signal: AbortSignal,
+	): Promise<ConsistencyResult> => {
+		// Small JPEG copies: enough to tell a character, and llama.cpp reads no WebP.
+		const seen = async (id: string) => {
+			const { asset, blob } = await service.getAssetFile(ctx, id);
+			if (!asset.mime.startsWith("image/")) {
+				throw new ValidationError(
+					"Only pictures can be compared",
+					"referenceNotImage",
+				);
+			}
+			const small = await shrinkPicture(
+				new Uint8Array(await blob.arrayBuffer()),
+				COMPARED_SIDE,
+			);
+			if (!small) {
+				throw new ValidationError(
+					`The picture ${id} cannot be read`,
+					"referenceUnreadable",
+				);
+			}
+			return small.image;
+		};
+		const references = [];
+		for (const id of check.referenceAssetIds) references.push(await seen(id));
+		const candidate = await seen(check.assetId);
+		// Chosen once the pictures are known to be the person's.
+		const judge = await judgeFor(ctx);
+		if (!judge) {
+			throw new ValidationError(
+				"No model can compare pictures: install Qwen2.5-VL in Models, or add a key for the assistant",
+				"noJudge",
+			);
+		}
+		const compareOptions: CompareOptions = {
+			...(check.traits && { traits: check.traits }),
+			...(check.language && { language: check.language }),
+		};
+		return judge.compare(references, candidate, signal, compareOptions);
+	};
 	const assistant = new Assistant({
 		store: {
 			add: (ctx, entry) => repo.addEntry(entry, ctx.userId),
 			update: (ctx, id, body) => repo.updateEntry(ctx, id, body),
 			list: (ctx, sessionId) => repo.listEntries(ctx, sessionId),
 		},
-		reel: (ctx) => localReel(service, ctx, settings),
+		reel: (ctx) => localReel(service, ctx, settings, checkConsistency),
 		eyes: async () => (eyes && (await eyes.ready()) ? eyes : null),
 		brain: async (ctx) =>
 			options.assistantModel ??
@@ -997,6 +1142,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 				signal,
 			);
 		},
+		checkConsistency,
 		moveModels: (path) => models.relocate(path),
 		visitors,
 		sweepVisitors: async (before) => {

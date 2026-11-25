@@ -14,8 +14,10 @@ import {
 	LOCAL_USER,
 	type LocalModelStore,
 	type LocalModelsView,
+	MAX_CHARACTER_REFERENCES,
 	MAX_CHECKPOINT_BYTES,
 	MAX_LORA_BYTES,
+	MAX_TRAITS_LENGTH,
 	mayUsePaid,
 	NotFoundError,
 	type PaidRefusal,
@@ -54,7 +56,7 @@ import {
 import { DeviceCookies } from "./devices";
 import { MAX_UPLOAD_BYTES, mountImageApi } from "./image-api";
 import { Limiter } from "./limiter";
-import type { AssistantBrain, ImproveRequest } from "./runtime";
+import type { AssistantBrain, ImproveRequest, Runtime } from "./runtime";
 import {
 	addressKey,
 	DEFAULT_LORA_QUOTA,
@@ -139,6 +141,8 @@ export interface AppOptions {
 	assistant?: Assistant;
 	/** What a person's assistant thinks with now. */
 	assistantBrain?: (ctx: UserContext) => Promise<AssistantBrain>;
+	/** Whether a picture shows the same character as pictures of it. */
+	checkConsistency?: Runtime["checkConsistency"];
 	/** A richer prompt for a short idea; absent where no model can write. */
 	improvePrompt?: (
 		ctx: UserContext,
@@ -152,6 +156,8 @@ export interface AppOptions {
  * the answer, it must fit the local language model's context.
  */
 const MAX_IDEA_LENGTH = 1000;
+/** A language code, such as pt-BR. */
+const LANGUAGE = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
 /** More models than any composer offers at once. */
 const MAX_IDEA_MODELS = 50;
 
@@ -176,6 +182,7 @@ const UPSTREAM_CODES = new Set<ErrorCode>([
 	"improveFailed",
 	"localAssistantUnavailable",
 	"noConnection",
+	"noVerdict",
 	"providerBusy",
 ]);
 
@@ -1133,6 +1140,56 @@ export function createApp(options: AppOptions): Hono {
 			c.req.raw.signal,
 		);
 		return c.json({ prompt: improved });
+	});
+	app.post("/api/consistency", async (c) => {
+		if (!options.checkConsistency) throw new NotFoundError("No judge here");
+		const { assetId, referenceAssetIds, traits, language } = await json(c);
+		if (typeof assetId !== "string" || !assetId) {
+			throw new ValidationError("assetId must be a picture id");
+		}
+		if (
+			!Array.isArray(referenceAssetIds) ||
+			referenceAssetIds.length < 1 ||
+			referenceAssetIds.length > MAX_CHARACTER_REFERENCES ||
+			!referenceAssetIds.every((id) => typeof id === "string" && id)
+		) {
+			throw new ValidationError(
+				`referenceAssetIds must be 1 to ${MAX_CHARACTER_REFERENCES} picture ids`,
+			);
+		}
+		if (referenceAssetIds.includes(assetId)) {
+			throw new ValidationError(
+				"The picture to check cannot be one of its references",
+			);
+		}
+		if (
+			traits !== undefined &&
+			(typeof traits !== "string" || traits.length > MAX_TRAITS_LENGTH)
+		) {
+			throw new ValidationError(
+				`traits must be text of at most ${MAX_TRAITS_LENGTH} characters`,
+			);
+		}
+		if (
+			language !== undefined &&
+			(typeof language !== "string" || !LANGUAGE.test(language))
+		) {
+			throw new ValidationError(
+				"language must be a language code such as pt-BR",
+			);
+		}
+		const result = await options.checkConsistency(
+			user(c),
+			{
+				assetId,
+				referenceAssetIds: [...new Set<string>(referenceAssetIds)],
+				...(typeof traits === "string" && traits.trim() && { traits }),
+				...(typeof language === "string" && { language }),
+			},
+			// The person gave up: the model stops too.
+			c.req.raw.signal,
+		);
+		return c.json(result);
 	});
 	app.post("/api/local-models/:id/install", async (c) => {
 		// No body, or one naming the variant to install instead of the best fit.

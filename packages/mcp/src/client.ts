@@ -1,5 +1,7 @@
 import type {
 	Asset,
+	ConsistencyCheck,
+	ConsistencyResult,
 	CreateTurnInput,
 	EngineEvent,
 	GalleryItem,
@@ -114,6 +116,15 @@ export class HatchlightClient implements Reel {
 
 	/** The person's choices, such as hiding model names until a pick. */
 	settings = () => this.request<Settings>("/api/settings");
+
+	/** Whether a picture shows the same character as pictures of it. */
+	checkConsistency = (check: ConsistencyCheck, signal?: AbortSignal) =>
+		this.request<ConsistencyResult>("/api/consistency", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(check),
+			...(signal && { signal }),
+		});
 
 	/** Marks the best result of a turn; null clears it. */
 	pick = (turnId: string, assetId: string | null) =>

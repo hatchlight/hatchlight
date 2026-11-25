@@ -649,6 +649,36 @@ export interface Ranking {
 	minComparisons: number;
 }
 
+/** At most this many pictures show what a character must look like. */
+export const MAX_CHARACTER_REFERENCES = 3;
+/** The longest description of a character's traits a check takes. */
+export const MAX_TRAITS_LENGTH = 500;
+/** From this score up, a picture shows the character well enough. */
+export const CONSISTENT_SCORE = 70;
+
+/** Whether a picture shows the same character as its references. */
+export interface ConsistencyCheck {
+	/** The picture to check. */
+	assetId: string;
+	/** One to three pictures of the character as it must look. */
+	referenceAssetIds: string[];
+	/** What must stay the same, in words, such as "green coat, red scarf". */
+	traits?: string;
+	/** The language to write the differences in, such as "pt-BR". */
+	language?: string;
+}
+
+export const CONSISTENCY_VERDICTS = ["same", "close", "different"] as const;
+export type ConsistencyVerdict = (typeof CONSISTENCY_VERDICTS)[number];
+
+export interface ConsistencyResult {
+	/** 0 to 100: how much the character looks like its references. */
+	score: number;
+	/** What is off, each in a few words: "coat is blue, should be green". */
+	differences: string[];
+	verdict: ConsistencyVerdict;
+}
+
 export type GalleryItem = Asset & {
 	/**
 	 * Made in a comparison of models whose best result is not picked yet:

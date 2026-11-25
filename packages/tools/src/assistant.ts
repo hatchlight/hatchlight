@@ -113,6 +113,7 @@ export function assistantInstructions(language?: string): string {
 		'- To keep the same person or character in a new picture ("the same girl, now sitting"), give a picture of them in reference_images to a model that follows given pictures, and name them in the prompt as "the person in picture 1", then describe the whole new scene.',
 		'- To follow the pose, outlines or depth of a picture ("in this pose", "keep this layout"), give it as guide_image with guide_kind, to a model that follows a guide picture. When the picture already is a skeleton, edge drawing or depth map, set guide_is_map.',
 		"- When several models made the same prompt, say which result fits the request best and why, in a sentence.",
+		"- When the person makes a series with the same character (a comic, a storyboard, a mascot) or asks to keep the character, call check_consistency after each new picture, against the first picture of the character or the one they approved. Below 70, fix it in steps: first restate the missing traits in the prompt; then give the reference in reference_images (and a higher strength where the model has one); then suggest a model that follows references better. Retry on your own at most twice in all for this request, then tell the person the score and the differences. Never retry without saying so.",
 		TOOLS_INSTRUCTIONS,
 	].join("\n");
 }

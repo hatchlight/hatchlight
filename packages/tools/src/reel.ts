@@ -1,5 +1,7 @@
 import type {
 	Asset,
+	ConsistencyCheck,
+	ConsistencyResult,
 	CreateTurnInput,
 	GalleryItem,
 	ModelSpec,
@@ -34,4 +36,9 @@ export interface Reel {
 	ranking?(query: RankingQuery): Promise<Ranking>;
 	/** The person's choices, such as hiding model names until a pick. */
 	settings?(): Promise<Settings>;
+	/** Whether a picture shows the same character as pictures of it. */
+	checkConsistency?(
+		check: ConsistencyCheck,
+		signal?: AbortSignal,
+	): Promise<ConsistencyResult>;
 }

@@ -104,6 +104,71 @@ describe("the tools for the assistant inside the app", () => {
 	});
 });
 
+describe("the character check", () => {
+	const tools = (hatchlight: Reel) =>
+		createTools(hatchlight, {
+			allowPaid: false,
+			spend: new SpendGuard(null),
+			files: false,
+		});
+	const check = (hatchlight: Reel, args: Record<string, unknown>) =>
+		tools(hatchlight)
+			.find((t) => t.name === "check_consistency")
+			?.run(args as never, context);
+
+	test("says the score and what differs, and changes nothing", async () => {
+		const asked: unknown[] = [];
+		const hatchlight: Reel = {
+			...reel(),
+			checkConsistency: async (input) => {
+				asked.push(input);
+				return {
+					score: 58,
+					differences: ["coat is blue, should be green", "hair is shorter"],
+					verdict: "different",
+				};
+			},
+		};
+		expect(
+			tools(hatchlight).find((t) => t.name === "check_consistency")?.readOnly,
+		).toBe(true);
+		const result = await check(hatchlight, {
+			image: "ast_2",
+			like: ["ast_1"],
+			traits: "green coat",
+		});
+		expect(result?.isError).toBeFalsy();
+		expect(result?.text).toBe(
+			"ast_2 scores 58/100 against ast_1: not the same character.\nDifferences:\n- coat is blue, should be green\n- hair is shorter",
+		);
+		expect(asked).toEqual([
+			{ assetId: "ast_2", referenceAssetIds: ["ast_1"], traits: "green coat" },
+		]);
+	});
+
+	test("refuses paths, itself, too many references, and a Hatchlight without it", async () => {
+		const hatchlight: Reel = {
+			...reel(),
+			checkConsistency: async () => {
+				throw new Error("not called");
+			},
+		};
+		for (const args of [
+			{ image: "/tmp/a.png", like: ["ast_1"] },
+			{ image: "ast_1", like: [] },
+			{ image: "ast_1", like: ["ast_2", "ast_3", "ast_4", "ast_5"] },
+		]) {
+			const result = await check(hatchlight, args);
+			expect(result?.text).toContain("do not fit check_consistency");
+		}
+		const itself = await check(hatchlight, { image: "ast_1", like: ["ast_1"] });
+		expect(itself?.text).toContain("not itself");
+		const without = await check(reel(), { image: "ast_2", like: ["ast_1"] });
+		expect(without?.isError).toBe(true);
+		expect(without?.text).toContain("cannot be compared here");
+	});
+});
+
 describe("the model used when none is named", () => {
 	const other = { ...local, id: "local/y", name: "Y" } as ModelSpec;
 	const rank = (modelId: string, few: boolean) => ({

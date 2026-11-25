@@ -358,6 +358,67 @@ test("ranking lists the models by the results picked as the best", async () => {
 	);
 });
 
+test("check compares a picture with pictures of its character", async () => {
+	const compared: number[] = [];
+	const t = await terminal({
+		judge: {
+			compare: async (references, _candidate, _signal, options) => {
+				compared.push(references.length);
+				return options?.traits
+					? { score: 91, differences: [], verdict: "same" }
+					: {
+							score: 58,
+							differences: ["coat is blue, should be green", "hair is shorter"],
+							verdict: "different",
+						};
+			},
+		},
+	});
+	await t.run("generate", [
+		"a fox in a green coat",
+		"--allow-paid",
+		"-m",
+		"fake/alpha",
+		"-m",
+		"fake/beta",
+		"--count",
+		"2",
+		"--json",
+	]);
+	const [first, second, third] = t
+		.json()
+		.jobs.flatMap((j: { assets: { id: string }[] }) => j.assets)
+		.map((a: { id: string }) => a.id);
+	await writeFile(join(t.dir, "mine.png"), picture(32, 32));
+
+	expect(await t.run("check", [third, "--like", `${first},${second}`])).toBe(
+		EXIT.ok,
+	);
+	expect(t.out).toEqual([
+		"58/100: not the same character",
+		"- coat is blue, should be green",
+		"- hair is shorter",
+	]);
+	await t.run("check", [
+		"mine.png",
+		"--like",
+		first,
+		"--traits",
+		"green coat",
+		"--json",
+	]);
+	expect(t.json()).toEqual({ score: 91, differences: [], verdict: "same" });
+	expect(compared).toEqual([2, 1]);
+
+	await expect(t.run("check", [third])).rejects.toThrow("with --like");
+	await expect(
+		t.run("check", [third, "--like", "ast_a,ast_b", "--like", "ast_c,ast_d"]),
+	).rejects.toThrow("1 to 3 pictures");
+	await expect(t.run("check", ["--like", first])).rejects.toThrow(
+		"one picture to check",
+	);
+});
+
 test("open shows the app, or a session in it", async () => {
 	const t = await terminal();
 	await t.run("open");

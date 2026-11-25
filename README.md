@@ -79,7 +79,9 @@ Hatchlight at that folder and it uses them where they are, without copying.
 
 **An assistant.** Talk to it in the Chat view: "make the fox bigger", "now in
 16:9, with FLUX". It picks models, writes the prompts and makes the pictures.
-It can look at what came out and suggest a fix. The Advanced view
+It can look at what came out and suggest a fix. Making a series with one
+character, such as a comic or a mascot, it checks that each new picture still
+shows the same character and fixes what drifted. The Advanced view
 shows the same session with every setting. It asks before anything paid and
 keeps to a spend limit. Write in your own language: each model gets the prompt
 in the words it understands, and **Improve prompt** turns a short idea into a
@@ -172,6 +174,10 @@ claude mcp add hatchlight -- bunx hatchlight mcp
 In the app, **Settings > Use with AI agents** connects Claude Desktop for you.
 [Command line and agents](docs/command-line.md) covers every command, setting
 up from the terminal, and spending limits for agents.
+
+`hatchlight check ast_… --like ast_…` and the agents' `check_consistency`
+tool score how much a picture shows the same character as earlier ones, and
+say what differs.
 
 Other apps can use your models too: Hatchlight answers OpenAI's image API
 and AUTOMATIC1111's, so Open WebUI, SillyTavern, LibreChat and scripts make

@@ -1,5 +1,10 @@
 import { storedValue } from "@hatchlight/core/legacy";
-import type { JobView, ModelSpec, TurnView } from "@hatchlight/core/types";
+import {
+	type JobView,
+	MAX_CHARACTER_REFERENCES,
+	type ModelSpec,
+	type TurnView,
+} from "@hatchlight/core/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ImagePlus, Info, Maximize2 } from "lucide-react";
 import {
@@ -640,6 +645,11 @@ export function Chat({
 	const [selected, setSelected] = useState<LightboxItem | null>(null);
 	// On narrow screens the inspector opens over the turns.
 	const [inspecting, setInspecting] = useState(false);
+	// The picture of a series' character, chosen in this session.
+	const [character, setCharacter] = useState<{
+		sessionId: string | undefined;
+		assetId: string;
+	} | null>(null);
 
 	const create = useMutation({
 		mutationFn: (draft: Draft & { referenceAssetIds?: string[] }) =>
@@ -730,6 +740,28 @@ export function Chat({
 		);
 	})[0];
 	const shown = selected ?? latest ?? null;
+	const videoIds = new Set(
+		turns.flatMap((turn) =>
+			turn.jobs.flatMap((job) =>
+				job.assets.flatMap((asset) =>
+					asset.mime.startsWith("image/") ? [] : [asset.id],
+				),
+			),
+		),
+	);
+	const characterId =
+		character?.sessionId === sessionId ? character?.assetId : undefined;
+	// What the chosen picture is compared with: the character, else the
+	// reference pictures in the composer.
+	const characterOf = (assetId: string) => ({
+		references: (characterId ? [characterId] : references)
+			// Pictures only: a video in the session cannot be compared.
+			.filter((id) => id !== assetId && !videoIds.has(id))
+			.slice(0, MAX_CHARACTER_REFERENCES),
+		chosen: characterId === assetId,
+		choose: (id: string | null) =>
+			setCharacter(id ? { sessionId, assetId: id } : null),
+	});
 
 	return (
 		<>
@@ -780,6 +812,10 @@ export function Chat({
 											setInspecting(false);
 											setSelected(null);
 										}}
+										// A public demo has no model to compare with.
+										character={
+											shown && !demo ? characterOf(shown.assetId) : undefined
+										}
 									/>
 								),
 								chosen: shown != null,

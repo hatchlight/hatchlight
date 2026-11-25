@@ -2,6 +2,7 @@ export * from "./accounts";
 export * from "./assets";
 export * from "./blind";
 export * from "./chat";
+export * from "./consistency";
 export * from "./db/accounts";
 export * from "./db/repository";
 export * from "./db/visitors";
