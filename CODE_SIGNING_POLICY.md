@@ -1,12 +1,15 @@
 # Code signing policy
 
-Free code signing provided by [SignPath.io](https://about.signpath.io),
-certificate by [SignPath Foundation](https://signpath.org).
+The installers of Hatchlight are not signed yet, so Windows and macOS may
+warn the first time you run them:
+[Getting started](docs/getting-started.md#install) says what to do.
 
-The Windows installers of Hatchlight are signed with a certificate issued to
-SignPath Foundation. Windows shows **SignPath Foundation** as the publisher.
+We asked [SignPath Foundation](https://signpath.org), which signs open source
+projects for free, to sign the Windows installers. It signs projects that
+are already widely used, and Hatchlight is still new, so we will ask again
+later. This page says how signing will work once it starts.
 
-## What is signed
+## What will be signed
 
 Only files built from this repository by the
 [Desktop workflow](.github/workflows/desktop.yml) on GitHub-hosted runners,
@@ -29,10 +32,9 @@ model.
   one of them before it is merged.
 - Approvers: the
   [owners of the Hatchlight organization](https://github.com/orgs/hatchlight/people?query=role%3Aowner).
-  Each signing request is approved by hand, one release at a time.
+  Each signing request will be approved by hand, one release at a time.
 
-Everyone with these roles uses multi-factor authentication on GitHub and
-SignPath.
+Everyone with these roles uses multi-factor authentication.
 
 ## Privacy
 
