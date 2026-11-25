@@ -2,10 +2,12 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import type { ParseArgsOptionsConfig } from "node:util";
 import {
+	CONSISTENT_SCORE,
 	type EngineEvent,
 	GUIDE_KINDS,
 	type GuideKind,
 	type JobView,
+	MAX_CHARACTER_REFERENCES,
 	type ModelSpec,
 	PROMPT_KINDS,
 	type ProgressStage,
@@ -833,6 +835,68 @@ ${COMMON_HELP}`,
 			io.err(
 				`Sorted by a cautious win rate: under ${ranking.minComparisons} comparisons a model ranks lower than its wins alone say.`,
 			);
+			return EXIT.ok;
+		},
+	},
+
+	check: {
+		summary: "Check that a picture shows the same character",
+		usage: `Usage: hatchlight check <picture> --like <reference>[,<reference>] [options]
+
+Compares a picture with 1 to ${MAX_CHARACTER_REFERENCES} pictures of a character, for a series such as
+a comic or a mascot, and says how much it looks the same (0 to 100) and what
+differs. From ${CONSISTENT_SCORE} up the character holds. Pictures are ids (ast_…) or files.
+
+It uses the model that describes pictures (Qwen2.5-VL) when installed, which
+takes about a minute without a graphics card; else the assistant's cloud
+model, on your key.
+
+  --like <ids>      The pictures of the character, comma-separated or repeated
+  --traits <text>   What must stay the same, such as "green coat, red scarf"
+${COMMON_HELP}`,
+		options: {
+			like: { type: "string", multiple: true },
+			traits: { type: "string" },
+		},
+		async run(values, positionals, { api, io }) {
+			const [image, ...extra] = positionals;
+			if (!image || extra.length > 0) {
+				throw new UsageError(
+					"Give one picture to check: an id (ast_…) or a file.",
+				);
+			}
+			const like = ((values.like as string[] | undefined) ?? [])
+				.flatMap((item) => item.split(","))
+				.map((item) => item.trim())
+				.filter(Boolean);
+			if (like.length < 1 || like.length > MAX_CHARACTER_REFERENCES) {
+				throw new UsageError(
+					`Give 1 to ${MAX_CHARACTER_REFERENCES} pictures of the character with --like.`,
+				);
+			}
+			const traits = (values.traits as string | undefined)?.trim();
+			const [assetId, ...referenceAssetIds] = await references(api, io, [
+				image,
+				...like,
+			]);
+			io.err("Comparing…");
+			const result = await api.checkConsistency({
+				assetId: assetId as string,
+				referenceAssetIds,
+				...(traits && { traits }),
+			});
+			if (values.json) {
+				json(io, result);
+				return EXIT.ok;
+			}
+			const verdict =
+				result.verdict === "same"
+					? "the same character"
+					: result.verdict === "close"
+						? "the same character, with small changes"
+						: "not the same character";
+			io.out(`${result.score}/100: ${verdict}`);
+			for (const difference of result.differences) io.out(`- ${difference}`);
 			return EXIT.ok;
 		},
 	},

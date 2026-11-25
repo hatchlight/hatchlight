@@ -182,6 +182,27 @@ per model** to add the pictures you picked. In the terminal,
 it with the `model_ranking` tool. When you leave the model to the assistant,
 it uses your favourite once you have picked enough.
 
+## Keep a character the same
+
+For a comic, a storyboard or a mascot, the same character must look the same
+in every picture. Click the picture that shows it as it should look and choose
+**This is the character**. Then click any other picture and choose **Compare
+with the character**: you get a score from 0 to 100 and what differs, such as
+"coat is blue, should be green". From 70 up the character holds. Without a
+chosen character, the picture is compared with the reference images in the
+composer.
+
+The comparison uses Qwen2.5-VL, the model that describes pictures, when it is
+installed from **Models**: free, and about a minute per comparison without a
+graphics card. Otherwise it uses the assistant's cloud model, on your key.
+
+In the Chat view, tell the assistant you are making a series with one
+character: it checks each new picture against the first one and, when the
+character drifted, tries again with the missing details or with the first
+picture as a reference, at most twice, then tells you the score and what
+still differs. In the terminal, `hatchlight check ast_… --like ast_…` does the
+same, and agents have the `check_consistency` tool.
+
 ## Change a picture
 
 Any picture can be the start of the next one. Click it, then:

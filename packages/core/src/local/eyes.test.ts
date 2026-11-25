@@ -96,3 +96,60 @@ test("what a model adds around a caption is taken off", () => {
 	expect(long.length).toBeLessThanOrEqual(400);
 	expect(long).toEndWith("a short phrase");
 });
+
+test("compares a picture with its references in one run, in order", async () => {
+	const scratch = await mkdtemp(join(tmpdir(), "hatchlight-eyes-"));
+	dirs.push(scratch);
+	const runs: string[][] = [];
+	const store = {
+		list: async () => ({ models: [{ id: "vl", ready: true }] }),
+		runtime: async () => ({
+			executable: "/engines/llama/llama-server",
+			files: { model: "/m/vl.gguf", llm_vision: "/m/mmproj.gguf" },
+			scratch,
+			throughWindows: false,
+		}),
+	};
+	const judge = new LocalEyes({
+		store: store as never,
+		model: "vl",
+		run: async (argv) => {
+			runs.push(argv);
+			const images = argv.flatMap((arg, i) =>
+				arg === "--image" ? [argv[i + 1] as string] : [],
+			);
+			const read = await Promise.all(images.map((f) => Bun.file(f).text()));
+			expect(read).toEqual(["ref1", "ref2", "new"]);
+			return {
+				code: 0,
+				stdout: '```json\n{"score": 64, "differences": ["no scarf"]}\n```',
+				stderr: "",
+			};
+		},
+	});
+	const seen = (text: string) => ({
+		data: Buffer.from(text).toString("base64"),
+		mimeType: "image/jpeg",
+	});
+	const result = await judge.compare(
+		[seen("ref1"), seen("ref2")],
+		seen("new"),
+		new AbortController().signal,
+		{ traits: "a red scarf" },
+	);
+	expect(result).toEqual({
+		score: 64,
+		differences: ["no scarf"],
+		verdict: "different",
+	});
+	expect(runs).toHaveLength(1);
+	const [argv] = runs;
+	expect(argv?.[0]).toBe("/engines/llama/llama-mtmd-cli");
+	const prompt = argv?.[argv.indexOf("-p") + 1] ?? "";
+	// Each picture is placed by a marker, labeled, before the question.
+	expect(prompt).toStartWith(
+		"Reference 1: <__media__>\nReference 2: <__media__>\nNew picture: <__media__>\n",
+	);
+	expect(prompt).toContain("What must stay the same: a red scarf.");
+	expect(await readdir(scratch)).toEqual([]);
+});

@@ -9,6 +9,7 @@ import {
 import { picture } from "@hatchlight/core/testing";
 import type {
 	AssistantEntry,
+	ConsistencyCheck,
 	CreateTurnInput,
 	ModelSpec,
 	TurnView,
@@ -46,9 +47,10 @@ const paid = {
 } as unknown as ModelSpec;
 
 /** Hatchlight with sessions in memory; every turn is done at once. */
-function fakeReel(pictures = false) {
+function fakeReel(pictures = false, scores?: number[]) {
 	const sessions = new Map<string, SessionDetail>();
 	const inputs: CreateTurnInput[] = [];
+	const checks: ConsistencyCheck[] = [];
 	let next = 0;
 	const reel: Reel = {
 		models: async () => [local, paid],
@@ -96,6 +98,17 @@ function fakeReel(pictures = false) {
 			return { data: picture(64, 48), mime: "image/png" };
 		},
 		sessionUrl: (id) => `#/s/${id}`,
+		...(scores && {
+			async checkConsistency(check) {
+				checks.push(check);
+				const score = scores.shift() ?? 100;
+				return {
+					score,
+					differences: score < 70 ? ["coat is blue, should be green"] : [],
+					verdict: score < 70 ? "different" : "same",
+				};
+			},
+		}),
 	};
 	const start = (id: string) =>
 		sessions.set(id, {
@@ -106,7 +119,7 @@ function fakeReel(pictures = false) {
 			updatedAt: 0,
 			turns: [],
 		});
-	return { reel, inputs, start };
+	return { reel, inputs, checks, start };
 }
 
 function memoryStore(): AssistantStore & { entries: AssistantEntry[] } {
@@ -161,10 +174,12 @@ function setup(
 		limitUsd?: number;
 		pictures?: boolean;
 		eyes?: Eyes;
+		/** Scores the character check gives, in order. */
+		scores?: number[];
 	} = {},
 ) {
-	const { pictures, eyes, ...rest } = options;
-	const { reel, inputs, start } = fakeReel(pictures);
+	const { pictures, eyes, scores, ...rest } = options;
+	const { reel, inputs, checks, start } = fakeReel(pictures, scores);
 	const store = memoryStore();
 	let sessions = 0;
 	const assistant = new Assistant({
@@ -187,7 +202,7 @@ function setup(
 		}
 		throw new Error("still busy");
 	};
-	return { assistant, store, inputs, idle, start };
+	return { assistant, store, inputs, checks, idle, start };
 }
 
 const roles = (entries: AssistantEntry[]) =>
@@ -223,6 +238,60 @@ describe("the assistant", () => {
 		// The model saw the result before answering.
 		const last = brain.seen.at(-1) ?? [];
 		expect(last.at(-1)).toMatchObject({ role: "tool", name: "generate" });
+	});
+
+	test("keeps a character: checks each new picture, fixes it once, then says how it went", async () => {
+		const brain = scripted(
+			call(
+				"generate",
+				{ prompt: "a fox in a green coat", session_id: "x" },
+				"c1",
+			),
+			call("generate", { prompt: "the same fox, reading" }, "c2"),
+			call("check_consistency", { image: "ast_20", like: ["ast_10"] }, "c3"),
+			call(
+				"generate",
+				{
+					prompt: "the same fox, reading, in a green coat",
+					reference_images: ["ast_10"],
+				},
+				"c4",
+			),
+			call("check_consistency", { image: "ast_30", like: ["ast_10"] }, "c5"),
+			{ text: "Same fox now: 88/100.", toolCalls: [] },
+		);
+		const { assistant, inputs, checks, idle } = setup(brain, {
+			pictures: true,
+			scores: [55, 88],
+		});
+		const { sessionId } = await assistant.send(ctx, {
+			text: "a comic with my fox, in a green coat",
+		});
+		await idle(sessionId);
+		expect(checks).toEqual([
+			{ assetId: "ast_20", referenceAssetIds: ["ast_10"] },
+			{ assetId: "ast_30", referenceAssetIds: ["ast_10"] },
+		]);
+		// The retry started from the first picture.
+		expect(inputs[2]?.referenceAssetIds).toEqual(["ast_10"]);
+		// The model was told the score and what differed.
+		const told = brain.seen[3]?.at(-1);
+		expect(told).toMatchObject({ role: "tool", name: "check_consistency" });
+		const said = told?.role === "tool" ? told.content[0] : undefined;
+		expect(said?.type === "text" && said.text).toContain(
+			"ast_20 scores 55/100 against ast_10: not the same character.\nDifferences:\n- coat is blue, should be green",
+		);
+		const view = await assistant.view(ctx, sessionId);
+		expect(view.entries.at(-1)?.message).toMatchObject({
+			text: "Same fox now: 88/100.",
+		});
+	});
+
+	test("is told to check a series' character, and to stop after two retries", () => {
+		const said = assistantInstructions();
+		expect(said).toContain("call check_consistency after each new picture");
+		expect(said).toContain("Below 70");
+		expect(said).toContain("at most twice");
 	});
 
 	test("asks before paying, and goes on once the person says yes", async () => {

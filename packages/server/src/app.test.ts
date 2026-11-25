@@ -20,8 +20,8 @@ import {
 	type LocalEngineSpec,
 	type LocalModelSpec,
 } from "@hatchlight/core";
-import { safetensors, zip } from "@hatchlight/core/testing";
-import type { AssistantView } from "@hatchlight/core/types";
+import { picture, safetensors, zip } from "@hatchlight/core/testing";
+import type { AssistantView, ConsistencyResult } from "@hatchlight/core/types";
 import {
 	createApp,
 	createRuntime,
@@ -1025,6 +1025,96 @@ test("the trainer reports itself, and nothing trains before it is installed", as
 	expect((await call("/api/trainings/x/samples/100")).status).toBe(404);
 	const finish = await call("/api/trainings/finish", { method: "POST" });
 	expect(await finish.json()).toMatchObject({ code: "trainingNothingSaved" });
+});
+
+test("a picture is checked against pictures of its character", async () => {
+	const seen: { references: string[]; candidate: string; traits?: string }[] =
+		[];
+	const { call, post } = await setup({
+		judge: {
+			compare: async (references, candidate, _signal, options) => {
+				seen.push({
+					references: references.map((r) => r.mimeType),
+					candidate: candidate.mimeType,
+					traits: options?.traits,
+				});
+				return {
+					score: 62,
+					differences: ["coat is blue"],
+					verdict: "different",
+				};
+			},
+		},
+	});
+	const upload = async (data: Uint8Array) =>
+		(
+			(await (
+				await call("/api/assets", {
+					method: "POST",
+					headers: { "content-type": "image/png" },
+					body: data,
+				})
+			).json()) as { id: string }
+		).id;
+	const first = await upload(picture(64, 48));
+	const second = await upload(picture(48, 64));
+	const checked = await post("/api/consistency", {
+		assetId: second,
+		referenceAssetIds: [first],
+		traits: "green coat",
+		language: "pt-BR",
+	});
+	expect(checked.status).toBe(200);
+	expect((await checked.json()) as ConsistencyResult).toEqual({
+		score: 62,
+		differences: ["coat is blue"],
+		verdict: "different",
+	});
+	// Small JPEG copies: the local model reads no WebP.
+	expect(seen).toEqual([
+		{
+			references: ["image/jpeg"],
+			candidate: "image/jpeg",
+			traits: "green coat",
+		},
+	]);
+
+	for (const body of [
+		{ assetId: second, referenceAssetIds: [] },
+		{ assetId: second, referenceAssetIds: [first, first, first, first] },
+		{ assetId: second, referenceAssetIds: [second] },
+		{ assetId: 3, referenceAssetIds: [first] },
+		{ assetId: second, referenceAssetIds: [first], traits: 4 },
+		{ assetId: second, referenceAssetIds: [first], language: "not a code" },
+	]) {
+		expect((await post("/api/consistency", body)).status).toBe(400);
+	}
+	const gone = await post("/api/consistency", {
+		assetId: "ast_nope",
+		referenceAssetIds: [first],
+	});
+	expect(gone.status).toBe(404);
+	expect(seen).toHaveLength(1);
+});
+
+test("without a model that sees, a character check says what to install", async () => {
+	const { call, post } = await setup();
+	const upload = async () =>
+		(
+			(await (
+				await call("/api/assets", {
+					method: "POST",
+					headers: { "content-type": "image/png" },
+					body: picture(32, 32),
+				})
+			).json()) as { id: string }
+		).id;
+	const refused = await post("/api/consistency", {
+		assetId: await upload(),
+		referenceAssetIds: [await upload()],
+	});
+	expect(refused.status).toBe(400);
+	expect(await refused.json()).toMatchObject({ code: "noJudge" });
 });
 
 test("training pictures are described by the model that looks at pictures", async () => {

@@ -10,6 +10,8 @@ import type {
 	AssistantView,
 	AuthSessionView,
 	CheckpointInfo,
+	ConsistencyCheck,
+	ConsistencyResult,
 	CreateTurnInput,
 	GalleryItem,
 	InviteView,
@@ -533,6 +535,8 @@ export const api = {
 		request<void>(`/api/model-folders/${id}`, { method: "DELETE" }),
 	pick: (turnId: string, assetId: string | null) =>
 		request<void>(`/api/turns/${turnId}/pick`, send("PUT", { assetId })),
+	checkConsistency: (check: ConsistencyCheck) =>
+		request<ConsistencyResult>("/api/consistency", send("POST", check)),
 	ranking: (query: RankingQuery) =>
 		request<Ranking>(
 			`/api/ranking?${new URLSearchParams(

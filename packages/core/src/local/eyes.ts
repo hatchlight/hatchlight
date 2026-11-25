@@ -1,6 +1,13 @@
 import { mkdir, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { Eyes, SeenPicture } from "../chat";
+import {
+	type CompareOptions,
+	consistencyPrompt,
+	type Judge,
+	parseConsistency,
+} from "../consistency";
+import type { ConsistencyResult } from "../types";
 import { type PathMapper, windowsPath } from "./provider";
 import type { LocalModelStore } from "./store";
 import { type RunOnce, runOnce } from "./translator";
@@ -11,6 +18,14 @@ export const MAX_LOOKED_AT = 2;
 const MAX_TOKENS = 200;
 /** The longest request quoted to the model. */
 const MAX_ASKED = 500;
+
+/** Enough for a score and a few differences. */
+const MAX_COMPARE_TOKENS = 300;
+/**
+ * Where llama.cpp's multimodal program puts each picture in the prompt, in
+ * the order given; without it, all go first.
+ */
+const PICTURE_MARKER = "<__media__>";
 
 /** Enough for a line of short phrases. */
 const MAX_CAPTION_TOKENS = 120;
@@ -72,7 +87,7 @@ export interface LocalEyesOptions {
  * per picture with llama.cpp's multimodal program: it works from WSL too,
  * where llama.cpp's server on the Windows side cannot be reached.
  */
-export class LocalEyes implements Eyes, Captioner {
+export class LocalEyes implements Eyes, Captioner, Judge {
 	private store: LocalModelStore;
 	private model: string;
 	private run: RunOnce;
@@ -99,7 +114,7 @@ export class LocalEyes implements Eyes, Captioner {
 		const said: string[] = [];
 		for (const picture of pictures.slice(0, MAX_LOOKED_AT)) {
 			const text = await this.ask(
-				picture,
+				[picture],
 				lookPrompt(asked),
 				MAX_TOKENS,
 				signal,
@@ -115,13 +130,41 @@ export class LocalEyes implements Eyes, Captioner {
 	 */
 	async caption(picture: SeenPicture, signal: AbortSignal): Promise<string> {
 		return cleanCaption(
-			await this.ask(picture, CAPTION_PROMPT, MAX_CAPTION_TOKENS, signal),
+			await this.ask([picture], CAPTION_PROMPT, MAX_CAPTION_TOKENS, signal),
 		);
 	}
 
-	/** Runs the model once on one picture, and returns what it said. */
+	/**
+	 * Whether a picture shows the character of the references: all of them
+	 * in one run, which reads several pictures, each labeled in the prompt.
+	 */
+	async compare(
+		references: SeenPicture[],
+		candidate: SeenPicture,
+		signal: AbortSignal,
+		options: CompareOptions = {},
+	): Promise<ConsistencyResult> {
+		const labels = [
+			...references.map((_, i) => `Reference ${i + 1}: ${PICTURE_MARKER}`),
+			`New picture: ${PICTURE_MARKER}`,
+		];
+		const prompt = [
+			...labels,
+			consistencyPrompt(references.length, options),
+		].join("\n");
+		return parseConsistency(
+			await this.ask(
+				[...references, candidate],
+				prompt,
+				MAX_COMPARE_TOKENS,
+				signal,
+			),
+		);
+	}
+
+	/** Runs the model once on some pictures, and returns what it said. */
 	private async ask(
-		picture: SeenPicture,
+		pictures: SeenPicture[],
 		prompt: string,
 		maxTokens: number,
 		signal: AbortSignal,
@@ -140,13 +183,19 @@ export class LocalEyes implements Eyes, Captioner {
 			basename(runtime.executable).replace("llama-server", "llama-mtmd-cli"),
 		);
 		await mkdir(runtime.scratch, { recursive: true });
-		const extension = picture.mimeType.split("/")[1] ?? "jpeg";
-		const file = join(
-			runtime.scratch,
-			`${crypto.randomUUID()}.look.${extension}`,
+		const files = pictures.map((picture) =>
+			join(
+				runtime.scratch,
+				`${crypto.randomUUID()}.look.${picture.mimeType.split("/")[1] ?? "jpeg"}`,
+			),
 		);
-		await Bun.write(file, Buffer.from(picture.data, "base64"));
 		try {
+			const images: string[] = [];
+			for (const [i, picture] of pictures.entries()) {
+				const file = files[i] as string;
+				await Bun.write(file, Buffer.from(picture.data, "base64"));
+				images.push("--image", await path(file));
+			}
 			const { code, stdout, stderr } = await this.run(
 				[
 					program,
@@ -154,8 +203,7 @@ export class LocalEyes implements Eyes, Captioner {
 					await path(model),
 					"--mmproj",
 					await path(projector),
-					"--image",
-					await path(file),
+					...images,
 					"-p",
 					prompt,
 					"-n",
@@ -174,7 +222,7 @@ export class LocalEyes implements Eyes, Captioner {
 			}
 			return stdout.replace(/\s+/g, " ").trim();
 		} finally {
-			await rm(file, { force: true });
+			for (const file of files) await rm(file, { force: true });
 		}
 	}
 }

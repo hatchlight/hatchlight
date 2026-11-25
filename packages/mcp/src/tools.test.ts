@@ -76,6 +76,7 @@ test("it offers the tools an agent needs, and none that installs models", async 
 	const { client } = await agent();
 	const { tools } = await client.listTools();
 	expect(tools.map((t) => t.name).sort()).toEqual([
+		"check_consistency",
 		"generate",
 		"get_image",
 		"job_status",

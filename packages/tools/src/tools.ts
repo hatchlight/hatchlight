@@ -3,10 +3,12 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import { blindLetter, blindOrder, namesHidden } from "@hatchlight/core/blind";
 import { promptKinds } from "@hatchlight/core/ranking";
 import {
+	CONSISTENT_SCORE,
 	followsGuide,
 	GUIDE_KINDS,
 	type GuideKind,
 	type JobView,
+	MAX_CHARACTER_REFERENCES,
 	type ModelSpec,
 	PROMPT_KINDS,
 	type PromptKind,
@@ -34,14 +36,17 @@ export interface ToolImage {
 }
 
 /** A smaller copy of a picture to show an agent, or null if it cannot. */
-export async function shrinkPicture(data: Uint8Array): Promise<{
+export async function shrinkPicture(
+	data: Uint8Array,
+	side = PREVIEW_SIDE,
+): Promise<{
 	size: { width: number; height: number };
 	image: ToolImage;
 } | null> {
 	try {
 		const size = await new Bun.Image(data).metadata();
 		const small = await new Bun.Image(data)
-			.resize(PREVIEW_SIDE, PREVIEW_SIDE, {
+			.resize(side, side, {
 				fit: "inside",
 				withoutEnlargement: true,
 			})
@@ -844,6 +849,60 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 				return text(
 					rankingLines(await reel.ranking(args), args.kind).join("\n"),
 				);
+			},
+		}),
+		tool({
+			name: "check_consistency",
+			title: "Check a character",
+			description: `Says whether a picture shows the same character as 1 to ${MAX_CHARACTER_REFERENCES} pictures of it: a score from 0 to 100 and what differs, such as "coat is blue, should be green". Use it when making a series with one character (a comic, a storyboard, a mascot), after each new picture, against the first or approved one. From ${CONSISTENT_SCORE} up the character holds. A model that sees compares them; on a computer without a graphics card it takes about a minute. Changes nothing.`,
+			input: {
+				image: z
+					.string()
+					.regex(ASSET_ID)
+					.describe("The id (ast_…) of the picture to check."),
+				like: z
+					.array(z.string().regex(ASSET_ID))
+					.min(1)
+					.max(MAX_CHARACTER_REFERENCES)
+					.describe(
+						"Ids (ast_…) of pictures showing the character as it must look.",
+					),
+				traits: z
+					.string()
+					.max(500)
+					.optional()
+					.describe(
+						'What must stay the same, in English, such as "green coat, red scarf, short black hair".',
+					),
+			},
+			readOnly: true,
+			async run({ image, like, traits }, context) {
+				if (!reel.checkConsistency) {
+					return failure("Characters cannot be compared here.");
+				}
+				if (like.includes(image)) {
+					return failure(
+						"Compare the picture with other pictures, not itself.",
+					);
+				}
+				const result = await reel.checkConsistency(
+					{
+						assetId: image,
+						referenceAssetIds: like,
+						...(traits && { traits }),
+					},
+					context.signal,
+				);
+				const lines = [
+					`${image} scores ${result.score}/100 against ${like.join(", ")}: ${result.verdict === "same" ? "the same character" : result.verdict === "close" ? "the same character, with small changes" : "not the same character"}.`,
+				];
+				if (result.differences.length > 0) {
+					lines.push(
+						"Differences:",
+						...result.differences.map((d) => `- ${d}`),
+					);
+				}
+				return text(lines.join("\n"));
 			},
 		}),
 		tool({

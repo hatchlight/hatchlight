@@ -695,6 +695,35 @@ test("a person picks the best of their own comparisons only, and ranks only thos
 	expect(await ranking(bia)).toMatchObject({ comparisons: 0, models: [] });
 });
 
+test("a person checks a character only with their own pictures", async () => {
+	const { call, setupOwner, invite, runtime } = await serverApp();
+	const owner = await setupOwner();
+	const ana = await invite(owner);
+	const bia = await invite(owner);
+	const created = await call("/api/turns", {
+		method: "POST",
+		who: ana,
+		body: { prompt: "a fox", modelIds: ["fake/alpha"], count: 2 },
+	});
+	const { session } = (await created.json()) as { session: { id: string } };
+	await runtime.engine.idle();
+	const detail = (await (
+		await call(`/api/sessions/${session.id}`, { who: ana })
+	).json()) as { turns: { jobs: { assets: { id: string }[] }[] }[] };
+	const [first, second] = detail.turns[0]?.jobs[0]?.assets ?? [];
+	const check = (who: Who) =>
+		call("/api/consistency", {
+			method: "POST",
+			who,
+			body: { assetId: second?.id, referenceAssetIds: [first?.id] },
+		});
+	const refused = await check(bia);
+	expect(refused.status).toBe(404);
+	expect(await errorCode(refused)).toBe("assetNotFound");
+	// Ana's own: no model that sees is installed, nor a key given.
+	expect(await errorCode(await check(ana))).toBe("noJudge");
+});
+
 test("a training shows only to whoever started it, and to admins", async () => {
 	let training: TrainingView = {
 		id: "trn_1",

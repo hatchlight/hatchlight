@@ -71,6 +71,7 @@ export const ROUTE_ACCESS: Readonly<Record<string, Access>> = {
 	"DELETE /api/assets/:id": "member",
 	"GET /api/gallery": "member",
 	"POST /api/prompts/improve": "member",
+	"POST /api/consistency": "member",
 	"GET /api/assistant": "member",
 	"POST /api/assistant/messages": "member",
 	"GET /api/sessions/:id/assistant": "member",
@@ -198,6 +199,8 @@ export const ROUTE_SCOPE: Readonly<Record<string, TokenScope>> = {
 	"POST /api/assets": "generate",
 	"DELETE /api/assets/:id": "generate",
 	"POST /api/prompts/improve": "generate",
+	// Read only, but it may spend on the person's cloud key.
+	"POST /api/consistency": "generate",
 	"POST /api/assistant/messages": "generate",
 	"POST /api/sessions/:id/assistant/stop": "generate",
 	"POST /api/sessions/:id/assistant/answers": "generate",
@@ -280,6 +283,7 @@ export const DEMO_ACCESS: Readonly<Record<string, DemoAccess>> = {
 	"POST /api/assets": "refused",
 	// Language models: kept out to keep the demo small.
 	"POST /api/prompts/improve": "refused",
+	"POST /api/consistency": "refused",
 	"GET /api/assistant": "refused",
 	"POST /api/assistant/messages": "refused",
 	"GET /api/sessions/:id/assistant": "refused",

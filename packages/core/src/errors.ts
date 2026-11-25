@@ -82,6 +82,7 @@ export const ERROR_CODES = [
 	"noGuide",
 	"noLanguageModel",
 	"noMask",
+	"noJudge",
 	"noModel",
 	"noReferences",
 	"noResult",
