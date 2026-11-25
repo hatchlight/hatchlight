@@ -740,13 +740,23 @@ export function Chat({
 		);
 	})[0];
 	const shown = selected ?? latest ?? null;
+	const videoIds = new Set(
+		turns.flatMap((turn) =>
+			turn.jobs.flatMap((job) =>
+				job.assets.flatMap((asset) =>
+					asset.mime.startsWith("image/") ? [] : [asset.id],
+				),
+			),
+		),
+	);
 	const characterId =
 		character?.sessionId === sessionId ? character?.assetId : undefined;
 	// What the chosen picture is compared with: the character, else the
 	// reference pictures in the composer.
 	const characterOf = (assetId: string) => ({
 		references: (characterId ? [characterId] : references)
-			.filter((id) => id !== assetId)
+			// Pictures only: a video in the session cannot be compared.
+			.filter((id) => id !== assetId && !videoIds.has(id))
 			.slice(0, MAX_CHARACTER_REFERENCES),
 		chosen: characterId === assetId,
 		choose: (id: string | null) =>

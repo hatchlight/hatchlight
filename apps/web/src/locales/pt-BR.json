@@ -306,6 +306,7 @@
 	"errors.noModel": "Escolha pelo menos um modelo.",
 	"errors.noReferences": "O {model} não aceita imagens de referência.",
 	"errors.noResult": "O serviço terminou sem resultado.",
+	"errors.noVerdict": "O modelo de imagens não deu uma resposta clara. Tente de novo.",
 	"errors.notEnoughDisk": "Espaço em disco insuficiente: precisa de {neededBytes}, há {freeBytes} livres.",
 	"errors.notInDemo": "Não disponível na demonstração pública. Instale o Hatchlight para usar tudo.",
 	"errors.notInstalled": "O {model} não está instalado.",

@@ -1,8 +1,10 @@
 import type { ChatModel, SeenPicture } from "./chat";
+import { CodedError } from "./errors";
 import {
 	CONSISTENT_SCORE,
 	type ConsistencyResult,
 	type ConsistencyVerdict,
+	MAX_TRAITS_LENGTH,
 } from "./types";
 
 /**
@@ -32,8 +34,12 @@ export interface Judge {
 /** Differences kept, and the longest each may be. */
 const MAX_DIFFERENCES = 5;
 const MAX_DIFFERENCE_LENGTH = 160;
-/** The longest traits quoted to the model. */
-const MAX_TRAITS = 300;
+
+/**
+ * Where llama.cpp's multimodal program puts each picture in the prompt, in
+ * the order given; without it, all go first.
+ */
+export const PICTURE_MARKER = "<__media__>";
 
 /** From this score up, the character is the same. */
 const SAME_SCORE = 85;
@@ -65,7 +71,11 @@ export function consistencyPrompt(
 	references: number,
 	options: CompareOptions = {},
 ): string {
-	const traits = options.traits?.trim().slice(0, MAX_TRAITS);
+	// The local model's marker for a picture would take a picture's place.
+	const traits = options.traits
+		?.replaceAll(PICTURE_MARKER, "")
+		.trim()
+		.slice(0, MAX_TRAITS_LENGTH);
 	const them =
 		references === 1
 			? "The first picture shows the character as it must look."
@@ -101,17 +111,18 @@ function differencesOf(value: unknown): string[] {
 		: typeof value === "string"
 			? value.split(/[;\n]/)
 			: [];
-	return list
+	const cleaned = list
 		.filter((item): item is string => typeof item === "string")
 		.map((item) =>
 			item
-				.replace(/^[\s\-*•\d.)]+/, "")
+				// List markers only: "3 stripes" keeps its number.
+				.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, "")
 				.replace(/\s+/g, " ")
 				.trim()
 				.slice(0, MAX_DIFFERENCE_LENGTH),
 		)
-		.filter(Boolean)
-		.slice(0, MAX_DIFFERENCES);
+		.filter(Boolean);
+	return [...new Set(cleaned)].slice(0, MAX_DIFFERENCES);
 }
 
 /**
@@ -142,7 +153,10 @@ export function parseConsistency(said: string): ConsistencyResult {
 		said.match(/(\d+(?:\.\d+)?)\s*(?:\/\s*100|out of 100)/i);
 	const score = scoreOf(written?.[1]);
 	if (score == null) {
-		throw new Error("The comparison came back without a score");
+		throw new CodedError(
+			"The comparison came back without a score",
+			"noVerdict",
+		);
 	}
 	const listed = said.match(/differences["']?\s*[:=]\s*\[([^\]]*)\]?/i)?.[1];
 	const differences = listed

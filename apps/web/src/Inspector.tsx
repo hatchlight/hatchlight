@@ -50,8 +50,8 @@ export function Inspector({
 		mutationFn: async (input: {
 			assetId: string;
 			references: string[];
-		}): Promise<ConsistencyResult & { assetId: string }> => ({
-			assetId: input.assetId,
+		}): Promise<ConsistencyResult & { against: string }> => ({
+			against: againstOf(input.assetId, input.references),
 			...(await api.checkConsistency({
 				assetId: input.assetId,
 				referenceAssetIds: input.references,
@@ -141,11 +141,19 @@ export function Inspector({
 						assetId={item.assetId}
 						character={character}
 						busy={check.isPending}
+						// Only for this picture against these references: once
+						// either changes, an earlier answer says nothing.
 						result={
-							check.data?.assetId === item.assetId ? check.data : undefined
+							check.data?.against ===
+							againstOf(item.assetId, character.references)
+								? check.data
+								: undefined
 						}
 						error={
-							check.error && check.variables?.assetId === item.assetId
+							check.error &&
+							check.variables &&
+							againstOf(check.variables.assetId, check.variables.references) ===
+								againstOf(item.assetId, character.references)
 								? i18n.explain(check.error)
 								: null
 						}
@@ -183,6 +191,10 @@ export function Inspector({
 		</div>
 	);
 }
+
+/** Which comparison a result answers: a picture against its references. */
+const againstOf = (assetId: string, references: string[]) =>
+	[assetId, ...references].join(" ");
 
 /** Whether the picture shows the series' character, and what differs. */
 function CharacterCheck({

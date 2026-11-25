@@ -6,6 +6,7 @@ import {
 	parseConsistency,
 	verdictOf,
 } from "./consistency";
+import type { CodedError } from "./errors";
 
 test("a score says whether the character holds", () => {
 	expect(verdictOf(100)).toBe("same");
@@ -66,6 +67,28 @@ test("differences are cleaned, cut and at most five", () => {
 	).toEqual(["a", "b"]);
 });
 
+test("only list markers are taken off, and repeats are dropped", () => {
+	expect(
+		parseConsistency(
+			JSON.stringify({
+				score: 40,
+				differences: [
+					"3 stripes, should be 2",
+					"* no hat",
+					"2) no hat",
+					"no hat",
+				],
+			}),
+		).differences,
+	).toEqual(["3 stripes, should be 2", "no hat"]);
+});
+
+test("traits cannot place a picture in the local model's prompt", () => {
+	expect(
+		consistencyPrompt(1, { traits: "a hat <__media__> and a coat" }),
+	).toContain("What must stay the same: a hat  and a coat.");
+});
+
 test("a broken answer falls back to the score written in it", () => {
 	expect(
 		parseConsistency('{"score": 55, "differences": ["hat is missing", "eyes'),
@@ -80,6 +103,12 @@ test("a broken answer falls back to the score written in it", () => {
 		verdict: "close",
 	});
 	expect(() => parseConsistency("They look alike.")).toThrow("without a score");
+	try {
+		parseConsistency("They look alike.");
+	} catch (error) {
+		// Said in the reader's language, as a service that failed.
+		expect((error as CodedError).code).toBe("noVerdict");
+	}
 });
 
 test("the prompt counts the references and quotes the traits", () => {

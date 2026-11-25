@@ -17,6 +17,7 @@ import {
 	MAX_CHARACTER_REFERENCES,
 	MAX_CHECKPOINT_BYTES,
 	MAX_LORA_BYTES,
+	MAX_TRAITS_LENGTH,
 	mayUsePaid,
 	NotFoundError,
 	type PaidRefusal,
@@ -155,8 +156,6 @@ export interface AppOptions {
  * the answer, it must fit the local language model's context.
  */
 const MAX_IDEA_LENGTH = 1000;
-/** The longest traits a character check is given. */
-const MAX_TRAITS_LENGTH = 500;
 /** A language code, such as pt-BR. */
 const LANGUAGE = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
 /** More models than any composer offers at once. */
@@ -183,6 +182,7 @@ const UPSTREAM_CODES = new Set<ErrorCode>([
 	"improveFailed",
 	"localAssistantUnavailable",
 	"noConnection",
+	"noVerdict",
 	"providerBusy",
 ]);
 

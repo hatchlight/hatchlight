@@ -5,8 +5,10 @@ import {
 	type CompareOptions,
 	consistencyPrompt,
 	type Judge,
+	PICTURE_MARKER,
 	parseConsistency,
 } from "../consistency";
+import { CodedError } from "../errors";
 import type { ConsistencyResult } from "../types";
 import { type PathMapper, windowsPath } from "./provider";
 import type { LocalModelStore } from "./store";
@@ -21,11 +23,6 @@ const MAX_ASKED = 500;
 
 /** Enough for a score and a few differences. */
 const MAX_COMPARE_TOKENS = 300;
-/**
- * Where llama.cpp's multimodal program puts each picture in the prompt, in
- * the order given; without it, all go first.
- */
-const PICTURE_MARKER = "<__media__>";
 
 /** Enough for a line of short phrases. */
 const MAX_CAPTION_TOKENS = 120;
@@ -92,6 +89,11 @@ export class LocalEyes implements Eyes, Captioner, Judge {
 	private model: string;
 	private run: RunOnce;
 	private windowsPath: PathMapper;
+	/**
+	 * The run before the next one: a 7B model takes gigabytes of memory, so
+	 * one runs at a time, whoever asked.
+	 */
+	private queue: Promise<unknown> = Promise.resolve();
 
 	constructor(options: LocalEyesOptions) {
 		this.store = options.store;
@@ -152,18 +154,43 @@ export class LocalEyes implements Eyes, Captioner, Judge {
 			...labels,
 			consistencyPrompt(references.length, options),
 		].join("\n");
-		return parseConsistency(
-			await this.ask(
+		let said: string;
+		try {
+			said = await this.ask(
 				[...references, candidate],
 				prompt,
 				MAX_COMPARE_TOKENS,
 				signal,
-			),
-		);
+			);
+		} catch (error) {
+			if (signal.aborted) throw error;
+			throw new CodedError(
+				`Comparing the pictures failed: ${error instanceof Error ? error.message : String(error)}`,
+				"noVerdict",
+			);
+		}
+		return parseConsistency(said);
+	}
+
+	/** Runs the model once on some pictures, after any run before it. */
+	private ask(
+		pictures: SeenPicture[],
+		prompt: string,
+		maxTokens: number,
+		signal: AbortSignal,
+	): Promise<string> {
+		const run = this.queue.then(() => {
+			// Given up while waiting its turn: nothing to run.
+			signal.throwIfAborted();
+			return this.askNow(pictures, prompt, maxTokens, signal);
+		});
+		// The next run waits for this one, whether it worked or not.
+		this.queue = run.catch(() => {});
+		return run;
 	}
 
 	/** Runs the model once on some pictures, and returns what it said. */
-	private async ask(
+	private async askNow(
 		pictures: SeenPicture[],
 		prompt: string,
 		maxTokens: number,

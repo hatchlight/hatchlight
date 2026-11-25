@@ -651,6 +651,8 @@ export interface Ranking {
 
 /** At most this many pictures show what a character must look like. */
 export const MAX_CHARACTER_REFERENCES = 3;
+/** The longest description of a character's traits a check takes. */
+export const MAX_TRAITS_LENGTH = 500;
 /** From this score up, a picture shows the character well enough. */
 export const CONSISTENT_SCORE = 70;
 

@@ -153,3 +153,59 @@ test("compares a picture with its references in one run, in order", async () => 
 	expect(prompt).toContain("What must stay the same: a red scarf.");
 	expect(await readdir(scratch)).toEqual([]);
 });
+
+test("one run at a time, whoever asks, and a failed one does not stop the next", async () => {
+	const scratch = await mkdtemp(join(tmpdir(), "hatchlight-eyes-"));
+	dirs.push(scratch);
+	let running = 0;
+	let most = 0;
+	let runs = 0;
+	const store = {
+		list: async () => ({ models: [{ id: "vl", ready: true }] }),
+		runtime: async () => ({
+			executable: "/engines/llama/llama-server",
+			files: { model: "/m/vl.gguf", llm_vision: "/m/mmproj.gguf" },
+			scratch,
+			throughWindows: false,
+		}),
+	};
+	const eyes = new LocalEyes({
+		store: store as never,
+		model: "vl",
+		run: async () => {
+			running++;
+			most = Math.max(most, running);
+			await Bun.sleep(10);
+			running--;
+			// The first run crashes.
+			return ++runs === 1
+				? { code: 1, stdout: "", stderr: "out of memory" }
+				: { code: 0, stdout: '{"score": 80, "differences": []}', stderr: "" };
+		},
+	});
+	const picture = {
+		data: Buffer.from("jpeg").toString("base64"),
+		mimeType: "image/jpeg",
+	};
+	const signal = new AbortController().signal;
+	const [failed, compared, caption] = await Promise.allSettled([
+		eyes.compare([picture], picture, signal),
+		eyes.compare([picture], picture, signal),
+		eyes.caption(picture, signal),
+	]);
+	expect(most).toBe(1);
+	expect(runs).toBe(3);
+	// A run that failed is a comparison with no verdict, told as such.
+	expect(failed.status === "rejected" && failed.reason.code).toBe("noVerdict");
+	expect(compared.status === "fulfilled" && compared.value.score).toBe(80);
+	expect(caption.status).toBe("fulfilled");
+
+	// Given up while waiting its turn, it never runs.
+	const stop = new AbortController();
+	const first = eyes.caption(picture, signal);
+	const second = eyes.caption(picture, stop.signal);
+	stop.abort();
+	await first;
+	await expect(second).rejects.toThrow();
+	expect(runs).toBe(4);
+});

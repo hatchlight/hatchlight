@@ -19,6 +19,7 @@ import {
 	LEGACY_NAME,
 	type LocalEngineSpec,
 	type LocalModelSpec,
+	parseConsistency,
 } from "@hatchlight/core";
 import { picture, safetensors, zip } from "@hatchlight/core/testing";
 import type { AssistantView, ConsistencyResult } from "@hatchlight/core/types";
@@ -1095,6 +1096,28 @@ test("a picture is checked against pictures of its character", async () => {
 	});
 	expect(gone.status).toBe(404);
 	expect(seen).toHaveLength(1);
+});
+
+test("an answer without a score is a failed service, said in the reader's language", async () => {
+	const { call, post } = await setup({
+		judge: { compare: async () => parseConsistency("They look alike.") },
+	});
+	const upload = async () =>
+		(
+			(await (
+				await call("/api/assets", {
+					method: "POST",
+					headers: { "content-type": "image/png" },
+					body: picture(32, 32),
+				})
+			).json()) as { id: string }
+		).id;
+	const failed = await post("/api/consistency", {
+		assetId: await upload(),
+		referenceAssetIds: [await upload()],
+	});
+	expect(failed.status).toBe(502);
+	expect(await failed.json()).toMatchObject({ code: "noVerdict" });
 });
 
 test("without a model that sees, a character check says what to install", async () => {

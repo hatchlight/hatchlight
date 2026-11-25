@@ -9,6 +9,7 @@ import {
 	type GuideKind,
 	type JobView,
 	MAX_CHARACTER_REFERENCES,
+	MAX_TRAITS_LENGTH,
 	type ModelSpec,
 	PROMPT_KINDS,
 	type PromptKind,
@@ -854,7 +855,7 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 		tool({
 			name: "check_consistency",
 			title: "Check a character",
-			description: `Says whether a picture shows the same character as 1 to ${MAX_CHARACTER_REFERENCES} pictures of it: a score from 0 to 100 and what differs, such as "coat is blue, should be green". Use it when making a series with one character (a comic, a storyboard, a mascot), after each new picture, against the first or approved one. From ${CONSISTENT_SCORE} up the character holds. A model that sees compares them; on a computer without a graphics card it takes about a minute. Changes nothing.`,
+			description: `Says whether a picture shows the same character as 1 to ${MAX_CHARACTER_REFERENCES} pictures of it: a score from 0 to 100 and what differs, such as "coat is blue, should be green". Use it when making a series with one character (a comic, a storyboard, a mascot), after each new picture, against the first or approved one. From ${CONSISTENT_SCORE} up the character holds. The model on the user's computer that describes pictures compares them for free, in about a minute without a graphics card; when it is not installed, the assistant's cloud model does, on the user's key, which costs money. Changes no picture.`,
 			input: {
 				image: z
 					.string()
@@ -869,7 +870,7 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 					),
 				traits: z
 					.string()
-					.max(500)
+					.max(MAX_TRAITS_LENGTH)
 					.optional()
 					.describe(
 						'What must stay the same, in English, such as "green coat, red scarf, short black hair".',
