@@ -39,16 +39,18 @@ import { mountAccounts } from "./accounts-routes";
 import type { Agents } from "./agents";
 import { requireAccess } from "./auth";
 import {
-	demoGate,
+	demoBusy,
 	demoLimit,
 	demoTurn,
-	HourlyCounter,
+	demoVisitors,
 	notInDemo,
+	RateCounter,
 } from "./demo";
 import { DeviceCookies } from "./devices";
 import { Limiter } from "./limiter";
 import type { AssistantBrain, ImproveRequest } from "./runtime";
 import {
+	addressKey,
 	DEFAULT_LORA_QUOTA,
 	type DemoConfig,
 	hostName,
@@ -81,6 +83,15 @@ export interface AppOptions {
 	demo?: {
 		config: DemoConfig;
 		visitors: SqliteVisitors;
+		/** The one model visitors make pictures with, as /api/models names it. */
+		modelId: string;
+		/** Free room in the data folder, in bytes. */
+		freeBytes?: () => Promise<number>;
+		/**
+		 * Told, for the first minutes, where a request came from and what
+		 * its proxy said, so the owner can check the trusted proxies.
+		 */
+		log?: (line: string) => void;
 		now?: () => number;
 	};
 	/** Whether keys the person relied on were set aside at start; see Runtime. */
@@ -137,6 +148,16 @@ export interface AppOptions {
 const MAX_IDEA_LENGTH = 1000;
 /** More models than any composer offers at once. */
 const MAX_IDEA_MODELS = 50;
+
+/** The longest prompt a demo's visitor may write. */
+const MAX_DEMO_PROMPT_LENGTH = 1000;
+/** Jobs a demo's visitor may have queued or running, past which turns wait. */
+const MAX_VISITOR_JOBS = 2;
+/** Event streams one visitor, and one address, may hold open in a demo. */
+const MAX_VISITOR_STREAMS = 3;
+const MAX_ADDRESS_STREAMS = 10;
+/** How long a demo reuses what it found installed. */
+const LOCAL_MODELS_CACHE_MS = 5000;
 
 /** The longest message a person may send the assistant. */
 const MAX_MESSAGE_LENGTH = 4000;
@@ -339,6 +360,21 @@ export function createApp(options: AppOptions): Hono {
 	const securityHeaders = demo
 		? framedHeaders(demo.config.frameAncestors)
 		: SECURITY_HEADERS;
+	// In a demo's first ten minutes, a request a minute is described, the
+	// first at once: whether the client is the browser's own address shows
+	// whether the proxy in front is trusted as it should be.
+	const demoNow = demo?.now ?? Date.now;
+	const startedAt = demoNow();
+	let loggedAt: number | null = null;
+	const logProxy = (c: Context, client: string | null) => {
+		const at = demoNow();
+		if (!demo?.log || at - startedAt > 10 * 60_000) return;
+		if (loggedAt !== null && at - loggedAt < 60_000) return;
+		loggedAt = at;
+		demo.log(
+			`Demo request: peer ${peerOf(c) ?? "unknown"}, X-Forwarded-For ${c.req.header("x-forwarded-for") ?? "(none)"}, X-Forwarded-Proto ${c.req.header("x-forwarded-proto") ?? "(none)"}, client ${client ?? "unknown"}`,
+		);
+	};
 
 	// Every answer, the page included, keeps to what the interface needs.
 	app.use("*", async (c, next) => {
@@ -376,6 +412,7 @@ export function createApp(options: AppOptions): Hono {
 					}
 					c.set("https", seen.scheme === "https");
 					c.set("client", seen.client);
+					if (demo) logProxy(c, seen.client);
 					const origin = c.req.header("origin");
 					const own = new URL(`${seen.scheme}://${seen.host}`).origin;
 					if (origin) {
@@ -579,41 +616,64 @@ export function createApp(options: AppOptions): Hono {
 		return body;
 	};
 
-	// Pictures each visitor, and each address, asked for in the last hour.
-	const visitorPictures = new HourlyCounter({ now: demo?.now });
-	const addressPictures = new HourlyCounter({ now: demo?.now });
+	// Pictures each visitor, each address and everyone asked for in the
+	// last hour. Everyone's stay under one ceiling, so neither counter ever
+	// holds more live keys than that.
+	const pictures = new RateCounter({ now: demo?.now });
 	/**
-	 * Takes `pictures` from the visitor's and their address's hourly limits,
-	 * or refuses; gives back what it takes if `make` fails.
+	 * Refuses new work while the demo has no room for it: too many jobs on
+	 * the server or of this visitor, or too little disk.
+	 */
+	const assertDemoRoom = async (c: Context) => {
+		if (!demo) return;
+		if (engine.unfinished() >= demo.config.maxQueue) throw demoBusy();
+		if (engine.unfinished(user(c).userId) > MAX_VISITOR_JOBS) {
+			throw demoBusy();
+		}
+		const free = await demo.freeBytes?.();
+		if (free !== undefined && free < demo.config.minFreeBytes) {
+			throw demoBusy();
+		}
+	};
+	/**
+	 * Takes `count` pictures from the visitor's, their address's and
+	 * everyone's hourly limits, or refuses; gives them back if `make` fails,
+	 * or if what it made says nothing was queued.
 	 */
 	const withinDemoLimits = async <T>(
 		c: Context,
-		pictures: number,
+		count: number,
 		make: () => Promise<T>,
+		queued: (made: T) => boolean = () => true,
 	): Promise<T> => {
 		if (!demo) return make();
-		const visitor = user(c).userId;
-		const address = c.get("client") ?? "unknown";
-		const mine = visitorPictures.take(
-			visitor,
-			pictures,
-			demo.config.picturesPerHour,
-		);
-		if (mine > 0) throw demoLimit(mine);
-		const theirs = addressPictures.take(
-			address,
-			pictures,
-			demo.config.picturesPerHourPerIp,
-		);
-		if (theirs > 0) {
-			visitorPictures.refund(visitor, pictures);
-			throw demoLimit(theirs);
+		await assertDemoRoom(c);
+		const keys: [string, number][] = [
+			[`visitor ${user(c).userId}`, demo.config.picturesPerHour],
+			[
+				`address ${addressKey(c.get("client") ?? "unknown")}`,
+				demo.config.picturesPerHourPerIp,
+			],
+			["everyone", demo.config.totalPicturesPerHour],
+		];
+		const taken: string[] = [];
+		const giveBack = () => {
+			for (const key of taken) pictures.refund(key, count);
+		};
+		for (const [key, limit] of keys) {
+			const wait = pictures.take(key, count, limit);
+			if (wait > 0) {
+				giveBack();
+				throw demoLimit(wait);
+			}
+			taken.push(key);
 		}
 		try {
-			return await make();
+			const made = await make();
+			if (!queued(made)) giveBack();
+			return made;
 		} catch (error) {
-			visitorPictures.refund(visitor, pictures);
-			addressPictures.refund(address, pictures);
+			giveBack();
 			throw error;
 		}
 	};
@@ -626,15 +686,15 @@ export function createApp(options: AppOptions): Hono {
 		);
 
 	if (demo) {
-		// Only what a demo allows, each visitor as their own anonymous person.
-		app.use(
-			"/api/*",
-			demoGate({
-				visitors: demo.visitors,
-				config: demo.config,
-				now: demo.now,
-			}),
-		);
+		// Only what a demo allows, each visitor as their own anonymous person,
+		// made only when asked for.
+		const visitors = demoVisitors({
+			visitors: demo.visitors,
+			config: demo.config,
+			now: demo.now,
+		});
+		app.use("/api/*", visitors.gate);
+		app.post("/api/visitor", visitors.start);
 	}
 	if (accounts) {
 		// On a server, every route but the public ones needs a signed-in person.
@@ -655,9 +715,12 @@ export function createApp(options: AppOptions): Hono {
 
 	app.get("/api/models", async (c) => {
 		const models = service.listModels();
+		// A demo offers its one model, and only when it is free.
 		if (demo) {
 			const paid = await paidProviders(c);
-			return c.json(models.filter((m) => !paid.has(m.providerId)));
+			return c.json(
+				models.filter((m) => m.id === demo.modelId && !paid.has(m.providerId)),
+			);
 		}
 		// A token that may not pay is not shown what it could not use.
 		const token = server ? c.get("viewer").apiToken : null;
@@ -798,12 +861,26 @@ export function createApp(options: AppOptions): Hono {
 			throw new ValidationError("sessionId must be a string");
 		}
 		if (demo) {
-			// Only models that cost nothing, and at most what the demo allows.
+			// Only the demo's model, if it costs nothing, and at most what the
+			// demo allows.
 			const paid = await paidProviders(c);
 			const byId = new Map(service.listModels().map((m) => [m.id, m]));
 			const modelIds = [...new Set(body.modelIds as string[])];
-			if (modelIds.some((id) => paid.has(byId.get(id)?.providerId ?? ""))) {
+			if (
+				modelIds.some(
+					(id) =>
+						id !== demo.modelId || paid.has(byId.get(id)?.providerId ?? ""),
+				)
+			) {
 				throw notInDemo();
+			}
+			if (
+				typeof body.prompt === "string" &&
+				body.prompt.length > MAX_DEMO_PROMPT_LENGTH
+			) {
+				throw new ValidationError(
+					`prompt must be at most ${MAX_DEMO_PROMPT_LENGTH} characters`,
+				);
 			}
 			const turn = demoTurn(body, demo.config);
 			const each = typeof turn.count === "number" ? turn.count : 1;
@@ -850,9 +927,24 @@ export function createApp(options: AppOptions): Hono {
 	});
 
 	app.post("/api/jobs/:id/retry", async (c) => {
-		// A job makes at most a turn's worth of one model's pictures.
-		await withinDemoLimits(c, demo?.config.maxBatch ?? 1, () =>
-			service.retryJob(user(c), c.req.param("id")),
+		const id = c.req.param("id");
+		if (!demo) {
+			await service.retryJob(user(c), id);
+			return c.body(null, 204);
+		}
+		// What it makes again counts, only if it is queued again: a second
+		// click on a job already running costs nothing.
+		const job = await service.getJob(user(c), id);
+		// One that cannot run again is refused as it is, taking nothing.
+		if (job.status !== "failed" && job.status !== "canceled") {
+			await service.retryJob(user(c), id);
+			return c.body(null, 204);
+		}
+		await withinDemoLimits(
+			c,
+			Math.max(1, job.params.count),
+			() => service.retryJob(user(c), id),
+			(queued) => queued,
 		);
 		return c.body(null, 204);
 	});
@@ -913,8 +1005,30 @@ export function createApp(options: AppOptions): Hono {
 	const seesFolders = (c: Context) =>
 		!server ||
 		(!demo && ["owner", "admin"].includes(c.get("viewer").user.role));
+	/**
+	 * What is installed, and the card's free memory, which a program on the
+	 * machine reports. Strangers ask a demo for it as often as they like: it
+	 * is asked at most every few seconds, and only the demo's model shown.
+	 */
+	let demoModels: { at: number; view: Promise<LocalModelsView> } | null = null;
+	const localModels = (): Promise<LocalModelsView> => {
+		if (!demo) return models.listWithMemory();
+		const at = demoNow();
+		if (!demoModels || at - demoModels.at >= LOCAL_MODELS_CACHE_MS) {
+			const view = models.listWithMemory().then((all) => ({
+				...all,
+				models: all.models.filter((m) => m.id === demo.config.model),
+			}));
+			// A failure is not kept: the next request asks again.
+			view.catch(() => {
+				if (demoModels?.view === view) demoModels = null;
+			});
+			demoModels = { at, view };
+		}
+		return demoModels.view;
+	};
 	app.get("/api/local-models", async (c) => {
-		const view = await models.listWithMemory();
+		const view = await localModels();
 		if (seesFolders(c)) return c.json(view);
 		// The server's folders are none of a member's business.
 		return c.json({
@@ -1344,8 +1458,12 @@ export function createApp(options: AppOptions): Hono {
 		if (!Number.isInteger(index)) throw new NotFoundError("Demo not found");
 		const size = c.req.query("size") ?? "original";
 		if (!isDemoSize(size)) throw new ValidationError("Unknown demo size");
-		const demo = await models.demo(c.req.param("id"), index, size);
-		return serveFile(c, demo.blob, demo.mime);
+		// A public demo shows its own model, and fetches no other's pictures.
+		if (demo && c.req.param("id") !== demo.config.model) {
+			throw new NotFoundError("Demo not found");
+		}
+		const found = await models.demo(c.req.param("id"), index, size);
+		return serveFile(c, found.blob, found.mime);
 	});
 
 	app.get("/api/gallery", async (c) => {
@@ -1451,8 +1569,39 @@ export function createApp(options: AppOptions): Hono {
 		return c.body(null, 202);
 	});
 
+	/** Event streams open in a demo, by visitor and by address. */
+	const openStreams = new Map<string, number>();
+	/** Holds a stream for each key, or refuses; returns how to let it go. */
+	const holdStreams = (keys: [string, number][]): (() => void) => {
+		if (keys.some(([key, most]) => (openStreams.get(key) ?? 0) >= most)) {
+			throw demoLimit(60_000);
+		}
+		for (const [key] of keys) {
+			openStreams.set(key, (openStreams.get(key) ?? 0) + 1);
+		}
+		let released = false;
+		return () => {
+			if (released) return;
+			released = true;
+			for (const [key] of keys) {
+				const left = (openStreams.get(key) ?? 1) - 1;
+				if (left > 0) openStreams.set(key, left);
+				else openStreams.delete(key);
+			}
+		};
+	};
 	app.get("/api/events", (c) => {
 		const { userId } = user(c);
+		// Each open stream holds a connection: a demo's visitors get a few.
+		const release = demo
+			? holdStreams([
+					[`visitor ${userId}`, MAX_VISITOR_STREAMS],
+					[
+						`address ${addressKey(c.get("client") ?? "unknown")}`,
+						MAX_ADDRESS_STREAMS,
+					],
+				])
+			: () => {};
 		return streamSSE(c, async (stream) => {
 			const send = (event: { type: string } | TrainerEvent) =>
 				void stream.writeSSE({
@@ -1484,6 +1633,7 @@ export function createApp(options: AppOptions): Hono {
 				unsubscribeModels();
 				unsubscribeTrainer?.();
 				unsubscribeAssistant?.();
+				release();
 			};
 			stream.onAbort(unsubscribe);
 			await stream.writeSSE({ event: "ready", data: "{}" });

@@ -5,12 +5,13 @@ import {
 	type LocalModelStore,
 	type SqliteVisitors,
 	VISITOR_PREFIX,
+	type VisitorRow,
 } from "@hatchlight/core";
-import type { Context, MiddlewareHandler } from "hono";
+import type { Context, Handler, MiddlewareHandler } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import { demoAccess } from "./access";
 import { routeOf } from "./auth";
-import type { DemoConfig } from "./transport";
+import { addressKey, type DemoConfig } from "./transport";
 
 declare module "hono" {
 	interface ContextVariableMap {
@@ -20,60 +21,93 @@ declare module "hono" {
 }
 
 const HOUR = 60 * 60 * 1000;
+const MINUTE = 60 * 1000;
 /** How often a visitor's last visit is written down, at most. */
-const TOUCH_EVERY = 60 * 1000;
+const TOUCH_EVERY = MINUTE;
 
 /** Over https the cookie is bound to this host and never sent over http. */
 const SECURE_VISITOR_COOKIE = "__Host-hatchlight-visitor";
 /** Over plain http, as when trying the demo on one's own machine. */
 const PLAIN_VISITOR_COOKIE = "hatchlight_visitor";
-/** 32 random bytes, as base64url. */
+/** 32 random bytes, or a SHA-256, as base64url. */
 const TOKEN = /^[\w-]{43}$/;
+
+/**
+ * Routes a browser loads as addresses (pictures, videos), where neither a
+ * header nor, in a frame that keeps no cookies, a cookie can go: they also
+ * take the visitor's media key in `?m=`, which opens nothing else.
+ */
+const MEDIA_ROUTES = new Set([
+	"GET /api/assets/:id",
+	"GET /api/jobs/:id/preview",
+	"GET /api/local-models/:id/demos/:index",
+]);
+/** Asked by health checks and before anything else: never held back. */
+const UNLIMITED_ROUTES = new Set(["GET /api/health", "GET /api/server"]);
 
 const hashOf = (token: string) =>
 	createHash("sha256").update(token).digest("hex");
 
+/** The media key of a visitor's token: known to the visitor, stored hashed. */
+export const mediaKeyOf = (token: string) =>
+	createHash("sha256").update(`media\n${token}`).digest("base64url");
+
 /**
- * Counts what each key (a visitor, an address) did in the last hour, to
- * hold it to a limit. Kept in memory: a restart forgives.
+ * Counts what each key (a visitor, an address, everyone) did in a sliding
+ * window, to hold it to a limit. Kept in memory: a restart forgives. It
+ * keeps at most `maxKeys` keys and forgets only those with nothing left in
+ * the window; full of live ones, it refuses new keys rather than forgive.
  */
-export class HourlyCounter {
+export class RateCounter {
 	private entries = new Map<string, { at: number; n: number }[]>();
 	private now: () => number;
+	private windowMs: number;
 	private maxKeys: number;
 
-	constructor(options: { now?: () => number; maxKeys?: number } = {}) {
+	constructor(
+		options: { now?: () => number; windowMs?: number; maxKeys?: number } = {},
+	) {
 		this.now = options.now ?? Date.now;
-		this.maxKeys = options.maxKeys ?? 50_000;
+		this.windowMs = options.windowMs ?? HOUR;
+		this.maxKeys = options.maxKeys ?? 100_000;
 	}
 
 	/**
-	 * Takes `n` more for `key` if that stays within `limit` in the last hour,
+	 * Takes `n` more for `key` if that stays within `limit` in the window,
 	 * and returns 0; otherwise takes nothing and returns how many
-	 * milliseconds until enough of the hour has passed.
+	 * milliseconds until there is room.
 	 */
 	take(key: string, n: number, limit: number): number {
 		const now = this.now();
-		const recent = (this.entries.get(key) ?? []).filter(
-			(entry) => now - entry.at < HOUR,
-		);
+		const live = (entry: { at: number }) => now - entry.at < this.windowMs;
+		const recent = (this.entries.get(key) ?? []).filter(live);
 		let used = recent.reduce((sum, entry) => sum + entry.n, 0);
 		if (used + n > limit) {
 			// The oldest go first; the wait ends when enough of them have.
 			for (const entry of recent) {
 				used -= entry.n;
-				if (used + n <= limit) return Math.max(1, entry.at + HOUR - now);
+				if (used + n <= limit) {
+					return Math.max(1, entry.at + this.windowMs - now);
+				}
 			}
 			// More than the limit at once: never.
-			return HOUR;
+			return this.windowMs;
+		}
+		if (!this.entries.has(key)) {
+			// The least recently used come first; only spent ones may go.
+			for (const [oldest, entries] of this.entries) {
+				if (this.entries.size < this.maxKeys) break;
+				const newest = entries.at(-1);
+				if (newest && live(newest)) {
+					return Math.max(1, newest.at + this.windowMs - now);
+				}
+				this.entries.delete(oldest);
+			}
 		}
 		recent.push({ at: now, n });
 		// Moved to the end: the map's order is the order of last use.
 		this.entries.delete(key);
 		this.entries.set(key, recent);
-		while (this.entries.size > this.maxKeys) {
-			this.entries.delete(this.entries.keys().next().value as string);
-		}
 		return 0;
 	}
 
@@ -93,7 +127,7 @@ export const notInDemo = () =>
 		403,
 	);
 
-/** The answer for a visitor or an address past its hourly limit. */
+/** The answer for a visitor or an address past its limit. */
 export const demoLimit = (waitMs: number) =>
 	new AccessError(
 		"You reached the limit of the demo. Try again later",
@@ -102,78 +136,153 @@ export const demoLimit = (waitMs: number) =>
 		{ minutes: Math.max(1, Math.ceil(waitMs / 60_000)) },
 	);
 
+/** The answer when the demo has no room for more work now. */
+export const demoBusy = () =>
+	new AccessError(
+		"The demo is busy. Try again in a few minutes",
+		"demoBusy",
+		503,
+	);
+
+/** The answer for a request from no known visitor. */
+const visitorRequired = () =>
+	new AccessError(
+		"Start a visit first: POST /api/visitor",
+		"visitorRequired",
+		401,
+	);
+
 /**
- * Lets into a public demo only the routes DEMO_ACCESS allows, and gives
- * each visitor an anonymous identity: a random token in an HttpOnly cookie,
- * of which the server keeps only the hash. What a visitor makes is stored
- * under their own user id, so the same checks that keep the people of a
- * server apart keep visitors apart.
+ * The visitors of a public demo. Only `start` (POST /api/visitor) makes
+ * one: a random token, sent back in the answer and in an HttpOnly cookie,
+ * of which the server keeps only the hash. `gate` lets in only the routes
+ * DEMO_ACCESS allows, and on visitor routes only a known visitor, named by
+ * `Authorization: Bearer <token>` or else the cookie. What a visitor makes
+ * is stored under their own user id, so the checks that keep the people of
+ * a server apart keep visitors apart.
  */
-export function demoGate(options: {
+export function demoVisitors(options: {
 	visitors: SqliteVisitors;
 	config: DemoConfig;
-	/** New visitors made by each address in the last hour. */
-	newVisitors?: HourlyCounter;
 	now?: () => number;
-}): MiddlewareHandler {
+}): { gate: MiddlewareHandler; start: Handler } {
 	const { visitors, config } = options;
 	const now = options.now ?? Date.now;
-	const newVisitors = options.newVisitors ?? new HourlyCounter({ now });
-	return async (c, next) => {
+	const ttl = config.ttlHours * HOUR;
+	// Everyone's new visitors count under one key, and stay below the
+	// ceiling: the counters per address never hold more live keys than that.
+	const newVisitors = new RateCounter({ now });
+	const requests = new RateCounter({ now, windowMs: MINUTE });
+	const cookieName = (c: Context) =>
+		c.get("https") === true ? SECURE_VISITOR_COOKIE : PLAIN_VISITOR_COOKIE;
+
+	/** The visitor a request names, and how, or null. */
+	const resolve = (
+		c: Context,
+		media: boolean,
+	): { row: VisitorRow; token: string | null; cookie: boolean } | null => {
+		const at = now();
+		const live = (row: VisitorRow | null) =>
+			row && at - row.lastSeenAt < ttl ? row : null;
+		const header = c.req.header("authorization");
+		// A header counts alone: a wrong one is not made good by a cookie.
+		if (header !== undefined) {
+			const token = /^Bearer\s+(\S+)$/i.exec(header)?.[1] ?? "";
+			const row = TOKEN.test(token) ? live(visitors.find(hashOf(token))) : null;
+			return row && { row, token, cookie: false };
+		}
+		const token = getCookie(c, cookieName(c));
+		const row =
+			token && TOKEN.test(token) ? live(visitors.find(hashOf(token))) : null;
+		if (row && token) return { row, token, cookie: true };
+		const key = media ? c.req.query("m") : undefined;
+		const byMedia =
+			key && TOKEN.test(key) ? live(visitors.findByMedia(hashOf(key))) : null;
+		return byMedia && { row: byMedia, token: null, cookie: false };
+	};
+
+	const seen = (
+		c: Context,
+		found: { row: VisitorRow; token: string | null; cookie: boolean },
+	) => {
+		const at = now();
+		if (at - found.row.lastSeenAt < TOUCH_EVERY) return;
+		visitors.touch(found.row.id, at);
+		// The cookie slides with use, when it is what named the visitor.
+		if (found.cookie && found.token) setVisitorCookie(c, found.token, config);
+	};
+
+	const gate: MiddlewareHandler = async (c, next) => {
 		const route = routeOf(c);
+		const key = route ? `${route.method} ${route.path}` : "";
 		const access = route ? demoAccess(route.method, route.path) : "refused";
 		if (access === "refused") throw notInDemo();
-		if (access === "public") return next();
-		const https = c.get("https") === true;
-		const name = https ? SECURE_VISITOR_COOKIE : PLAIN_VISITOR_COOKIE;
-		const token = getCookie(c, name);
-		const at = now();
-		const known =
-			token && TOKEN.test(token) ? visitors.find(hashOf(token)) : null;
-		// One gone idle was forgotten, with what it made; a new one starts.
-		if (known && at - known.lastSeenAt < config.ttlHours * HOUR) {
-			if (at - known.lastSeenAt >= TOUCH_EVERY) {
-				visitors.touch(known.id, at);
-				setVisitorCookie(c, name, token as string, config, https);
-			}
-			c.set("visitor", known.userId);
-			return next();
+		if (!UNLIMITED_ROUTES.has(key)) {
+			const address = addressKey(c.get("client") ?? "unknown");
+			const wait = requests.take(address, 1, config.requestsPerMinutePerIp);
+			if (wait > 0) throw demoLimit(wait);
 		}
-		const address = c.get("client") ?? "unknown";
-		const wait = newVisitors.take(address, 1, config.visitorsPerHourPerIp);
+		if (access === "public") return next();
+		const found = resolve(c, MEDIA_ROUTES.has(key));
+		if (!found) throw visitorRequired();
+		seen(c, found);
+		c.set("visitor", found.row.userId);
+		await next();
+	};
+
+	const start: Handler = (c) => {
+		// A visitor already known goes on as themselves.
+		const found = resolve(c, false);
+		if (found?.token) {
+			seen(c, found);
+			setVisitorCookie(c, found.token, config);
+			return c.json({
+				token: found.token,
+				mediaKey: mediaKeyOf(found.token),
+			});
+		}
+		const address = addressKey(c.get("client") ?? "unknown");
+		const wait = newVisitors.take(
+			`address ${address}`,
+			1,
+			config.visitorsPerHourPerIp,
+		);
 		if (wait > 0) throw demoLimit(wait);
-		const fresh = randomBytes(32).toString("base64url");
-		const userId = VISITOR_PREFIX + randomBytes(16).toString("base64url");
+		const total = newVisitors.take("everyone", 1, config.totalVisitorsPerHour);
+		if (total > 0) {
+			newVisitors.refund(`address ${address}`, 1);
+			throw demoLimit(total);
+		}
+		const at = now();
+		const token = randomBytes(32).toString("base64url");
+		const mediaKey = mediaKeyOf(token);
 		visitors.create({
-			id: hashOf(fresh),
-			userId,
+			id: hashOf(token),
+			userId: VISITOR_PREFIX + randomBytes(16).toString("base64url"),
+			mediaId: hashOf(mediaKey),
 			createdAt: at,
 			lastSeenAt: at,
 		});
-		setVisitorCookie(c, name, fresh, config, https);
-		c.set("visitor", userId);
-		await next();
+		setVisitorCookie(c, token, config);
+		return c.json({ token, mediaKey }, 201);
 	};
-}
 
-function setVisitorCookie(
-	c: Context,
-	name: string,
-	token: string,
-	config: DemoConfig,
-	https: boolean,
-): void {
-	setCookie(c, name, token, {
-		httpOnly: true,
-		path: "/",
-		maxAge: config.ttlHours * 60 * 60,
-		// A Space is shown inside a frame on huggingface.co, another site:
-		// there only a cookie for every site, kept apart per top site
-		// (partitioned), is sent. Changes need the page's own origin anyway.
-		...(https
-			? { secure: true, sameSite: "None" as const, partitioned: true }
-			: { secure: false, sameSite: "Lax" as const }),
-	});
+	const setVisitorCookie = (c: Context, token: string, conf: DemoConfig) => {
+		const https = c.get("https") === true;
+		setCookie(c, cookieName(c), token, {
+			httpOnly: true,
+			path: "/",
+			maxAge: conf.ttlHours * 60 * 60,
+			// A Space is shown inside a frame on huggingface.co, another site:
+			// there only a cookie for every site, kept apart per top site
+			// (partitioned), is sent. Changes need the page's own origin anyway.
+			...(https
+				? { secure: true, sameSite: "None" as const, partitioned: true }
+				: { secure: false, sameSite: "Lax" as const }),
+		});
+	};
+
+	return { gate, start };
 }
 
 /**

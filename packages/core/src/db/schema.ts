@@ -278,11 +278,17 @@ export const visitors = sqliteTable(
 	{
 		id: text("id").primaryKey(),
 		userId: text("user_id").notNull(),
+		/**
+		 * The SHA-256 of the key that lets the visitor's pictures load as
+		 * addresses, where no cookie or header can go; it opens nothing else.
+		 */
+		mediaId: text("media_id").notNull(),
 		createdAt: integer("created_at").notNull(),
 		lastSeenAt: integer("last_seen_at").notNull(),
 	},
 	(t) => [
 		uniqueIndex("visitors_user").on(t.userId),
+		uniqueIndex("visitors_media").on(t.mediaId),
 		index("visitors_last_seen").on(t.lastSeenAt),
 	],
 );

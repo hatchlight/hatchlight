@@ -189,21 +189,24 @@ export function routeAccess(method: string, routePath: string): Access {
 /**
  * What a public demo lets in, by route:
  *
- * - `public`: anyone, with no visitor identity made for them;
- * - `visitor`: anyone, as the anonymous visitor their cookie names, on
+ * - `public`: anyone, as no visitor;
+ * - `visitor`: a visitor made by POST /api/visitor, named by their token, on
  *   their own sessions and pictures, and making pictures with the model
  *   installed for the demo;
  * - `refused`: nobody. Accounts, installing, training, keys, agents,
  *   uploads, and anything that uses a language model.
  *
- * Every route is named here, so a new one is decided on, not let in by
- * accident; one missing, or not a route at all, is refused.
+ * Every route of ROUTE_ACCESS is named here, with the one route only a
+ * demo has, so a new one is decided on, not let in by accident; one
+ * missing, or not a route at all, is refused.
  */
 export type DemoAccess = "public" | "visitor" | "refused";
 
 export const DEMO_ACCESS: Readonly<Record<string, DemoAccess>> = {
 	"GET /api/health": "public",
 	"GET /api/server": "public",
+	// The only way a visitor is made: on purpose, once, by the page.
+	"POST /api/visitor": "public",
 
 	"GET /api/models": "visitor",
 	"GET /api/providers": "visitor",

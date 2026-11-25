@@ -134,8 +134,107 @@ export function whenSignedOut(handler: () => void): () => void {
 	};
 }
 
+/** A public demo's visitor, as POST /api/visitor made them. */
+interface DemoVisitor {
+	token: string;
+	/** Lets pictures load as addresses, where no header can go. */
+	mediaKey: string;
+}
+
+/** Kept for this tab, so a reload goes on as the same visitor. */
+const VISITOR_STORE = "hatchlight.visitor";
+let visitor: DemoVisitor | null = null;
+let renewing: Promise<DemoVisitor> | null = null;
+let visitorChanged: (() => void) | null = null;
+
+function storedToken(): string | null {
+	try {
+		return sessionStorage.getItem(VISITOR_STORE);
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Starts this tab's visit to a public demo: goes on as the visitor this
+ * tab was, if the demo still knows them, or as a new one. The token comes
+ * back in a cookie too; requests also send it as a header, for frames
+ * where the browser keeps no cookies.
+ */
+export async function startVisitor(fresh = false): Promise<DemoVisitor> {
+	const known = fresh ? null : (visitor?.token ?? storedToken());
+	const response = await fetch("/api/visitor", {
+		method: "POST",
+		headers: known ? { authorization: `Bearer ${known}` } : {},
+	});
+	const body = await response.json().catch(() => null);
+	if (!response.ok || typeof body?.token !== "string") {
+		throw new ApiError(
+			body?.error ?? `Request failed (HTTP ${response.status})`,
+			typeof body?.code === "string" ? body.code : undefined,
+			body?.params ?? undefined,
+		);
+	}
+	visitor = { token: body.token, mediaKey: body.mediaKey };
+	try {
+		sessionStorage.setItem(VISITOR_STORE, body.token);
+	} catch {
+		// Without storage, the visit lasts as long as the page.
+	}
+	return visitor;
+}
+
+/** The demo forgot this visitor (they were idle too long): a new one, once. */
+function renewVisitor(): Promise<DemoVisitor> {
+	renewing ??= startVisitor(true)
+		.then((made) => {
+			visitorChanged?.();
+			return made;
+		})
+		.finally(() => {
+			renewing = null;
+		});
+	return renewing;
+}
+
+/** Calls `handler` when a demo's visitor had to start again. */
+export function whenVisitorChanged(handler: () => void): () => void {
+	visitorChanged = handler;
+	return () => {
+		if (visitorChanged === handler) visitorChanged = null;
+	};
+}
+
+/** The headers that name a demo's visitor, if this is one. */
+export function visitorHeaders(): Record<string, string> {
+	return visitor ? { authorization: `Bearer ${visitor.token}` } : {};
+}
+
+/** Asks again once as a new visitor, when the demo forgot this one. */
+export async function withVisitor(
+	path: string,
+	init?: RequestInit,
+): Promise<Response> {
+	const named = (headers?: HeadersInit) => {
+		const all = new Headers(headers);
+		for (const [name, value] of Object.entries(visitorHeaders())) {
+			all.set(name, value);
+		}
+		return { ...init, headers: all };
+	};
+	const response = await fetch(path, named(init?.headers));
+	if (response.status !== 401 || !visitor) return response;
+	const body = await response
+		.clone()
+		.json()
+		.catch(() => null);
+	if (body?.code !== "visitorRequired") return response;
+	await renewVisitor();
+	return fetch(path, named(init?.headers));
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-	const response = await fetch(path, init);
+	const response = await withVisitor(path, init);
 	if (!response.ok) {
 		const body = await response.json().catch(() => null);
 		// Signed out elsewhere, or a temporary password: back to the gate.
@@ -409,13 +508,16 @@ export const api = {
 };
 
 export const GALLERY_PAGE = 60;
-export const assetUrl = (id: string) => `/api/assets/${id}`;
+/** A demo's visitor's media key, for addresses the browser loads itself. */
+const media = (separator: "?" | "&") =>
+	visitor ? `${separator}m=${encodeURIComponent(visitor.mediaKey)}` : "";
+export const assetUrl = (id: string) => `/api/assets/${id}${media("?")}`;
 /** A picture a training made along the way, at a step. */
 export const sampleUrl = (trainingId: string, step: number) =>
 	`/api/trainings/${trainingId}/samples/${step}`;
 /** A running job's latest picture; `version` changes the address per picture. */
 export const previewUrl = (jobId: string, version: number) =>
-	`/api/jobs/${jobId}/preview?v=${version}`;
+	`/api/jobs/${jobId}/preview?v=${version}${media("&")}`;
 /**
  * A model's demo. Pictures come smaller than their authors made them: a card
  * asks for "card", an enlarged view for "large". Videos ignore the size.
@@ -424,4 +526,4 @@ export const demoUrl = (
 	modelId: string,
 	index: number,
 	size: "card" | "large" = "card",
-) => `/api/local-models/${modelId}/demos/${index}?size=${size}`;
+) => `/api/local-models/${modelId}/demos/${index}?size=${size}${media("&")}`;

@@ -51,5 +51,18 @@ for all of them. The usual ones:
 
 The public address comes from `SPACE_HOST`, which the Space sets, and the
 Space's proxy is trusted on its private network, so per-visitor limits see
-each visitor's own address. Do not add cloud keys to the Space: the demo
+each visitor's own address. Check it once the Space runs:
+
+```sh
+curl -s https://api.ipify.org; echo        # your own public address
+curl -s https://<owner>-<space>.hf.space/api/health
+```
+
+In the Space's logs, the line `Demo request: peer …, X-Forwarded-For …,
+client …` (written for one request a minute, in the first ten minutes)
+must end with `client` and the first address. Lines with no
+X-Forwarded-For are the Space's own checks: look for the one with your
+address, and run the `curl` again a minute later if needed. If `client` is a private
+address such as `10.x.x.x`, set `HATCHLIGHT_TRUSTED_PROXIES` to the `peer`
+address's network in the Space's variables. Do not add cloud keys to the Space: the demo
 never uses paid models, whatever keys it has.

@@ -13,6 +13,7 @@ import {
 	type GenerationParams,
 	generationParamsSchema,
 	type Job,
+	type JobView,
 	type ModelSpec,
 	type ProviderStatus,
 	type Session,
@@ -316,13 +317,22 @@ export class ReelService {
 		await this.deps.engine.cancel(jobId);
 	}
 
-	/** Runs a job that failed or was canceled again. */
-	async retryJob(ctx: UserContext, jobId: string): Promise<void> {
-		this.assertRoom(ctx);
+	/** One of the person's jobs. */
+	async getJob(ctx: UserContext, jobId: string): Promise<JobView> {
 		const job = await this.deps.repo.findJob(jobId);
 		if (!job || job.userId !== ctx.userId)
 			throw new NotFoundError("Job not found", "jobNotFound");
-		await this.deps.engine.retry(job, ctx.tokenId ?? null);
+		return job;
+	}
+
+	/**
+	 * Runs a job that failed or was canceled again. Says whether it was
+	 * queued: false when it already was, as after a second click.
+	 */
+	async retryJob(ctx: UserContext, jobId: string): Promise<boolean> {
+		this.assertRoom(ctx);
+		const job = await this.getJob(ctx, jobId);
+		return this.deps.engine.retry(job, ctx.tokenId ?? null);
 	}
 
 	/** The picture a running job shows as it forms. */

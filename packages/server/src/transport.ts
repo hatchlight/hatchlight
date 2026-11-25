@@ -24,6 +24,16 @@ export interface DemoConfig {
 	picturesPerHourPerIp: number;
 	/** New visitors one address may start in an hour. */
 	visitorsPerHourPerIp: number;
+	/** Pictures all visitors together may ask for in an hour. */
+	totalPicturesPerHour: number;
+	/** New visitors all addresses together may start in an hour. */
+	totalVisitorsPerHour: number;
+	/** Requests to the API one address may make in a minute. */
+	requestsPerMinutePerIp: number;
+	/** Jobs queued or running on the server past which turns wait. */
+	maxQueue: number;
+	/** Free room the data folder keeps; below it, no new pictures. */
+	minFreeBytes: number;
 	/** Pictures one turn may ask of each model. */
 	maxBatch: number;
 	/** The longest video, in seconds. */
@@ -195,6 +205,11 @@ export function serverConfig(
 				picturesPerHour: whole("DEMO_PICTURES_PER_HOUR", 20),
 				picturesPerHourPerIp: whole("DEMO_PICTURES_PER_HOUR_PER_IP", 60),
 				visitorsPerHourPerIp: whole("DEMO_VISITORS_PER_HOUR_PER_IP", 30),
+				totalPicturesPerHour: whole("DEMO_TOTAL_PICTURES_PER_HOUR", 1000),
+				totalVisitorsPerHour: whole("DEMO_TOTAL_VISITORS_PER_HOUR", 1000),
+				requestsPerMinutePerIp: whole("DEMO_REQUESTS_PER_MINUTE_PER_IP", 600),
+				maxQueue: whole("DEMO_MAX_QUEUE", 50),
+				minFreeBytes: Math.floor(count("DEMO_MIN_FREE_GB", 2) * 1024 ** 3),
 				maxBatch: whole("DEMO_MAX_BATCH", 2),
 				maxSeconds: whole("DEMO_MAX_SECONDS", 4),
 				// A Space is shown on huggingface.co, in a frame.
@@ -386,6 +401,31 @@ function parseIpv4(text: string): number[] | null {
 	return out;
 }
 
+/**
+ * The key limits per address count under: an IPv4 address as itself, an
+ * IPv6 address by its /64, the block one home or server is usually given,
+ * so that the 2^64 addresses in it count as one. IPv4 written as IPv6
+ * (::ffff:192.0.2.1) is IPv4.
+ */
+export function addressKey(address: string): string {
+	const bytes = parseIp(address);
+	if (!bytes) return address;
+	const mapped =
+		bytes.subarray(0, 10).every((byte) => byte === 0) &&
+		bytes[10] === 0xff &&
+		bytes[11] === 0xff;
+	if (mapped) return [...bytes.subarray(12)].join(".");
+	const groups: string[] = [];
+	for (let index = 0; index < 4; index++) {
+		groups.push(
+			(((bytes[index * 2] ?? 0) << 8) | (bytes[index * 2 + 1] ?? 0)).toString(
+				16,
+			),
+		);
+	}
+	return `${groups.join(":")}::/64`;
+}
+
 /** Whether `address` falls in one of `blocks`. */
 export function inBlocks(address: string, blocks: Cidr[]): boolean {
 	const bytes = parseIp(address);
@@ -402,9 +442,13 @@ export function inBlocks(address: string, blocks: Cidr[]): boolean {
 	});
 }
 
-/** The first value of a comma-separated header, as the client's side sent it. */
-const first = (header: string | undefined): string | undefined =>
-	header?.split(",")[0]?.trim() || undefined;
+/**
+ * The last value of a comma-separated header: the one the trusted proxy
+ * nearest this server added. Values before it came from further away,
+ * the browser included, and anyone could have written them.
+ */
+const last = (header: string | undefined): string | undefined =>
+	header?.split(",").at(-1)?.trim() || undefined;
 
 /** Where a request came from and where it was sent, past trusted proxies. */
 export interface RequestOrigin {
@@ -433,8 +477,8 @@ export function requestOrigin(
 		client: peer,
 	};
 	if (!peer || !inBlocks(peer, trustedProxies)) return direct;
-	const proto = first(headers.get("x-forwarded-proto") ?? undefined);
-	const host = first(headers.get("x-forwarded-host") ?? undefined);
+	const proto = last(headers.get("x-forwarded-proto") ?? undefined);
+	const host = last(headers.get("x-forwarded-host") ?? undefined);
 	// The client is the last address a trusted proxy did not add.
 	const hops = (headers.get("x-forwarded-for") ?? "")
 		.split(",")

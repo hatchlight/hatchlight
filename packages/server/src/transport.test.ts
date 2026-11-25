@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+	addressKey,
 	ConfigError,
 	DEFAULT_DEMO_MODEL,
 	hostName,
@@ -103,6 +104,11 @@ test("demo mode listens everywhere, at its public address, with limits", () => {
 		picturesPerHour: 20,
 		picturesPerHourPerIp: 60,
 		visitorsPerHourPerIp: 30,
+		totalPicturesPerHour: 1000,
+		totalVisitorsPerHour: 1000,
+		requestsPerMinutePerIp: 600,
+		maxQueue: 50,
+		minFreeBytes: 2 * 1024 ** 3,
 		maxBatch: 2,
 		maxSeconds: 4,
 		frameAncestors: [],
@@ -117,6 +123,11 @@ test("demo mode listens everywhere, at its public address, with limits", () => {
 				HATCHLIGHT_DEMO_PICTURES_PER_HOUR: "5",
 				HATCHLIGHT_DEMO_PICTURES_PER_HOUR_PER_IP: "10",
 				HATCHLIGHT_DEMO_VISITORS_PER_HOUR_PER_IP: "3",
+				HATCHLIGHT_DEMO_TOTAL_PICTURES_PER_HOUR: "100",
+				HATCHLIGHT_DEMO_TOTAL_VISITORS_PER_HOUR: "50",
+				HATCHLIGHT_DEMO_REQUESTS_PER_MINUTE_PER_IP: "120",
+				HATCHLIGHT_DEMO_MAX_QUEUE: "8",
+				HATCHLIGHT_DEMO_MIN_FREE_GB: "0.5",
 				HATCHLIGHT_DEMO_MAX_BATCH: "1",
 				HATCHLIGHT_DEMO_MAX_SECONDS: "2",
 				HATCHLIGHT_FRAME_ANCESTORS: "https://embed.example",
@@ -128,6 +139,11 @@ test("demo mode listens everywhere, at its public address, with limits", () => {
 		picturesPerHour: 5,
 		picturesPerHourPerIp: 10,
 		visitorsPerHourPerIp: 3,
+		totalPicturesPerHour: 100,
+		totalVisitorsPerHour: 50,
+		requestsPerMinutePerIp: 120,
+		maxQueue: 8,
+		minFreeBytes: 0.5 * 1024 ** 3,
 		maxBatch: 1,
 		maxSeconds: 2,
 		frameAncestors: ["https://embed.example"],
@@ -186,6 +202,43 @@ test("a demo on a Hugging Face Space takes its address from SPACE_HOST", () => {
 			{ SPACE_HOST: "someone-hatchlight.hf.space" },
 		),
 	).toThrow(/HATCHLIGHT_PUBLIC_URL/);
+});
+
+test("limits per address count IPv4 as itself and IPv6 by its /64", () => {
+	expect(addressKey("192.0.2.7")).toBe("192.0.2.7");
+	// IPv4 in IPv6 clothing, however written, is the IPv4.
+	expect(addressKey("::ffff:192.0.2.7")).toBe("192.0.2.7");
+	expect(addressKey("::ffff:c000:207")).toBe("192.0.2.7");
+	expect(addressKey("[::ffff:192.0.2.7]")).toBe("192.0.2.7");
+	// One /64, written long, short, or in capitals.
+	const block = "2001:db8:0:1::/64";
+	for (const address of [
+		"2001:db8:0:1::1",
+		"2001:0DB8:0000:0001:ffff:ffff:ffff:ffff",
+		"2001:db8::1:0:0:0:5",
+		"2001:db8:0:1:1234::%eth0",
+	]) {
+		expect(addressKey(address)).toBe(block);
+	}
+	expect(addressKey("2001:db8:0:2::1")).not.toBe(block);
+	// Not an address: as given.
+	expect(addressKey("unknown")).toBe("unknown");
+});
+
+test("forwarded scheme and host are the ones the nearest proxy added", () => {
+	const proxies = [{ bytes: parseIp("10.0.0.1") as Uint8Array, prefix: 104 }];
+	const seen = requestOrigin(
+		new URL("http://10.0.0.5/api/health"),
+		new Headers({
+			// The browser wrote the first of each; the proxy added the last.
+			"x-forwarded-proto": "http, https",
+			"x-forwarded-host": "evil.example, demo.example",
+		}),
+		"10.0.0.1",
+		proxies,
+	);
+	expect(seen.scheme).toBe("https");
+	expect(seen.host).toBe("demo.example");
 });
 
 test("a public address with more than a scheme and host is refused", () => {

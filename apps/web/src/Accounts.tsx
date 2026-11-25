@@ -35,7 +35,7 @@ import {
 	whenRoomFull,
 	whenSignedOut,
 } from "./api";
-import { DemoNotice } from "./Demo";
+import { DemoGate } from "./Demo";
 import { type I18n, useI18n } from "./i18n";
 import { Bar, ConfirmButton, LABEL, SECTION } from "./Training";
 import { TokenFacts } from "./tokens";
@@ -121,14 +121,9 @@ export function Gate({ children }: { children: ReactNode }) {
 		staleTime: Number.POSITIVE_INFINITY,
 	});
 	if (server.isPending) return null;
-	// A public demo has no accounts: everyone goes straight in, told so.
+	// A public demo has no accounts: each tab starts a visit, and goes in.
 	if (server.data?.mode === "demo") {
-		return (
-			<div className="flex h-full flex-col">
-				{server.data.demo && <DemoNotice demo={server.data.demo} />}
-				<div className="min-h-0 flex-1">{children}</div>
-			</div>
-		);
+		return <DemoGate demo={server.data.demo}>{children}</DemoGate>;
 	}
 	if (server.data?.mode !== "server") return children;
 	return <ServerGate secure={server.data.secure}>{children}</ServerGate>;

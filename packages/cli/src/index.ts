@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { writeSync } from "node:fs";
+import { statfs } from "node:fs/promises";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import {
@@ -202,7 +203,18 @@ const app = createApp({
 	}),
 	allowedOrigins: values.dev ? ["http://localhost:5173"] : [],
 	server: server ?? undefined,
-	demo: demo ? { config: demo, visitors: runtime.visitors } : undefined,
+	demo: demo
+		? {
+				config: demo,
+				visitors: runtime.visitors,
+				modelId: `local/${demo.model}`,
+				freeBytes: async () => {
+					const disk = await statfs(dataDir);
+					return disk.bavail * disk.bsize;
+				},
+				log: (line) => writeSync(1, `${line}\n`),
+			}
+		: undefined,
 	// Agents with a token reach a server at /mcp; each of their tool calls
 	// goes through this server's own API, as that token.
 	mcp:

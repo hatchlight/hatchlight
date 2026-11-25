@@ -41,6 +41,17 @@ export class SqliteVisitors {
 		);
 	}
 
+	/** The visitor a media key's hash names, or null. */
+	findByMedia(mediaId: string): VisitorRow | null {
+		return (
+			this.db
+				.select()
+				.from(schema.visitors)
+				.where(eq(schema.visitors.mediaId, mediaId))
+				.get() ?? null
+		);
+	}
+
 	touch(id: string, at: number): void {
 		this.db
 			.update(schema.visitors)
