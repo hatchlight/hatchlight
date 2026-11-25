@@ -17,6 +17,8 @@ import type { Spawn } from "./provider";
 export const IDLE_MS = 10 * 60_000;
 /** How long a model may take to load before the server is given up on. */
 const START_TIMEOUT_MS = 5 * 60_000;
+/** How long a job waits for an unloaded model's engine to exit. */
+const EXIT_WAIT_MS = 5_000;
 const POLL_MS = 250;
 
 /** A request the server understands: `/sdcpp/v1/img_gen` or `vid_gen`. */
@@ -76,6 +78,8 @@ export interface WarmEnginesOptions {
 	idleMs?: number;
 	/** Reserves the GPU's memory a loaded model takes. */
 	gpu?: GpuLock;
+	/** How long a job waits for an unloaded model's engine to exit. */
+	exitWaitMs?: number;
 }
 
 async function freeLoopbackPort(): Promise<number> {
@@ -103,6 +107,11 @@ export class WarmEngines {
 	private held = 0;
 	/** Jobs running or about to: a busy model is not given back. */
 	private busy = 0;
+	/** Engines told to stop and not yet exited, with the memory each held. */
+	private exiting = new Map<Promise<number>, number>();
+	/** Those of them that did not exit within the wait. */
+	private overdue = new Set<Promise<number>>();
+	private exitWaitMs: number;
 
 	constructor(options: WarmEnginesOptions) {
 		this.spawn = options.spawn;
@@ -110,6 +119,7 @@ export class WarmEngines {
 		this.freePort = options.freePort ?? freeLoopbackPort;
 		this.idleMs = options.idleMs ?? IDLE_MS;
 		this.gpu = options.gpu;
+		this.exitWaitMs = options.exitWaitMs ?? EXIT_WAIT_MS;
 	}
 
 	/** Whether no job is running on the loaded model. */
@@ -194,11 +204,56 @@ export class WarmEngines {
 	/** Unloads the model, freeing the GPU's memory. */
 	stop(): void {
 		clearTimeout(this.idle);
-		this.running?.stop();
+		if (this.running) {
+			const { exited } = this.running;
+			this.exiting.set(exited, this.held);
+			void exited.then(() => {
+				this.exiting.delete(exited);
+				this.overdue.delete(exited);
+			});
+			this.running.stop();
+		}
 		this.running = null;
 		this.hold?.release();
 		this.hold = null;
 		this.held = 0;
+	}
+
+	/**
+	 * Waits a moment for the engines of unloaded models to exit, and resolves
+	 * to the GPU memory those still running hold: until an engine exits, the
+	 * memory it held is not free, though it is no longer reserved.
+	 */
+	async unloading(signal?: AbortSignal): Promise<number> {
+		signal?.throwIfAborted();
+		// An engine already waited for in vain is not waited for again.
+		const exits = [...this.exiting.keys()].filter((e) => !this.overdue.has(e));
+		if (exits.length > 0) {
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			let abort = () => {};
+			await Promise.race([
+				Promise.allSettled(exits),
+				new Promise<void>((resolve) => {
+					timer = setTimeout(resolve, this.exitWaitMs);
+					abort = resolve;
+					signal?.addEventListener("abort", abort, { once: true });
+				}),
+			]);
+			clearTimeout(timer);
+			signal?.removeEventListener("abort", abort);
+			signal?.throwIfAborted();
+			for (const exit of exits) {
+				if (this.exiting.has(exit)) this.overdue.add(exit);
+			}
+		}
+		return this.unloadedBytes;
+	}
+
+	/** The GPU memory engines of unloaded models hold until they exit. */
+	private get unloadedBytes(): number {
+		let bytes = 0;
+		for (const held of this.exiting.values()) bytes += held;
+		return bytes;
 	}
 
 	/** Unloads the model and resolves once its engine has exited. */
@@ -232,9 +287,10 @@ export class WarmEngines {
 			// first, even if this job could run on it: it would wait forever
 			// behind a stream of pictures otherwise.
 			if (this.running?.key !== key || this.gpu?.wanted(this.held)) {
-				// The loaded model's memory goes back before this one's is asked.
-				const released = this.held;
+				// The loaded model's memory goes back before this one's is asked,
+				// and its engine has exited before this one's model loads.
 				this.stop();
+				await this.unloading(signal);
 				if (this.gpu) {
 					this.hold = yield* this.gpu.acquire(bytes, signal, {
 						onWanted: () => {
@@ -243,7 +299,8 @@ export class WarmEngines {
 					});
 					this.held = bytes;
 				}
-				if (acquired) yield* acquired(released);
+				// Counted again: an engine may have exited while this job waited.
+				if (acquired) yield* acquired(this.unloadedBytes);
 				yield {
 					type: "progress",
 					message: "Loading the model",

@@ -602,6 +602,32 @@ describe("running", () => {
 		expect(events.some((e) => "busyBytes" in e)).toBe(false);
 	});
 
+	test("memory of a model kept loaded, unloaded for this job and still exiting, is not other programs'", async () => {
+		const { store, fake } = await setup();
+		const GB = 2 ** 30;
+		// No server beside the engine: the job runs it once.
+		const warm = {
+			loaded: null,
+			unused: true,
+			stop() {},
+			async stopAndWait() {},
+			async unloading() {
+				return 12 * GB;
+			},
+		};
+		const events = await run(
+			new LocalProvider({
+				store: store as never,
+				catalog: [FLUX],
+				spawn: fake([]),
+				warm: warm as never,
+				freeMemory: async () => ({ freeBytes: 0, totalBytes: 12 * GB }),
+			}),
+		);
+		expect(events.some((e) => "busyBytes" in e)).toBe(false);
+		expect(events.some((e) => e.type === "completed")).toBe(true);
+	});
+
 	test("a cancel while the free memory is read ends the job at once", async () => {
 		const { provider, fake } = await setup();
 		const controller = new AbortController();

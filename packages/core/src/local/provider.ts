@@ -913,7 +913,10 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 				ctx.signal,
 			);
 			try {
-				yield* this.warnIfSlow(runtime, ctx.signal, 0);
+				// A model kept loaded may have been unloaded for this job: until
+				// its engine exits, its memory is Hatchlight's, not other programs'.
+				const released = this.warm ? await this.warm.unloading(ctx.signal) : 0;
+				yield* this.warnIfSlow(runtime, ctx.signal, released);
 				yield* this.once(runtime, handle, ctx, output, path, references, mask);
 			} finally {
 				hold.release();
@@ -928,8 +931,9 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 	 * model, which would then spill over to the computer's and run many times
 	 * slower. Called once the job holds the GPU, so what Hatchlight's own jobs
 	 * use is accounted for: another Hatchlight's reservations, and the model
-	 * this process unloaded (`released`), are not other programs; this
-	 * process's other holds are in use and not counted as free. The reading
+	 * this process unloaded and whose engine is still exiting (`released`),
+	 * are not other programs; this process's other holds are in use and not
+	 * counted as free. A reservation that cannot be read gives no warning. The reading
 	 * is given a moment and ends with a cancel; it never delays a job longer.
 	 */
 	private async *warnIfSlow(
@@ -946,7 +950,7 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 		const busyBytes = busyGpuMemory(
 			memory,
 			runtime.variant.memoryBytes,
-			released + this.store.gpu.othersReserved(),
+			released + (await this.store.gpu.othersReserved()),
 		);
 		if (busyBytes != null) {
 			yield {
