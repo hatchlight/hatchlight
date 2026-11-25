@@ -34,6 +34,7 @@ import { remaining } from "./format";
 import { type I18n, isMessageKey, useI18n } from "./i18n";
 import { LoraShelf } from "./Loras";
 import { useFolderMove, useModelProgress } from "./live";
+import { ModelFolders } from "./ModelFolders";
 import {
 	categoryOf,
 	filterLocal,
@@ -1006,6 +1007,7 @@ export function Models() {
 				{view.data && <Machine view={view.data} />}
 				<CheckpointShelf />
 				<LoraShelf />
+				<ModelFolders />
 				{view.data && <Catalog view={view.data} />}
 			</div>
 		</div>

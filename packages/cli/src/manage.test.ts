@@ -108,6 +108,50 @@ describe("LoRAs", () => {
 	});
 });
 
+describe("folders", () => {
+	test("another app's folder is linked, listed, looked at again and removed", async () => {
+		const t = await terminal();
+		await t.run("folders");
+		expect(t.err.join()).toContain("No folder yet");
+		const app = join(t.dir, "ComfyUI");
+		await mkdir(join(app, "models", "loras"), { recursive: true });
+		await writeFile(
+			join(app, "models", "loras", "Ink.safetensors"),
+			safetensors(["lora_unet_input_blocks_4_1_proj_in.alpha"]),
+		);
+		await writeFile(
+			join(app, "models", "loras", "broken.safetensors"),
+			new Uint8Array(3),
+		);
+		expect(await t.run("folders", ["add", "ComfyUI"])).toBe(EXIT.ok);
+		expect(t.err.at(-1)).toContain(
+			"0 checkpoints and 1 LoRAs; 1 other files skipped",
+		);
+		await t.run("folders", ["--json"]);
+		const [folder] = t.json() as { id: string }[];
+		expect(folder).toMatchObject({ path: app, app: "comfyui", loras: 1 });
+		await t.run("loras", ["--json"]);
+		expect(t.json()).toMatchObject([{ id: "ink", linked: { app: "comfyui" } }]);
+		expect(await t.run("folders", ["rescan"])).toBe(EXIT.ok);
+		expect(t.out.at(-1)).toContain("ComfyUI");
+		await t.run("folders", ["remove", "ComfyUI"]);
+		await t.run("folders", ["--json"]);
+		expect(t.json()).toEqual([]);
+		await expect(
+			t.run("folders", ["remove", folder?.id ?? ""]),
+		).rejects.toThrow("No linked folder");
+		// A full path is sent as typed, and a removal by path reaches the server.
+		await t.run("folders", ["add", app]);
+		await t.run("folders", ["remove", `${app}/`]);
+		await t.run("folders", ["--json"]);
+		expect(t.json()).toEqual([]);
+		await expect(t.run("folders", ["add", "D:\\Models"])).rejects.toThrow(
+			// As Linux names it, or as a system without drives refuses it.
+			/\/mnt\/d\/Models|Not a full path: D:\\Models/,
+		);
+	});
+});
+
 test("doctor says what is missing, and what to do", async () => {
 	const t = await terminal();
 	expect(await t.run("doctor")).toBe(EXIT.ok);

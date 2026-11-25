@@ -54,6 +54,7 @@ hatchlight catalog                # models to download, and how they fit
 hatchlight install sdxl-turbo     # download one and wait until it is ready
 hatchlight keys set fal           # asks for the key without showing it
 hatchlight loras add style.safetensors
+hatchlight folders add ~/ComfyUI  # use the models of another app where they are
 hatchlight trainer install        # then train a LoRA from your pictures:
 hatchlight train photos/ --name "My dog" --trigger qzxdog --consent --samples out/
 ```

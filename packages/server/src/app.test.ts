@@ -851,6 +851,72 @@ test("a whole model is added from a file, set up, and deleted", async () => {
 	expect(await gone.json()).toMatchObject({ code: "checkpointMissing" });
 });
 
+test("another app's folder is linked, its models listed, and unlinked", async () => {
+	const app = await mkdtemp(join(tmpdir(), "hatchlight-comfyui-"));
+	cleanups.push(() => rm(app, { recursive: true }));
+	await mkdir(join(app, "models", "loras"), { recursive: true });
+	await mkdir(join(app, "models", "checkpoints"), { recursive: true });
+	await Bun.write(
+		join(app, "models", "loras", "Ink.safetensors"),
+		safetensors(["lora_unet_input_blocks_4_1_proj_in.alpha"]),
+	);
+	await Bun.write(
+		join(app, "models", "checkpoints", "Juggernaut.safetensors"),
+		safetensors([
+			"model.diffusion_model.input_blocks.0.0.weight",
+			"conditioner.embedders.1.model.ln_final.weight",
+			"first_stage_model.decoder.conv_in.weight",
+		]),
+	);
+	const { call, post, dir } = await setup({
+		modelFolderPlaces: async () => [app, join(app, "nope")],
+	});
+	expect(await (await call("/api/model-folders/suggestions")).json()).toEqual([
+		{ path: app, app: "comfyui" },
+	]);
+	const added = await post("/api/model-folders", { path: app });
+	expect(added.status).toBe(201);
+	const folder = (await added.json()) as { id: string };
+	expect(folder).toMatchObject({ app: "comfyui", loras: 1, checkpoints: 1 });
+	expect(await (await call("/api/loras")).json()).toMatchObject([
+		{ id: "ink", linked: { folder: folder.id, app: "comfyui" } },
+	]);
+	expect(await (await call("/api/checkpoints")).json()).toMatchObject([
+		{ id: "juggernaut", linked: { folder: folder.id } },
+	]);
+	const refused = await call("/api/loras/ink", { method: "DELETE" });
+	expect(refused.status).toBe(400);
+	expect(await refused.json()).toMatchObject({ code: "modelLinked" });
+	expect((await post("/api/model-folders", { path: app })).status).toBe(400);
+	expect(
+		await (await post("/api/model-folders", { path: "relative" })).json(),
+	).toMatchObject({ code: "folderNotAbsolute" });
+	expect(
+		await (
+			await post("/api/model-folders", { path: join(dir, "models") })
+		).json(),
+	).toMatchObject({ code: "modelFolderInside" });
+	expect(
+		await (await post("/api/model-folders", { path: join(app, "no") })).json(),
+	).toMatchObject({ code: "modelFolderMissing" });
+	expect(
+		await (await post("/api/model-folders/rescan", {})).json(),
+	).toMatchObject([{ id: folder.id, loras: 1 }]);
+	expect(await (await call("/api/model-folders/suggestions")).json()).toEqual(
+		[],
+	);
+	expect(
+		(await call(`/api/model-folders/${folder.id}`, { method: "DELETE" }))
+			.status,
+	).toBe(204);
+	expect(await (await call("/api/loras")).json()).toEqual([]);
+	expect(await (await call("/api/model-folders")).json()).toEqual([]);
+	const gone = await call(`/api/model-folders/${folder.id}`, {
+		method: "DELETE",
+	});
+	expect(await gone.json()).toMatchObject({ code: "modelFolderNotFound" });
+});
+
 test("the trainer reports itself, and nothing trains before it is installed", async () => {
 	const { call } = await setup();
 	const status = await (await call("/api/trainer")).json();

@@ -36,6 +36,7 @@ import { type BuildChoice, chooseBuild, chooseVariant, fitOf } from "./engines";
 import { isLocked, tryFileLock, withFileLock } from "./file-lock";
 import { GpuLock } from "./gpu";
 import { detectHardware, type GpuMemory, readGpuMemory } from "./hardware";
+import { LinkedFolders } from "./linked";
 import { LoraShelf } from "./loras";
 import { cleanUp, type Mirror, mirrorInto, treeSize, undo } from "./move";
 import { extractTarGz } from "./tar";
@@ -123,6 +124,13 @@ export interface LocalModelStoreOptions {
 	 * removed from the folder.
 	 */
 	enginesDir?: string;
+	/** Folders of other apps whose models are used where they are. */
+	modelFolders?: {
+		/** Where the folders, and what was read in them, are kept. */
+		file?: string;
+		/** Where other apps are often installed, for suggestions. */
+		places?: () => Promise<string[]>;
+	};
 }
 
 /** An engine build that was installed but does not run on this machine. */
@@ -380,6 +388,8 @@ export class LocalModelStore {
 	readonly loras: LoraShelf;
 	/** Whole models added by hand, kept and moved like the LoRAs. */
 	readonly checkpoints: CheckpointShelf;
+	/** Other apps' folders, whose models the two shelves show too. */
+	readonly folders: LinkedFolders;
 	private locationFile: string | null;
 	/** Builds that came with the system, read-only. */
 	private enginesDir: string | null;
@@ -406,10 +416,23 @@ export class LocalModelStore {
 			options.gpuMemory ??
 			(options.hardware ? async () => null : () => readGpuMemory());
 		this.checkEngine = options.checkEngine ?? runsWithHelp;
+		this.folders = new LinkedFolders({
+			...options.modelFolders,
+			root: () => this.root,
+			ownIds: {
+				lora: () => this.loras.ownIds(),
+				checkpoint: () => this.checkpoints.ownIds(),
+			},
+			changed: (kind) =>
+				this.emit({
+					type: kind === "lora" ? "loras.changed" : "models.changed",
+				}),
+		});
 		this.loras = new LoraShelf({
 			root: () => this.root,
 			check: () => this.notMoving(),
 			changed: () => this.emit({ type: "loras.changed" }),
+			linked: this.folders.loras,
 		});
 		this.checkpoints = new CheckpointShelf({
 			root: () => this.root,
@@ -417,6 +440,7 @@ export class LocalModelStore {
 			// A checkpoint is a model: the composer and Models offer it.
 			changed: () => this.emit({ type: "models.changed" }),
 			release: () => this.letGo(),
+			linked: this.folders.checkpoints,
 		});
 		this.gpu = new GpuLock({
 			root: this.root,

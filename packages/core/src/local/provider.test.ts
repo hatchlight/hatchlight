@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import {
 	dimensions,
 	engineArguments,
 	type GpuMemory,
+	LinkedFolders,
 	type LocalModelSpec,
 	LocalProvider,
 	type LocalRuntime,
@@ -1247,6 +1248,162 @@ describe("running", () => {
 				references: [],
 			}),
 		).rejects.toMatchObject({ code: "loraMissing" });
+	});
+
+	test("a LoRA from another app's folder reaches the engine through a folder of the job's", async () => {
+		const SDXL = { ...FLUX, loraBase: "sdxl" as const };
+		const { provider, fake, calls, store, gpuRoot, dir } = await setup(SDXL);
+		const app = await mkdtemp(join(tmpdir(), "hatchlight-comfyui-"));
+		dirs.push(app);
+		await mkdir(join(app, "models", "loras"), { recursive: true });
+		await Bun.write(
+			join(app, "models", "loras", "Ink v2.safetensors"),
+			safetensors(["lora_unet_input_blocks_4_1_proj_in.alpha"]),
+		);
+		const folders = new LinkedFolders({
+			root: () => gpuRoot,
+			ownIds: { lora: async () => [], checkpoint: async () => [] },
+		});
+		store.loras = new LoraShelf({
+			root: () => gpuRoot,
+			linked: folders.loras,
+		});
+		const own = await store.loras.add(
+			new Blob([safetensors(["lora_te2_x.alpha"], { ss_output_name: "Mine" })]),
+			"mine.safetensors",
+		);
+		await folders.add(app);
+		// What the engine finds in its LoRA folder while it runs.
+		let seen: string[] = [];
+		const watching: Spawn = (argv) => {
+			seen = readdirSync(argv[argv.indexOf("--lora-model-dir") + 1] as string);
+			return fake([])(argv);
+		};
+		const watched = provider(watching);
+		await watched.load();
+		const [model] = watched.listModels();
+		const handle = await watched.submit({
+			model: model as never,
+			params: params({
+				loras: [
+					{ id: "ink-v2", weight: 1 },
+					{ id: own.id, weight: 0.5 },
+				],
+			}),
+			references: [],
+		});
+		const events: ProviderEvent[] = [];
+		for await (const event of watched.events(handle, {
+			apiKey: undefined,
+			signal: new AbortController().signal,
+		})) {
+			events.push(event);
+		}
+		expect(events.at(-1)?.type).toBe("completed");
+		const argv = calls[0] ?? [];
+		expect(argv[argv.indexOf("-p") + 1]).toBe(
+			"a red fox <lora:ink-v2:1> <lora:mine:0.5>",
+		);
+		const loraDir = argv[argv.indexOf("--lora-model-dir") + 1] as string;
+		expect(loraDir.startsWith(join(dir, "loras-"))).toBe(true);
+		expect(seen.sort()).toEqual(["ink-v2.safetensors", "mine.safetensors"]);
+		// Gone after the job; the other app's file stays.
+		expect(await readdir(dir)).not.toContain(loraDir.slice(dir.length + 1));
+		expect(await readdir(join(app, "models", "loras"))).toEqual([
+			"Ink v2.safetensors",
+		]);
+	});
+
+	test("a job's LoRA folder goes when the engine fails or the job is canceled, and is named for Windows", async () => {
+		const SDXL = { ...FLUX, loraBase: "sdxl" as const };
+		const { fake, calls, store, gpuRoot, dir } = await setup(SDXL);
+		const app = await mkdtemp(join(tmpdir(), "hatchlight-comfyui-"));
+		dirs.push(app);
+		await mkdir(join(app, "models", "loras"), { recursive: true });
+		await Bun.write(
+			join(app, "models", "loras", "Ink.safetensors"),
+			safetensors(["lora_unet_input_blocks_4_1_proj_in.alpha"]),
+		);
+		const folders = new LinkedFolders({
+			root: () => gpuRoot,
+			ownIds: { lora: async () => [], checkpoint: async () => [] },
+		});
+		store.loras = new LoraShelf({ root: () => gpuRoot, linked: folders.loras });
+		await folders.add(app);
+		// A Windows engine under WSL: the job's folder is a Windows path, and
+		// never holds symbolic links, which it could not follow.
+		const base = store.runtime;
+		store.runtime = async () => ({ ...(await base()), throughWindows: true });
+		const symlinked: string[] = [];
+		const local = (spawn: Spawn) =>
+			new LocalProvider({
+				store: store as never,
+				catalog: [SDXL],
+				spawn,
+				freeMemory: async () => null,
+				windowsPath: async (path) => `W:${path}`,
+				links: {
+					symlink: async (from) => {
+						symlinked.push(from);
+					},
+				},
+			});
+		const jobs = async () =>
+			(await readdir(dir)).filter((name) => name.startsWith("loras-"));
+		const start = async (provider: LocalProvider) => {
+			await provider.load();
+			const [model] = provider.listModels();
+			return provider.submit({
+				model: model as never,
+				params: params({ loras: [{ id: "ink", weight: 1 }] }),
+				references: [],
+			});
+		};
+		const failing = local(fake([], 3, null));
+		const events: ProviderEvent[] = [];
+		for await (const event of failing.events(await start(failing), {
+			apiKey: undefined,
+			signal: new AbortController().signal,
+		})) {
+			events.push(event);
+		}
+		expect(events.at(-1)?.type).toBe("failed");
+		const argv = calls[0] ?? [];
+		const loraDir = argv[argv.indexOf("--lora-model-dir") + 1] ?? "";
+		expect(loraDir).toStartWith(`W:${join(dir, "loras-")}`);
+		expect(symlinked).toEqual([]);
+		expect(await jobs()).toEqual([]);
+
+		const hanging = local(fake(["HANG"]));
+		const controller = new AbortController();
+		const run = (async () => {
+			for await (const _ of hanging.events(await start(hanging), {
+				apiKey: undefined,
+				signal: controller.signal,
+			})) {
+			}
+		})();
+		await Bun.sleep(30);
+		expect(await jobs()).toHaveLength(1);
+		controller.abort();
+		await expect(run).rejects.toThrow();
+		expect(await jobs()).toEqual([]);
+	});
+
+	test("a linked checkpoint runs from its folder, named for Windows", async () => {
+		const args = await engineArguments(
+			{
+				...runtime(FLUX),
+				files: { model: "/mnt/c/ComfyUI/models/checkpoints/dream.safetensors" },
+			},
+			FLUX.defaults,
+			params({ seed: 1 }),
+			"/scratch/out.png",
+			async (path) => `W:${path}`,
+		);
+		expect(args[args.indexOf("-m") + 1]).toBe(
+			"W:/mnt/c/ComfyUI/models/checkpoints/dream.safetensors",
+		);
 	});
 
 	test("a LoRA deleted after the job was asked for fails the job, saying so", async () => {

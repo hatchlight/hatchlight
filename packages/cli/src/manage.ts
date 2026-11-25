@@ -1,9 +1,11 @@
 import { readFile } from "node:fs/promises";
-import { basename, resolve } from "node:path";
+import { basename, isAbsolute, resolve } from "node:path";
 import type {
 	CommercialUse,
 	Fit,
 	LocalModelStatus,
+	ModelFolder,
+	ModelFolderApp,
 } from "@hatchlight/core/types";
 import type { Api } from "./api";
 import {
@@ -47,6 +49,43 @@ function commercial(use: CommercialUse): string {
 }
 
 /** A catalog id from what a person may type: "sdxl-turbo" or "local/sdxl-turbo". */
+const APPS: Record<ModelFolderApp, string> = {
+	comfyui: "ComfyUI",
+	a1111: "AUTOMATIC1111 or Forge",
+	stabilityMatrix: "Stability Matrix",
+};
+
+/** ", 3 files skipped" for files a linked folder has that are not used. */
+function skippedText(folder: ModelFolder): string {
+	const { unknown, unreadable, tooLarge } = folder.skipped;
+	const skipped = unknown + unreadable + tooLarge;
+	return skipped > 0
+		? `; ${skipped} other files skipped (a family Hatchlight does not run, unreadable or too large)`
+		: "";
+}
+
+/** A linked folder's id, as the server makes them. */
+const FOLDER_ID = /^[0-9a-f]{8}$/;
+
+/** A folder as typed: a full path (`C:\\…` too) stays as it is. */
+function fullPath(cwd: string, path: string): string {
+	return isAbsolute(path) || /^[a-z]:[\\/]/i.test(path)
+		? path
+		: resolve(cwd, path);
+}
+
+function folderRow(folder: ModelFolder): string[] {
+	return [
+		folder.id,
+		folder.path ?? "",
+		folder.app ? APPS[folder.app] : "folder",
+		folder.available
+			? `${folder.checkpoints} checkpoints, ${folder.loras} LoRAs`
+			: "not there now",
+		folder.truncated ? "too many files: some left out" : "",
+	];
+}
+
 const catalogId = (value: string) => value.replace(/^local\//, "");
 
 /** The variant an install picks, or the one installed. */
@@ -418,6 +457,70 @@ ${COMMON_HELP}`,
 			}
 			throw new UsageError(
 				"Use `loras`, `loras add <file>` or `loras remove <id>`.",
+			);
+		},
+	},
+
+	folders: {
+		summary:
+			"Use the models in ComfyUI, AUTOMATIC1111, Forge or Stability Matrix",
+		usage: `Usage: hatchlight folders
+       hatchlight folders add <folder>
+       hatchlight folders remove <id|folder>
+       hatchlight folders rescan
+
+Points Hatchlight at another app's folder, or at its models folder. The
+SDXL and SD 1.5 checkpoints and the LoRAs for a family Hatchlight runs are
+used where they are: nothing is copied, moved or deleted. Other files are
+counted as skipped. Hatchlight looks again at startup; \`rescan\` looks now.
+
+${COMMON_HELP}`,
+		options: {},
+		async run(values, [action, target, ...extra], { api, io }) {
+			const show = (folders: ModelFolder[]) => {
+				if (values.json) {
+					json(io, folders);
+					return;
+				}
+				if (folders.length === 0) {
+					io.err(
+						"No folder yet. Add one with: hatchlight folders add <folder>",
+					);
+					return;
+				}
+				for (const line of table(folders.map(folderRow))) io.out(line);
+			};
+			if (action == null || action === "rescan") {
+				if (target != null) throw new UsageError(`Unexpected ${target}.`);
+				show(await (action ? api.rescanModelFolders() : api.modelFolders()));
+				return EXIT.ok;
+			}
+			if (!target || extra.length > 0) {
+				throw new UsageError(
+					action === "add"
+						? "Give one folder."
+						: "Give the id or the folder of one linked folder.",
+				);
+			}
+			if (action === "add") {
+				const folder = await api.addModelFolder(fullPath(io.cwd, target));
+				if (values.json) json(io, folder);
+				io.err(
+					`Linked ${folder.path ?? target}: ${folder.checkpoints} checkpoints and ${folder.loras} LoRAs${skippedText(folder)}.`,
+				);
+				return EXIT.ok;
+			}
+			if (action === "remove") {
+				// By its id, else by its path: the server knows a folder by any name.
+				await api.removeModelFolder(
+					FOLDER_ID.test(target) ? target : fullPath(io.cwd, target),
+				);
+				if (values.json) json(io, { id: target, removed: true });
+				io.err(`Removed ${target}. Its files stay where they are.`);
+				return EXIT.ok;
+			}
+			throw new UsageError(
+				"Use `folders`, `folders add <folder>`, `folders remove <id>` or `folders rescan`.",
 			);
 		},
 	},

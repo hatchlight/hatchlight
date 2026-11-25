@@ -1,7 +1,8 @@
+import { existsSync } from "node:fs";
 import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { type ErrorCode, NotFoundError, ValidationError } from "../errors";
-import { LORA_ID } from "../types";
+import { type LinkedFrom, LORA_ID } from "../types";
 
 /**
  * A folder of files people add themselves (LoRAs, checkpoints), each kept
@@ -92,10 +93,15 @@ export interface ShelfItem {
 	name: string;
 	size: number;
 	addedAt: number;
+	/** Set when the file is in another app's folder. */
+	linked?: LinkedFrom;
 }
 
 /** Notes as written to disk: the item without what the file itself says. */
-export type Notes<T extends ShelfItem> = Omit<T, "id" | "size" | "addedAt">;
+export type Notes<T extends ShelfItem> = Omit<
+	T,
+	"id" | "size" | "addedAt" | "linked"
+>;
 
 /** What one kind of file is, and how it is checked. */
 export interface ShelfKind<T extends ShelfItem> {
@@ -115,7 +121,26 @@ export interface ShelfKind<T extends ShelfItem> {
 	parse(notes: Record<string, unknown>): Notes<T> | null;
 }
 
-export interface ShelfOptions {
+/**
+ * Files of one kind found in other apps' folders (see linked.ts), shown
+ * beside the shelf's own and used where they are. Their ids never clash
+ * with the shelf's.
+ */
+export interface LinkedFiles<T extends ShelfItem> {
+	list(): Promise<T[]>;
+	/** The file's notes, when it is still there. */
+	get(id: string): Promise<T | null>;
+	/** Where the file is, once the list was read. */
+	path(id: string): string | null;
+	/** Resolves once what is known of the files was read. */
+	ready(): Promise<void>;
+	/** Keeps changed notes, already checked by the kind. */
+	update(id: string, notes: Notes<T>): Promise<void>;
+	/** Whether a linked file has this id, so a new file takes another. */
+	taken(id: string): boolean;
+}
+
+export interface ShelfOptions<T extends ShelfItem = ShelfItem> {
 	/** The models folder, which can change while the app runs. */
 	root: () => string;
 	/** Throws when the folder cannot be written now, e.g. while it moves. */
@@ -124,6 +149,8 @@ export interface ShelfOptions {
 	changed?: () => void;
 	/** Lets go of files held open (a loaded model) before one is deleted. */
 	release?: () => Promise<void>;
+	/** Files of this kind in other apps' folders. */
+	linked?: LinkedFiles<T>;
 }
 
 /** The files of one kind kept in the models folder, each with its notes. */
@@ -135,7 +162,7 @@ export class Shelf<T extends ShelfItem> {
 
 	constructor(
 		private kind: ShelfKind<T>,
-		private options: ShelfOptions,
+		private options: ShelfOptions<T>,
 	) {}
 
 	/** An upload is being written into the folder. */
@@ -158,10 +185,26 @@ export class Shelf<T extends ShelfItem> {
 		);
 	}
 
-	/** The file the engine reads. */
+	/** The file the engine reads: the shelf's own, else a linked one. */
 	path(id: string): string {
 		if (!SHELF_ID.test(id)) throw this.missing(id);
+		const own = this.ownPath(id);
+		const linked = this.options.linked?.path(id);
+		return linked && !existsSync(own) ? linked : own;
+	}
+
+	private ownPath(id: string): string {
 		return join(this.dir, `${id}.safetensors`);
+	}
+
+	/** The ids of the shelf's own files, for linked files to avoid. */
+	async ownIds(): Promise<string[]> {
+		const names = await readdir(this.dir).catch(() => [] as string[]);
+		return [
+			...new Set(
+				names.map((name) => name.replace(/\.(safetensors|json)$/, "")),
+			),
+		];
 	}
 
 	private notes(id: string): string {
@@ -201,18 +244,24 @@ export class Shelf<T extends ShelfItem> {
 			const item = await this.read(id);
 			if (item) items.push(item);
 		}
+		const own = new Set(items.map((item) => item.id));
+		for (const item of (await this.options.linked?.list()) ?? []) {
+			if (!own.has(item.id)) items.push(item);
+		}
 		return items.sort((a, b) => b.addedAt - a.addedAt);
 	}
 
 	/** A file's notes, when the file is there too. */
 	async get(id: string): Promise<T> {
-		const item = SHELF_ID.test(id) ? await this.read(id) : null;
+		const item = SHELF_ID.test(id)
+			? ((await this.read(id)) ?? (await this.options.linked?.get(id)))
+			: null;
 		if (!item) throw this.missing(id);
 		return item;
 	}
 
 	private async read(id: string): Promise<T | null> {
-		const file = await stat(this.path(id)).catch(() => null);
+		const file = await stat(this.ownPath(id)).catch(() => null);
 		if (!file?.isFile()) return null;
 		const raw = await Bun.file(this.notes(id))
 			.json()
@@ -294,6 +343,8 @@ export class Shelf<T extends ShelfItem> {
 				this.unreadable(),
 			);
 			const notes = this.kind.inspect(header, fileName);
+			// Linked ids are known before one is chosen.
+			await this.options.linked?.ready();
 			const keep = async (): Promise<T> => {
 				const existing = new Set(
 					(await readdir(dir).catch(() => [] as string[])).map((n) =>
@@ -302,7 +353,9 @@ export class Shelf<T extends ShelfItem> {
 				);
 				const id = shelfId(
 					notes.name,
-					(candidate) => existing.has(candidate),
+					(candidate) =>
+						existing.has(candidate) ||
+						this.options.linked?.taken(candidate) === true,
 					this.kind.folder.replace(/s$/, ""),
 				);
 				const addedAt = Date.now();
@@ -331,13 +384,19 @@ export class Shelf<T extends ShelfItem> {
 	async update(id: string, change: Partial<Notes<T>>): Promise<T> {
 		this.options.check?.();
 		const current = await this.get(id);
-		const { id: _, size: __, ...kept } = current;
+		const { id: _, size: __, linked: ___, ...kept } = current;
 		const next = this.kind.parse({ ...kept, ...change });
 		if (!next) {
 			throw new ValidationError(
 				"These settings are not valid",
 				this.kind.errors.invalid,
 			);
+		}
+		// A linked file's notes are kept with what was found in its folder.
+		if (!(await this.read(id)) && this.options.linked) {
+			await this.options.linked.update(id, next);
+			this.options.changed?.();
+			return this.get(id);
 		}
 		await this.writeNotes(this.notes(id), {
 			...next,
@@ -349,7 +408,15 @@ export class Shelf<T extends ShelfItem> {
 
 	async remove(id: string): Promise<void> {
 		this.options.check?.();
-		await this.get(id);
+		const item = await this.get(id);
+		// Another app's file is never deleted from here.
+		if (item.linked) {
+			throw new ValidationError(
+				"This file is in another app's folder; remove that folder from Hatchlight instead",
+				"modelLinked",
+				{ id },
+			);
+		}
 		// Windows deletes no open file: what holds it lets go first.
 		await this.options.release?.();
 		// The file goes first: notes without a file are not listed.

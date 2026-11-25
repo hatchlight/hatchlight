@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, readdir, rename, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -1608,6 +1608,28 @@ test("members may add only so many LoRAs; admins are not held to it", async () =
 	const { id } = (await first.json()) as { id: string };
 	await call(`/api/loras/${id}`, { method: "DELETE", who: owner });
 	expect((await add(member, "two.safetensors", "Two")).status).toBe(201);
+});
+
+test("members see the linked folders, but not where they are", async () => {
+	const { call, setupOwner, invite, runtime } = await serverApp();
+	const owner = await setupOwner();
+	const member = await invite(owner, {}, "member");
+	const app = await mkdtemp(join(tmpdir(), "hatchlight-comfyui-"));
+	await mkdir(join(app, "models", "loras"), { recursive: true });
+	try {
+		await runtime.models.folders.add(app);
+		const list = async (who: Who) =>
+			(await (await call("/api/model-folders", { who })).json()) as {
+				path?: string;
+				app: string;
+			}[];
+		expect(await list(owner)).toMatchObject([{ path: app, app: "comfyui" }]);
+		const [seen] = await list(member);
+		expect(seen).toMatchObject({ app: "comfyui" });
+		expect(seen?.path).toBeUndefined();
+	} finally {
+		await rm(app, { recursive: true });
+	}
 });
 
 test("password checks from one address run one at a time", async () => {

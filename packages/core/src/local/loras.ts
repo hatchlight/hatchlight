@@ -4,6 +4,7 @@ import {
 	nameOf,
 	type SafetensorsHeader,
 	Shelf,
+	type ShelfKind,
 	type ShelfOptions,
 	shelfId,
 } from "./shelf";
@@ -118,49 +119,46 @@ export function loraId(name: string, taken: (id: string) => boolean): string {
 	return shelfId(name, taken, "lora");
 }
 
+/** What a LoRA file is, and how it is checked. */
+export const LORA_KIND: ShelfKind<LoraInfo> = {
+	folder: "loras",
+	maxBytes: MAX_LORA_BYTES,
+	errors: {
+		missing: "loraMissing",
+		tooLarge: "loraTooLarge",
+		unreadable: "loraUnreadable",
+		invalid: "loraUnreadable",
+	},
+	inspect(header, fileName) {
+		const base = loraBaseOf(header);
+		if (!base) {
+			throw new ValidationError(
+				"This file does not look like a LoRA for a model Hatchlight knows",
+				"loraUnknownBase",
+			);
+		}
+		return {
+			name: nameOf(header.metadata, fileName, "LoRA"),
+			base,
+			trigger: triggerOf(header.metadata),
+		};
+	},
+	parse(notes) {
+		const { name, base, trigger } = notes;
+		if (typeof name !== "string" || !LORA_BASES.includes(base as LoraBase)) {
+			return null;
+		}
+		return {
+			name,
+			base: base as LoraBase,
+			trigger: typeof trigger === "string" ? trigger : null,
+		};
+	},
+};
+
 /** The LoRAs kept in the models folder, each a file and its notes. */
 export class LoraShelf extends Shelf<LoraInfo> {
-	constructor(options: ShelfOptions) {
-		super(
-			{
-				folder: "loras",
-				maxBytes: MAX_LORA_BYTES,
-				errors: {
-					missing: "loraMissing",
-					tooLarge: "loraTooLarge",
-					unreadable: "loraUnreadable",
-					invalid: "loraUnreadable",
-				},
-				inspect(header, fileName) {
-					const base = loraBaseOf(header);
-					if (!base) {
-						throw new ValidationError(
-							"This file does not look like a LoRA for a model Hatchlight knows",
-							"loraUnknownBase",
-						);
-					}
-					return {
-						name: nameOf(header.metadata, fileName, "LoRA"),
-						base,
-						trigger: triggerOf(header.metadata),
-					};
-				},
-				parse(notes) {
-					const { name, base, trigger } = notes;
-					if (
-						typeof name !== "string" ||
-						!LORA_BASES.includes(base as LoraBase)
-					) {
-						return null;
-					}
-					return {
-						name,
-						base: base as LoraBase,
-						trigger: typeof trigger === "string" ? trigger : null,
-					};
-				},
-			},
-			options,
-		);
+	constructor(options: ShelfOptions<LoraInfo>) {
+		super(LORA_KIND, options);
 	}
 }
