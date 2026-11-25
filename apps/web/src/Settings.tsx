@@ -663,6 +663,63 @@ function Agents() {
 	);
 }
 
+/**
+ * Settings > Use with other apps: where apps that speak OpenAI's or
+ * AUTOMATIC1111's image API find Hatchlight, and whether they may spend.
+ */
+function OtherApps() {
+	const { t, explain } = useI18n();
+	const server = useServerMode();
+	const client = useQueryClient();
+	const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
+	const choose = useMutation({
+		mutationFn: (otherAppsPaid: boolean) => api.saveSettings({ otherAppsPaid }),
+		onSuccess: (saved) => client.setQueryData(["settings"], saved),
+	});
+	const origin = window.location.origin;
+	const error = choose.error ?? settings.error;
+	return (
+		<Card className={SECTION}>
+			<SectionHeader
+				title={t("settings.otherApps")}
+				intro={t("settings.otherAppsIntro")}
+			/>
+			<CardContent className="flex flex-col gap-5">
+				<Label className="min-h-10 gap-3 font-normal">
+					<Switch
+						checked={settings.data?.otherAppsPaid ?? false}
+						disabled={!settings.data || choose.isPending}
+						onCheckedChange={(checked) => choose.mutate(checked)}
+					/>
+					{t("settings.otherAppsPaid")}
+				</Label>
+				<div className="grid gap-3 md:grid-cols-2">
+					<div className={PANEL}>
+						<h3 className="font-medium">{t("settings.otherAppsOpenAi")}</h3>
+						<CopyLine text={`${origin}/v1`} />
+						<p className="mt-3 text-sm text-dim">
+							{t("settings.otherAppsOpenWebUi")}
+						</p>
+					</div>
+					<div className={PANEL}>
+						<h3 className="font-medium">{t("settings.otherAppsA1111")}</h3>
+						<CopyLine text={origin} />
+						<p className="mt-3 text-sm text-dim">
+							{t("settings.otherAppsSillyTavern")}
+						</p>
+					</div>
+				</div>
+				<p className="text-sm text-dim">
+					{server
+						? t("settings.otherAppsKeyServer")
+						: t("settings.otherAppsKeyLocal")}
+				</p>
+				{error && <p className="text-sm text-danger">{explain(error)}</p>}
+			</CardContent>
+		</Card>
+	);
+}
+
 export function Settings() {
 	const { t, explain, language, setLanguage, languages } = useI18n();
 	const id = useId();
@@ -800,6 +857,7 @@ export function Settings() {
 				)}
 				<UsersSettings />
 				{server ? <AgentTokens /> : <Agents />}
+				<OtherApps />
 			</div>
 		</div>
 	);

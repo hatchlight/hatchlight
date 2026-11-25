@@ -169,6 +169,10 @@ In the app, **Settings > Use with AI agents** connects Claude Desktop for you.
 [Command line and agents](docs/command-line.md) covers every command, setting
 up from the terminal, and spending limits for agents.
 
+Other apps can use your models too: Hatchlight answers OpenAI's image API
+and AUTOMATIC1111's, so Open WebUI, SillyTavern, LibreChat and scripts make
+pictures with it. See [Use it from other apps](docs/other-apps.md).
+
 ## Your data
 
 Sessions, pictures and keys stay on your computer:

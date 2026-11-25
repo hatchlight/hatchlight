@@ -198,6 +198,10 @@ look for them in a repository, add a
 [custom secret scanning pattern](https://docs.github.com/en/code-security/secret-scanning/using-advanced-secret-scanning-and-push-protection-features/custom-patterns/defining-custom-patterns-for-secret-scanning)
 with the regular expression `hl_[A-Za-z0-9_-]{43}`.
 
+The same tokens let other apps, such as Open WebUI and SillyTavern, make
+pictures through the OpenAI and AUTOMATIC1111 image APIs the server also
+answers: see [Use it from other apps](other-apps.md#on-a-server).
+
 <a id="reaching-it"></a>
 
 ## Reaching it: LAN, Tailscale, a domain
