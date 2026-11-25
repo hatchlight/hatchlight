@@ -15,6 +15,7 @@
   <a href="https://github.com/hatchlight/hatchlight/actions/workflows/ci.yml"><img src="https://github.com/hatchlight/hatchlight/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/hatchlight/hatchlight"><img src="https://api.scorecard.dev/projects/github.com/hatchlight/hatchlight/badge" alt="OpenSSF Scorecard"></a>
   <a href="https://www.bestpractices.dev/projects/16935"><img src="https://www.bestpractices.dev/projects/16935/badge" alt="OpenSSF Best Practices"></a>
+  <a href="https://glama.ai/mcp/servers/hatchlight/hatchlight"><img src="https://glama.ai/mcp/servers/hatchlight/hatchlight/badges/score.svg" alt="Hatchlight MCP server on Glama"></a>
 </p>
 
 ![Hatchlight: one prompt sent to SDXL Turbo and Stable Diffusion XL on this computer, both pictures forming side by side, each with its time (the wait is sped up 7×, as the video says)](.github/assets/compare.gif)
