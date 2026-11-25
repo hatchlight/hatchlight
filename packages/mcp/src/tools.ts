@@ -1,3 +1,4 @@
+import { APP_VERSION } from "@hatchlight/core";
 import {
 	createTools,
 	type Reel,
@@ -47,7 +48,7 @@ function asMcp(result: ToolResult): CallToolResult {
  */
 export function createMcpServer(reel: Reel, options: McpOptions): McpServer {
 	const server = new McpServer(
-		{ name: "hatchlight", version: options.version ?? "0.0.0" },
+		{ name: "hatchlight", version: options.version ?? APP_VERSION },
 		{ instructions: TOOLS_INSTRUCTIONS },
 	);
 	const tools = createTools(reel, {

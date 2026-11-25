@@ -2,13 +2,14 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FakeProvider } from "@hatchlight/core";
+import { APP_VERSION, FakeProvider } from "@hatchlight/core";
 import { picture } from "@hatchlight/core/testing";
 import type { ModelSpec } from "@hatchlight/core/types";
 import { createApp, createRuntime } from "@hatchlight/server";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import desktop from "../../../apps/desktop/package.json" with { type: "json" };
 import { HatchlightClient } from "./client";
 import { bestLocalModel, createMcpServer, type McpOptions } from "./tools";
 
@@ -61,6 +62,15 @@ const textOf = (result: CallToolResult) =>
 const imagesOf = (result: CallToolResult) =>
 	result.content.filter((c) => c.type === "image");
 const idsIn = (value: string) => value.match(/ast_[A-Za-z0-9_-]+/g) ?? [];
+
+test("it tells agents Hatchlight's own version", async () => {
+	const { client } = await agent();
+	expect(APP_VERSION).toBe(desktop.version);
+	expect(client.getServerVersion()).toMatchObject({
+		name: "hatchlight",
+		version: APP_VERSION,
+	});
+});
 
 test("it offers the tools an agent needs, and none that installs models", async () => {
 	const { client } = await agent();

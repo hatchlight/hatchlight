@@ -32,3 +32,4 @@ export * from "./testing/fake-provider";
 export * from "./totp";
 export * from "./translate";
 export * from "./types";
+export * from "./version";
