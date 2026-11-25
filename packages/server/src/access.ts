@@ -103,6 +103,9 @@ export const ROUTE_ACCESS: Readonly<Record<string, Access>> = {
 	"POST /api/checkpoints": "admin",
 	"PATCH /api/checkpoints/:id": "admin",
 	"DELETE /api/checkpoints/:id": "admin",
+	// Looking a repository up and downloading from it, for what it installs.
+	"GET /api/hugging-face": "admin",
+	"POST /api/hugging-face/downloads": "admin",
 	// Other apps' folders on the machine: where to look is the admins' call.
 	"GET /api/model-folders/suggestions": "admin",
 	"POST /api/model-folders": "admin",

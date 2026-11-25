@@ -1,16 +1,32 @@
+import { type HubTarget, hubTarget } from "@hatchlight/core/hugging-face";
 import { useSyncExternalStore } from "react";
 
 export type Route =
 	/** A session; `talk` shows the conversation with the assistant. */
 	| { view: "chat"; sessionId?: string; talk: boolean }
 	| { view: "gallery" }
-	| { view: "models" }
+	/** `focus` is a catalog model to bring into view. */
+	| { view: "models"; focus?: string }
+	/** A repository opened from Hugging Face; null when the link was not valid. */
+	| { view: "hub"; target: HubTarget | null }
 	| { view: "settings" };
 
 function parse(hash: string): Route {
+	const path = hash.replace(/^#\/?/, "");
+	if (path.startsWith("hf/")) {
+		const [repo = "", query = ""] = path.slice(3).split("?", 2);
+		return {
+			view: "hub",
+			target: hubTarget(repo, new URLSearchParams(query).get("file")),
+		};
+	}
 	const [, first, second, third] = hash.replace(/^#/, "").split("/");
 	if (first === "gallery") return { view: "gallery" };
-	if (first === "models") return { view: "models" };
+	if (first === "models") {
+		return second
+			? { view: "models", focus: decodeURIComponent(second) }
+			: { view: "models" };
+	}
 	if (first === "settings") return { view: "settings" };
 	if (first === "talk") return { view: "chat", talk: true };
 	if (first === "s" && second) {
@@ -36,9 +52,19 @@ export const href = {
 	talk: (id: string) => `#/s/${id}/talk`,
 	gallery: "#/gallery",
 	models: "#/models",
+	model: (id: string) => `#/models/${encodeURIComponent(id)}`,
+	hub: (target: HubTarget) =>
+		`#/hf/${target.repo}${target.file ? `?${new URLSearchParams({ file: target.file })}` : ""}`,
+	/** A link that was not one to a repository. */
+	hubInvalid: "#/hf/",
 	settings: "#/settings",
 };
 
 export function navigate(to: string): void {
 	window.location.hash = to;
+}
+
+/** Goes to `to` in place of where the app is, so Back does not come here again. */
+export function redirect(to: string): void {
+	window.location.replace(to);
 }

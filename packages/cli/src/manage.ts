@@ -1,5 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { basename, isAbsolute, resolve } from "node:path";
+import {
+	type HubUnsupported,
+	hubRepoUrl,
+	parseHubSpec,
+} from "@hatchlight/core/hugging-face";
 import type {
 	CommercialUse,
 	Fit,
@@ -19,6 +24,7 @@ import {
 	pause,
 	table,
 	UsageError,
+	type Values,
 } from "./command";
 
 /**
@@ -174,6 +180,118 @@ async function followInstall(
 	}
 }
 
+/** Why a repository cannot be opened yet, in a sentence. */
+const HUB_REASONS: Record<HubUnsupported, string> = {
+	notFound: "There is no such repository, or it is private.",
+	gated:
+		"Its files are only given to people who accept its terms on Hugging Face.",
+	noFile:
+		"It has no single model file: models made of many files, such as diffusers folders, are not supported yet.",
+	manyFiles: "It has several model files. Name one: hf:<owner>/<repo>/<file>.",
+	fileNotFound: "That file is not in the repository.",
+	notSafetensors: "Only .safetensors files can be added.",
+	unknownFile:
+		"The file is not a whole SDXL or SD 1.5 model, nor a LoRA for a model Hatchlight runs.",
+	tooLarge: "The file is larger than any model of its kind.",
+};
+
+/**
+ * `install hf:<owner>/<repo>[/<file>]`: the catalog's install when it is a
+ * model the catalog has, else a checkpoint or LoRA file, once the person
+ * agreed to its size and license.
+ */
+async function installFromHub(
+	given: string,
+	values: Values,
+	context: Context,
+): Promise<number | string> {
+	const { api, io } = context;
+	const target = parseHubSpec(given);
+	if (!target) {
+		throw new UsageError(
+			`Not a Hugging Face repository: ${given}. Use hf:<owner>/<repo>, or hf:<owner>/<repo>/<file>.`,
+		);
+	}
+	const choice = await api.openFromHub(target);
+	// The catalog's own install takes it from here.
+	if (choice.kind === "catalog") return choice.modelId;
+	if (values.variant || values.cancel) {
+		throw new UsageError(
+			"--variant and --cancel are for models in the catalog.",
+		);
+	}
+	if (choice.kind === "unsupported") {
+		io.err(
+			`${target.repo} cannot be opened in Hatchlight yet. ${HUB_REASONS[choice.reason]} See ${hubRepoUrl(target.repo)}`,
+		);
+		return EXIT.failed;
+	}
+	const what =
+		choice.kind === "checkpoint"
+			? `a whole ${BASE_NAMES[choice.base]} model`
+			: `a LoRA for ${BASE_NAMES[choice.base]}`;
+	io.err(
+		`${choice.file} from ${choice.repo} is ${what}: ${bytes(choice.size)} to download. License: ${choice.license ?? "not stated"} (see ${hubRepoUrl(choice.repo)}).`,
+	);
+	if (!values.yes) {
+		if (!io.interactive) {
+			throw new UsageError("Add --yes to download it without being asked.");
+		}
+		const answer = await io.readLine("Download it? [y/N] ");
+		if (!/^y(es)?$/i.test(answer?.trim() ?? "")) {
+			io.err("Nothing was downloaded.");
+			return EXIT.ok;
+		}
+	}
+	const listening = new AbortController();
+	void (async () => {
+		try {
+			for await (const event of api.events(listening.signal)) {
+				if (
+					event.type === "hub.progress" &&
+					event.repo === choice.repo &&
+					event.file === choice.file
+				) {
+					io.status(
+						`${choice.file}: ${bytes(event.receivedBytes)} of ${bytes(event.size)}`,
+					);
+				}
+			}
+		} catch {
+			// Progress is a nicety.
+		}
+	})();
+	try {
+		const added = await api.addFromHub(choice, io.signal);
+		io.status(null);
+		if (values.json) json(io, added);
+		io.err(
+			added.kind === "checkpoint"
+				? `Added ${added.item.name}. Use it with: -m local/ckpt-${added.item.id}`
+				: `Added ${added.item.name} (${added.item.base}). Use it with <lora:${added.item.id}:1> in a prompt${added.item.trigger ? `, and the word ${added.item.trigger}` : ""}.`,
+		);
+		return EXIT.ok;
+	} catch (error) {
+		io.status(null);
+		if (io.signal.aborted) {
+			io.err("Stopped. Nothing was kept.");
+			return EXIT.interrupted;
+		}
+		throw error;
+	} finally {
+		listening.abort();
+	}
+}
+
+/** Families of models as people write them. */
+const BASE_NAMES: Record<string, string> = {
+	sd1: "SD 1.5",
+	sdxl: "SDXL",
+	flux: "FLUX",
+	wan: "Wan",
+	"z-image": "Z-Image",
+};
+
 /** A key read from the person, or from what is piped in. */
 async function keyFrom(io: Io, provider: string): Promise<string> {
 	const key = io.interactive
@@ -295,25 +413,38 @@ ${COMMON_HELP}`,
 	install: {
 		summary: "Download a model to run on this computer",
 		usage: `Usage: hatchlight install <model> [options]
+       hatchlight install hf:<owner>/<repo>[/<file>] [options]
        hatchlight install --cancel <model>
 
 Downloads a model from \`hatchlight catalog\`, with the engine that runs
 it, and waits until it is ready. The variant that fits this machine best
 is chosen unless --variant names another.
 
+With hf:, opens a repository on Hugging Face: a model the catalog has is
+installed as above; a single SDXL or SD 1.5 checkpoint, or a LoRA, in a
+.safetensors file is added after you agree to its size and license.
+
   --variant <id>    A variant from \`hatchlight catalog <model> --json\`
   --cancel          Stop an install that is going on
+  -y, --yes         Download from Hugging Face without asking
 ${COMMON_HELP}`,
 		options: {
 			variant: { type: "string" },
 			cancel: { type: "boolean", default: false },
+			yes: { type: "boolean", short: "y", default: false },
 		},
 		interruptible: "once",
 		async run(values, positionals, context) {
 			const { api, io } = context;
-			const [given, ...extra] = positionals;
-			if (!given || extra.length > 0) {
+			const [named, ...extra] = positionals;
+			if (!named || extra.length > 0) {
 				throw new UsageError("Name one model, such as sdxl-turbo.");
+			}
+			let given = named;
+			if (named.startsWith("hf:")) {
+				const found = await installFromHub(named, values, context);
+				if (typeof found === "number") return found;
+				given = found;
 			}
 			const model = await findModel(api, given);
 			if (values.cancel) {

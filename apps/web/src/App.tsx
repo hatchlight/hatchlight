@@ -1,3 +1,4 @@
+import { parseHubLink } from "@hatchlight/core/hugging-face";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	Cpu,
@@ -8,7 +9,7 @@ import {
 	Settings as SettingsIcon,
 	Trash2,
 } from "lucide-react";
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Logo, Mark } from "@/components/Logo";
 import {
 	AlertDialog,
@@ -49,6 +50,7 @@ import { cn } from "@/lib/utils";
 import { AccountMenu } from "./Accounts";
 import { api } from "./api";
 import { Chat } from "./Chat";
+import { onLinks } from "./desktop";
 import { useI18n } from "./i18n";
 import { KeysLostToast } from "./KeysLostToast";
 import { useLiveJobs } from "./live";
@@ -67,6 +69,9 @@ const Gallery = lazy(() =>
 const Models = lazy(() =>
 	import("./Models").then((m) => ({ default: m.Models })),
 );
+const HubOpen = lazy(() =>
+	import("./HubOpen").then((m) => ({ default: m.HubOpen })),
+);
 const Settings = lazy(() =>
 	import("./Settings").then((m) => ({ default: m.Settings })),
 );
@@ -82,6 +87,15 @@ function sidebarStartsOpen(): boolean {
 export function App() {
 	useLiveJobs();
 	const route = useRoute();
+	// The desktop app was opened with a link, such as from Hugging Face.
+	useEffect(
+		() =>
+			onLinks((link) => {
+				const target = parseHubLink(link);
+				navigate(target ? href.hub(target) : href.hubInvalid);
+			}),
+		[],
+	);
 	// Reference images for the next prompt. Lives here so the gallery can add to it.
 	const [references, setReferences] = useState<string[]>([]);
 
@@ -102,7 +116,10 @@ export function App() {
 	const scene =
 		route.view === "chat"
 			? `chat/${route.sessionId ?? ""}/${route.talk ? "talk" : ""}`
-			: route.view;
+			: // A repository opens over the models, which stay as they were.
+				route.view === "hub"
+				? "models"
+				: route.view;
 
 	return (
 		// Fits the space it is given: a server's notices may sit above it.
@@ -143,7 +160,13 @@ export function App() {
 						{route.view === "gallery" && (
 							<Gallery addReference={addReference} />
 						)}
-						{route.view === "models" && <Models />}
+						{route.view === "models" && <Models focus={route.focus} />}
+						{route.view === "hub" && (
+							<>
+								<Models />
+								<HubOpen target={route.target} />
+							</>
+						)}
 						{route.view === "settings" && <Settings />}
 					</Suspense>
 				</div>
@@ -186,7 +209,7 @@ function AppSidebar({ route }: { route: Route }) {
 			to: href.models,
 			label: t("nav.localModels"),
 			icon: Cpu,
-			current: route.view === "models",
+			current: route.view === "models" || route.view === "hub",
 		},
 	];
 
@@ -435,7 +458,7 @@ function BottomNav({ route }: { route: Route }) {
 			to: href.models,
 			label: t("nav.models"),
 			icon: Cpu,
-			current: route.view === "models",
+			current: route.view === "models" || route.view === "hub",
 		},
 		{
 			to: href.settings,

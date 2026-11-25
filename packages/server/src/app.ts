@@ -4,6 +4,7 @@ import {
 	type Captioner,
 	CodedError,
 	type ErrorCode,
+	hubTarget,
 	IMPROVE_WITH,
 	isDemoSize,
 	isImproveWith,
@@ -126,6 +127,8 @@ const MAX_MESSAGE_LENGTH = 4000;
 /** Codes for a service the server relies on that failed: a bad gateway. */
 const UPSTREAM_CODES = new Set<ErrorCode>([
 	"connectionLost",
+	"downloadFailed",
+	"hubUnreachable",
 	"improveFailed",
 	"localAssistantUnavailable",
 	"noConnection",
@@ -1033,6 +1036,32 @@ export function createApp(options: AppOptions): Hono {
 	app.delete("/api/checkpoints/:id", async (c) => {
 		await models.checkpoints.remove(c.req.param("id"));
 		return c.body(null, 204);
+	});
+	// Models opened from Hugging Face: what one is, then adding it once the
+	// person confirmed. The download stops if they go away.
+	app.get("/api/hugging-face", async (c) => {
+		const target = hubTarget(c.req.query("repo"), c.req.query("file"));
+		if (!target) {
+			throw new ValidationError(
+				"Not a Hugging Face repository or file",
+				"hubInvalid",
+			);
+		}
+		return c.json(await models.openFromHub(target, c.req.raw.signal));
+	});
+	app.post("/api/hugging-face/downloads", async (c) => {
+		const body = await json(c);
+		const target = hubTarget(body.repo, body.file);
+		if (!target?.file || typeof body.revision !== "string") {
+			throw new ValidationError(
+				"Name a repository, a file in it and its revision",
+				"hubInvalid",
+			);
+		}
+		return c.json(
+			await models.addFromHub(target, body.revision, c.req.raw.signal),
+			201,
+		);
 	});
 	// Other apps' folders, whose models are used where they are. Machine-wide
 	// like the models: on a server, the paths are the server's.

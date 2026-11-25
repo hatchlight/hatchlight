@@ -1,4 +1,9 @@
 import type {
+	HubChoice,
+	HubFile,
+	HubTarget,
+} from "@hatchlight/core/hugging-face";
+import type {
 	AccountView,
 	ApiTokenView,
 	Asset,
@@ -320,6 +325,28 @@ export const api = {
 	deleteModel: (id: string) =>
 		request<void>(`/api/local-models/${id}`, { method: "DELETE" }),
 	checkpoints: () => request<CheckpointInfo[]>("/api/checkpoints"),
+	/** What Hatchlight does with a repository on Hugging Face. */
+	openFromHub: (target: HubTarget, signal?: AbortSignal) =>
+		request<HubChoice>(
+			`/api/hugging-face?${new URLSearchParams({
+				repo: target.repo,
+				...(target.file && { file: target.file }),
+			})}`,
+			{ signal },
+		),
+	/** Downloads a file found on Hugging Face; stopping `signal` stops it. */
+	addFromHub: (file: HubFile, signal?: AbortSignal) =>
+		request<
+			| { kind: "checkpoint"; item: CheckpointInfo }
+			| { kind: "lora"; item: LoraInfo }
+		>("/api/hugging-face/downloads", {
+			...send("POST", {
+				repo: file.repo,
+				file: file.file,
+				revision: file.revision,
+			}),
+			signal,
+		}),
 	addCheckpoint: (file: File) =>
 		request<CheckpointInfo>(
 			`/api/checkpoints?${new URLSearchParams({ name: file.name })}`,

@@ -38,7 +38,11 @@
 	},
 	"overrides": [
 		{
-			"includes": ["apps/site/src/page.html", "apps/site/src/compare.html"],
+			"includes": [
+				"apps/site/src/page.html",
+				"apps/site/src/compare.html",
+				"apps/site/src/hf.html"
+			],
 			"linter": {
 				"rules": {
 					"a11y": {

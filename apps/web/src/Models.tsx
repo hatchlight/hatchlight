@@ -8,7 +8,7 @@ import type {
 } from "@hatchlight/core/types";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { CheckIcon, ChevronDownIcon, SparklesIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -350,11 +350,14 @@ function ModelCard({
 	engine,
 	freeBytes,
 	recommended,
+	focused,
 }: {
 	model: LocalModelStatus;
 	engine: LocalEngineStatus | undefined;
 	freeBytes: number;
 	recommended: boolean;
+	/** Opened from a link: brought into view and marked. */
+	focused: boolean;
 }) {
 	const i18n = useI18n();
 	const { t, bytes, explain } = i18n;
@@ -403,8 +406,13 @@ function ModelCard({
 				.join(" · ");
 
 	return (
-		<li className="flex">
-			<Card className="w-full gap-0 rounded-2xl py-0 ring-line">
+		<li id={`model-${model.id}`} className="flex scroll-mt-8">
+			<Card
+				className={cn(
+					"w-full gap-0 rounded-2xl py-0 ring-line",
+					focused && "ring-2 ring-gold",
+				)}
+			>
 				<Demos model={model} />
 				<div className="flex flex-1 flex-col gap-4 p-5">
 					<div className="flex flex-wrap gap-1.5">
@@ -769,9 +777,19 @@ const CHIP =
 const ALL_CATEGORIES = ["all", ...CATEGORIES] as const;
 
 /** Every model, narrowed by what it does and how it suits this computer. */
-function Catalog({ view }: { view: LocalModelsView }) {
+function Catalog({ view, focus }: { view: LocalModelsView; focus?: string }) {
 	const { t } = useI18n();
 	const [filter, setFilter] = useState<LocalFilter>(NO_FILTER);
+	// A model opened from a link is shown whatever the filters were.
+	useEffect(() => {
+		if (!focus) return;
+		setFilter(NO_FILTER);
+		requestAnimationFrame(() =>
+			document
+				.getElementById(`model-${focus}`)
+				?.scrollIntoView({ block: "center", behavior: "smooth" }),
+		);
+	}, [focus]);
 	// The prompt translator is set up in Settings, not offered here.
 	const makers = view.models.filter((model) => model.media !== "text");
 	const recommended = recommendedLocal(makers);
@@ -800,6 +818,7 @@ function Catalog({ view }: { view: LocalModelsView }) {
 			)}
 			freeBytes={view.disk.freeBytes}
 			recommended={recommended.has(model.id)}
+			focused={model.id === focus}
 		/>
 	);
 	const toggles: {
@@ -987,7 +1006,7 @@ function Folder({ disk }: { disk: LocalModelsView["disk"] }) {
 	);
 }
 
-export function Models() {
+export function Models({ focus }: { focus?: string }) {
 	const { t, explain } = useI18n();
 	const view = useQuery({
 		queryKey: ["local-models"],
@@ -1008,7 +1027,7 @@ export function Models() {
 				<CheckpointShelf />
 				<LoraShelf />
 				<ModelFolders />
-				{view.data && <Catalog view={view.data} />}
+				{view.data && <Catalog view={view.data} focus={focus} />}
 			</div>
 		</div>
 	);

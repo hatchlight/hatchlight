@@ -15,9 +15,11 @@ import {
 	NotFoundError,
 	ValidationError,
 } from "../errors";
+import type { HubChoice, HubTarget } from "../hugging-face";
 import { sniffMime } from "../mime";
 import { pathHere, portablePath } from "../paths";
 import type {
+	CheckpointInfo,
 	EngineBuild,
 	Fit,
 	Hardware,
@@ -30,12 +32,20 @@ import type {
 	LocalModelStatus,
 	LocalModelsView,
 	LocalModelVariant,
+	LoraInfo,
 } from "../types";
 import { CheckpointShelf } from "./checkpoints";
 import { type BuildChoice, chooseBuild, chooseVariant, fitOf } from "./engines";
 import { isLocked, tryFileLock, withFileLock } from "./file-lock";
 import { GpuLock } from "./gpu";
 import { detectHardware, type GpuMemory, readGpuMemory } from "./hardware";
+import {
+	HUB_REVISION,
+	hubFetch,
+	hubFileUrl,
+	inspectHubFile,
+	resolveHub,
+} from "./hub";
 import { LinkedFolders } from "./linked";
 import { LoraShelf } from "./loras";
 import { cleanUp, type Mirror, mirrorInto, treeSize, undo } from "./move";
@@ -401,6 +411,8 @@ export class LocalModelStore {
 	private holders = new Set<() => Promise<void>>();
 	/** Why the last move to another folder failed, until the next one. */
 	private moveError: LocalModelsView["disk"]["moveError"] = null;
+	/** Files being downloaded from Hugging Face, as "repo/file". */
+	private hubDownloads = new Set<string>();
 
 	constructor(options: LocalModelStoreOptions) {
 		assertCatalog(options.catalog, options.engines);
@@ -1183,6 +1195,148 @@ export class LocalModelStore {
 			scratch: join(this.root, "tmp"),
 			files: { model: this.checkpoints.path(id) },
 		};
+	}
+
+	/**
+	 * What Hatchlight does with a repository on Hugging Face: the catalog
+	 * model it is, or the checkpoint or LoRA file it would add, or why not.
+	 */
+	openFromHub(target: HubTarget, signal?: AbortSignal): Promise<HubChoice> {
+		return resolveHub(target, this.catalog, this.fetch, signal);
+	}
+
+	/**
+	 * Adds a checkpoint or LoRA from Hugging Face, at the revision the person
+	 * confirmed. It is looked at again there rather than taken on trust, and
+	 * stops when `signal` does.
+	 */
+	async addFromHub(
+		target: HubTarget,
+		revision: string,
+		signal?: AbortSignal,
+	): Promise<
+		| { kind: "checkpoint"; item: CheckpointInfo }
+		| { kind: "lora"; item: LoraInfo }
+	> {
+		this.notMoving();
+		if (!target.file || !HUB_REVISION.test(revision)) {
+			throw new ValidationError(
+				"Name a file and the revision it was found at",
+				"hubInvalid",
+			);
+		}
+		const key = `${target.repo}/${target.file}`.toLowerCase();
+		if (this.hubDownloads.has(key)) {
+			throw new ValidationError(
+				"This file is already being downloaded",
+				"hubBusy",
+			);
+		}
+		this.hubDownloads.add(key);
+		try {
+			const choice = await inspectHubFile(target, revision, this.fetch, signal);
+			if (choice.kind === "unsupported") {
+				throw new ValidationError(
+					"This file cannot be added from Hugging Face",
+					"hubUnsupported",
+					{ reason: choice.reason },
+				);
+			}
+			const { repo, file, size, sha256 } = choice;
+			const name = file.split("/").at(-1) as string;
+			const response = await hubFetch(
+				this.fetch,
+				hubFileUrl(repo, choice.revision, file),
+				{ signal },
+			);
+			if (!response.ok || !response.body) {
+				await response.body?.cancel().catch(() => {});
+				throw new CodedError(
+					`Could not download ${name} (HTTP ${response.status})`,
+					"downloadFailed",
+					{ file: name, status: response.status },
+				);
+			}
+			const hasher = new Bun.CryptoHasher("sha256");
+			let received = 0;
+			let shown = 0;
+			// Kept here: a stream's error may come out of the write changed.
+			let failure: Error | null = null;
+			const fail = (
+				controller: TransformStreamDefaultController,
+				error: Error,
+			) => {
+				failure = error;
+				controller.error(error);
+			};
+			const progress = () =>
+				this.emit({
+					type: "hub.progress",
+					repo,
+					file,
+					receivedBytes: received,
+					size,
+				});
+			progress();
+			const checked = response.body.pipeThrough(
+				new TransformStream<Uint8Array, Uint8Array>({
+					transform: (chunk, controller) => {
+						received += chunk.byteLength;
+						if (received > size) {
+							fail(
+								controller,
+								new CodedError(
+									`${name} is larger than expected`,
+									"downloadTooLarge",
+									{ file: name },
+								),
+							);
+							return;
+						}
+						hasher.update(chunk);
+						if (Date.now() - shown >= PROGRESS_INTERVAL_MS) {
+							shown = Date.now();
+							progress();
+						}
+						controller.enqueue(chunk);
+					},
+					flush: (controller) => {
+						if (received !== size) {
+							fail(
+								controller,
+								new CodedError(
+									`The download of ${name} was cut short`,
+									"downloadCutShort",
+									{ file: name },
+								),
+							);
+						} else if (sha256 && hasher.digest("hex") !== sha256) {
+							fail(
+								controller,
+								new CodedError(
+									`${name} did not match its expected hash`,
+									"hashMismatch",
+									{ file: name },
+								),
+							);
+						}
+					},
+				}),
+			);
+			try {
+				if (choice.kind === "checkpoint") {
+					return {
+						kind: "checkpoint",
+						item: await this.checkpoints.add(checked, name),
+					};
+				}
+				return { kind: "lora", item: await this.loras.add(checked, name) };
+			} catch (error) {
+				throw signal?.aborted ? error : (failure ?? error);
+			}
+		} finally {
+			this.hubDownloads.delete(key);
+		}
 	}
 
 	/**

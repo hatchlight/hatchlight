@@ -44,6 +44,23 @@ export function useModelProgress(modelId: string): ModelProgress | undefined {
 	);
 }
 
+type HubProgress = Extract<LocalModelEvent, { type: "hub.progress" }>;
+// Latest progress per file downloaded from Hugging Face, by "repo/file".
+const hubProgress = new Map<string, HubProgress>();
+
+export function useHubProgress(
+	repo: string,
+	file: string,
+): HubProgress | undefined {
+	return useSyncExternalStore(
+		(watcher) => {
+			watchers.add(watcher);
+			return () => watchers.delete(watcher);
+		},
+		() => hubProgress.get(`${repo}/${file}`),
+	);
+}
+
 type FolderMove = Omit<
 	Extract<LocalModelEvent, { type: "models.moving" }>,
 	"type"
@@ -139,6 +156,12 @@ export function useLiveJobs(): void {
 			const event = JSON.parse(message.data) as LocalModelEvent;
 			if (event.type !== "model.progress") return;
 			modelProgress.set(event.id, event);
+			notify();
+		});
+		source.addEventListener("hub.progress", (message) => {
+			const event = JSON.parse(message.data) as LocalModelEvent;
+			if (event.type !== "hub.progress") return;
+			hubProgress.set(`${event.repo}/${event.file}`, event);
 			notify();
 		});
 		source.addEventListener("job.updated", (message) => {
