@@ -9,6 +9,7 @@ import {
 	stat,
 	symlink,
 } from "node:fs/promises";
+import { homedir } from "node:os";
 import {
 	basename,
 	dirname,
@@ -52,6 +53,19 @@ type Skip = keyof ModelFolder["skipped"];
 const MAX_DEPTH = 8;
 /** Files read in one folder at most; more is not a models folder. */
 const MAX_FILES = 20_000;
+/** Folders and entries looked at in one folder at most, for the same reason. */
+const MAX_DIRS = 5_000;
+const MAX_ENTRIES = 100_000;
+/** A job's LoRA folder older than this was left by a job that crashed. */
+const STALE_MS = 6 * 60 * 60 * 1000;
+const JOB_FOLDER = /^loras-[0-9a-f-]{36}$/;
+
+/** Where copies of linked LoRAs no link can reach are kept, in the scratch folder. */
+export const linkedLoraCache = (scratch: string) =>
+	join(scratch, "linked-loras");
+/** A new folder for one job's LoRAs, in the scratch folder. */
+export const jobLorasDir = (scratch: string) =>
+	join(scratch, `loras-${crypto.randomUUID()}`);
 
 /**
  * Where each app keeps checkpoints and LoRAs, below each folder a person
@@ -107,11 +121,13 @@ export interface Layout {
 
 /**
  * Which app's layout a folder has, and where its models are. The layout
- * with the most kinds of models found wins, the first one on a tie.
+ * with the most kinds of models found wins. On a tie, Stability Matrix
+ * wins when its `Data/Models` is there (A1111's `models` matches that
+ * folder too, whatever the case), else the first one.
  */
 export async function detectLayout(folder: string): Promise<Layout> {
 	let best: Layout | null = null;
-	let bestKinds = 0;
+	let bestScore = 0;
 	for (const layout of LAYOUTS) {
 		for (const root of layout.roots) {
 			const base = await findDir(folder, root);
@@ -124,9 +140,12 @@ export async function detectLayout(folder: string): Promise<Layout> {
 				}
 			}
 			const kinds = new Set(dirs.map((d) => d.kind)).size;
-			if (kinds > bestKinds) {
+			const matrix =
+				layout.app === "stabilityMatrix" && /[\\/]data[\\/]models$/i.test(base);
+			const score = kinds > 0 ? kinds * 2 + (matrix ? 1 : 0) : 0;
+			if (score > bestScore) {
 				best = { app: layout.app, dirs };
-				bestKinds = kinds;
+				bestScore = score;
 			}
 		}
 	}
@@ -139,45 +158,69 @@ interface Found {
 	kind: LinkedKind | null;
 }
 
+/** What one look in a folder found, and how much it looked at. */
+interface Walk {
+	found: Map<string, Found>;
+	seen: Set<string>;
+	/** Never looked in: Hatchlight's own models folder, as `canonical` names it. */
+	skip: string;
+	dirs: number;
+	entries: number;
+	truncated: boolean;
+}
+
 /**
- * The safetensors files below `dir`, following links but never into a
- * folder twice, so a link to a parent ends.
+ * The safetensors files below `dir`, following links within `bound` (a
+ * folder as `canonical` names it) but never into a folder twice, so a link
+ * to a parent ends. Past the limits it stops and says so in `truncated`.
  */
 async function walk(
 	dir: string,
 	kind: LinkedKind | null,
-	found: Map<string, Found>,
-	seen: Set<string>,
+	state: Walk,
+	bound: string,
 	depth = 0,
-): Promise<boolean> {
+): Promise<void> {
+	if (state.truncated) return;
+	const real = await canonical(dir);
+	if (!below(real, bound) || below(real, state.skip)) return;
 	const info = await stat(dir, { bigint: true }).catch(() => null);
-	if (!info?.isDirectory()) return false;
+	if (!info?.isDirectory()) return;
 	const key = `${info.dev}:${info.ino}`;
-	if (seen.has(key)) return false;
-	seen.add(key);
+	if (state.seen.has(key)) return;
+	state.seen.add(key);
+	if (++state.dirs > MAX_DIRS) {
+		state.truncated = true;
+		return;
+	}
 	const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
 	for (const entry of entries) {
+		if (++state.entries > MAX_ENTRIES) {
+			state.truncated = true;
+			return;
+		}
 		if (entry.name.startsWith(".")) continue;
 		const path = join(dir, entry.name);
 		if (/\.safetensors$/i.test(entry.name)) {
 			const file = await stat(path).catch(() => null);
-			if (!file?.isFile() || found.has(path)) continue;
-			if (found.size >= MAX_FILES) return true;
+			if (!file?.isFile() || state.found.has(path)) continue;
+			if (state.found.size >= MAX_FILES) {
+				state.truncated = true;
+				return;
+			}
 			// Whole milliseconds: what every file system and copy keeps.
-			found.set(path, {
+			state.found.set(path, {
 				size: file.size,
 				mtimeMs: Math.floor(file.mtimeMs),
 				kind,
 			});
 		} else if (
 			(entry.isDirectory() || entry.isSymbolicLink()) &&
-			depth < MAX_DEPTH &&
-			(await walk(path, kind, found, seen, depth + 1))
+			depth < MAX_DEPTH
 		) {
-			return true;
+			await walk(path, kind, state, bound, depth + 1);
 		}
 	}
-	return false;
 }
 
 const KINDS: Record<
@@ -226,18 +269,41 @@ async function classify(
 	}
 }
 
-/** A folder as compared with another: Windows ignores case. */
+/** A folder as compared with another: Windows and macOS ignore case. */
 async function canonical(path: string): Promise<string> {
 	const real = await realpath(path).catch(() => resolve(path));
-	return process.platform === "win32" || real.startsWith("/mnt/")
+	return ["win32", "darwin"].includes(process.platform) ||
+		real.startsWith("/mnt/")
 		? real.toLowerCase()
 		: real;
 }
 
+/** Whether `path` is `outer` or below it, both as `canonical` names them. */
+function below(path: string, outer: string): boolean {
+	const rel = relative(outer, path);
+	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
 /** Whether `path` is `outer` or below it. */
 async function within(path: string, outer: string): Promise<boolean> {
-	const rel = relative(await canonical(outer), await canonical(path));
-	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+	return below(await canonical(path), await canonical(outer));
+}
+
+/**
+ * A drive, or a home folder: read whole, they would take minutes and find
+ * anything but one app's models.
+ */
+function tooBroad(path: string): boolean {
+	const plain = path.replace(/[\\/]+$/, "") || path;
+	return (
+		dirname(plain) === plain ||
+		/^\/mnt(\/[a-z])?$/i.test(plain) ||
+		/^[a-z]:$/i.test(plain) ||
+		/^(\/home|\/Users|\/mnt\/[a-z]\/Users|[a-z]:\\Users)[\\/][^\\/]+$/i.test(
+			plain,
+		) ||
+		resolve(plain) === resolve(homedir())
+	);
 }
 
 interface FolderRecord {
@@ -416,14 +482,31 @@ export class LinkedFolders {
 					{ path: here },
 				);
 			}
+			const name = await canonical(here);
 			for (const folder of this.folders) {
-				if ((await canonical(folder.path)) === (await canonical(here))) {
+				const other = await canonical(folder.path);
+				if (other === name) {
 					throw new ValidationError(
 						`${here} is linked already`,
 						"modelFolderLinked",
 						{ path: here },
 					);
 				}
+				// Its files would show twice, under two ids.
+				if (below(name, other) || below(other, name)) {
+					throw new ValidationError(
+						`${here} holds, or is inside, ${folder.path}, which is linked already`,
+						"modelFolderOverlaps",
+						{ path: here, linked: folder.path },
+					);
+				}
+			}
+			if (tooBroad(here) && !(await detectLayout(here)).app) {
+				throw new ValidationError(
+					`${here} is a whole drive or home folder; choose the app's folder in it`,
+					"modelFolderTooBroad",
+					{ path: here },
+				);
 			}
 			const folder: FolderRecord = {
 				id: crypto.randomUUID().slice(0, 8),
@@ -469,7 +552,10 @@ export class LinkedFolders {
 	/** Looks in every folder again, reading only files that changed. */
 	rescan(): Promise<ModelFolder[]> {
 		return this.serial(async () => {
-			if (this.folders.length === 0) return [];
+			if (this.folders.length === 0) {
+				await this.tidy();
+				return [];
+			}
 			await this.changing(async () => {
 				for (const folder of this.folders) await this.scan(folder);
 			});
@@ -512,6 +598,31 @@ export class LinkedFolders {
 		for (const kind of ["lora", "checkpoint"] as const) {
 			if (this.signature(kind) !== before[kind]) this.options.changed?.(kind);
 		}
+		await this.tidy();
+	}
+
+	/**
+	 * Deletes copies of LoRAs no linked folder has any more, and the LoRA
+	 * folders of jobs that crashed, in the models folder's scratch folder.
+	 */
+	private async tidy(): Promise<void> {
+		const scratch = join(this.options.root(), "tmp");
+		const cache = linkedLoraCache(scratch);
+		const ids = new Set(
+			this.files.filter((f) => f.kind === "lora" && f.id).map((f) => f.id),
+		);
+		for (const id of await readdir(cache).catch(() => [] as string[])) {
+			if (!ids.has(id)) {
+				await rm(join(cache, id), { recursive: true, force: true });
+			}
+		}
+		for (const name of await readdir(scratch).catch(() => [] as string[])) {
+			if (!JOB_FOLDER.test(name)) continue;
+			const info = await stat(join(scratch, name)).catch(() => null);
+			if (info && Date.now() - info.mtimeMs > STALE_MS) {
+				await rm(join(scratch, name), { recursive: true, force: true });
+			}
+		}
 	}
 
 	/** What the shelves show of a kind, to tell whether it changed. */
@@ -539,12 +650,20 @@ export class LinkedFolders {
 		folder.available = true;
 		const layout = await detectLayout(folder.path);
 		folder.app = layout.app;
-		const found = new Map<string, Found>();
-		const seen = new Set<string>();
-		folder.truncated = false;
+		const state: Walk = {
+			found: new Map(),
+			seen: new Set(),
+			skip: await canonical(this.options.root()),
+			dirs: 0,
+			entries: 0,
+			truncated: false,
+		};
+		// Each folder of models may itself be a link, to another drive.
 		for (const { dir, kind } of layout.dirs) {
-			if (await walk(dir, kind, found, seen)) folder.truncated = true;
+			await walk(dir, kind, state, await canonical(dir));
 		}
+		folder.truncated = state.truncated;
+		const found = state.found;
 		const old = this.files.filter((f) => f.folder === folder.id);
 		const byPath = new Map(old.map((f) => [f.path, f]));
 		// Renamed by the other app: the same size and time, at a path now gone.
@@ -656,6 +775,7 @@ export class LinkedFolders {
 				return info?.isFile() ? found : null;
 			},
 			path: (id) => this.ids[kind].get(id)?.path ?? null,
+			ready: () => this.load(),
 			update: (id, notes) =>
 				this.serial(async () => {
 					const file = this.ids[kind].get(id);
@@ -665,7 +785,8 @@ export class LinkedFolders {
 					file.notes = { ...notes };
 					await this.save();
 				}),
-			taken: (id) => this.ids[kind].has(id),
+			// Live, so ids a look is giving out count before it ends.
+			taken: (id) => this.files.some((f) => f.kind === kind && f.id === id),
 		};
 	}
 }
@@ -715,9 +836,10 @@ const FILE_LINKS: FileLinks = {
 };
 
 /**
- * A copy of a linked LoRA in `cache`, made once and reused while the
+ * A copy of a linked LoRA in `cache/<id>/`, made once and reused while the
  * file stays the same: for a file no link can reach, as on another drive.
- * Older copies of the same LoRA go.
+ * Older finished copies of the same LoRA go; copies still being written by
+ * another job stay, unless they were left long ago.
  */
 async function cachedCopy(
 	id: string,
@@ -726,14 +848,18 @@ async function cachedCopy(
 	links: FileLinks,
 ): Promise<string> {
 	const info = await stat(from);
-	const name = `${id}-${info.size}-${Math.trunc(info.mtimeMs)}.safetensors`;
-	const copy = join(cache, name);
+	const dir = join(cache, id);
+	const name = `${info.size}-${Math.trunc(info.mtimeMs)}.safetensors`;
+	const copy = join(dir, name);
 	if ((await stat(copy).catch(() => null))?.size === info.size) return copy;
-	await mkdir(cache, { recursive: true });
-	for (const old of await readdir(cache).catch(() => [] as string[])) {
-		if (old.startsWith(`${id}-`) && old !== name) {
-			await rm(join(cache, old), { force: true });
-		}
+	await mkdir(dir, { recursive: true });
+	for (const old of await readdir(dir).catch(() => [] as string[])) {
+		const path = join(dir, old);
+		const stale = old.endsWith(".part")
+			? Date.now() - ((await stat(path).catch(() => null))?.mtimeMs ?? 0) >
+				STALE_MS
+			: old !== name;
+		if (stale) await rm(path, { force: true });
 	}
 	const part = `${copy}.${crypto.randomUUID()}.part`;
 	try {

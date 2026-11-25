@@ -1036,9 +1036,15 @@ export function createApp(options: AppOptions): Hono {
 	});
 	// Other apps' folders, whose models are used where they are. Machine-wide
 	// like the models: on a server, the paths are the server's.
-	app.get("/api/model-folders", async (c) =>
-		c.json(await models.folders.list()),
-	);
+	// Where the folders are on the machine is for those who change them.
+	app.get("/api/model-folders", async (c) => {
+		const folders = await models.folders.list();
+		const admin =
+			!server || ["owner", "admin"].includes(c.get("viewer").user.role);
+		return c.json(
+			admin ? folders : folders.map(({ path: _, ...folder }) => folder),
+		);
+	});
 	app.get("/api/model-folders/suggestions", async (c) =>
 		c.json(await models.folders.suggestions()),
 	);

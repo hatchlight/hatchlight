@@ -24,7 +24,12 @@ import {
 	checkpointOf,
 } from "./checkpoints";
 import { type GpuMemory, readGpuMemory } from "./hardware";
-import { type FileLinks, lorasFolder } from "./linked";
+import {
+	type FileLinks,
+	jobLorasDir,
+	linkedLoraCache,
+	lorasFolder,
+} from "./linked";
 import type { LocalModelStore, LocalRuntime } from "./store";
 import { WarmEngines } from "./warm";
 
@@ -518,6 +523,7 @@ export function checkpointSpec(
 		commercial: { kind: "none" },
 		demos: [],
 		profile: undefined,
+		...(info.linked && { linked: info.linked }),
 		variants: variant
 			? [
 					{
@@ -686,6 +692,7 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 				},
 				pricing: { usdPerOutput: 0 },
 				...(model.profile && { profile: model.profile }),
+				...(model.linked && { linked: model.linked }),
 			}));
 	}
 
@@ -1171,8 +1178,8 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 		}
 		if (!linked) return { loras, done: async () => {} };
 		const folder = await lorasFolder(loras, {
-			dir: join(runtime.scratch, `loras-${crypto.randomUUID()}`),
-			cache: join(runtime.scratch, "linked-loras"),
+			dir: jobLorasDir(runtime.scratch),
+			cache: linkedLoraCache(runtime.scratch),
 			throughWindows: runtime.throughWindows,
 			links: this.links,
 		});

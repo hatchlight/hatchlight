@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { basename, resolve } from "node:path";
+import { basename, isAbsolute, resolve } from "node:path";
 import type {
 	CommercialUse,
 	Fit,
@@ -64,10 +64,20 @@ function skippedText(folder: ModelFolder): string {
 		: "";
 }
 
+/** A linked folder's id, as the server makes them. */
+const FOLDER_ID = /^[0-9a-f]{8}$/;
+
+/** A folder as typed: a full path (`C:\\…` too) stays as it is. */
+function fullPath(cwd: string, path: string): string {
+	return isAbsolute(path) || /^[a-z]:[\\/]/i.test(path)
+		? path
+		: resolve(cwd, path);
+}
+
 function folderRow(folder: ModelFolder): string[] {
 	return [
 		folder.id,
-		folder.path,
+		folder.path ?? "",
 		folder.app ? APPS[folder.app] : "folder",
 		folder.available
 			? `${folder.checkpoints} checkpoints, ${folder.loras} LoRAs`
@@ -493,22 +503,18 @@ ${COMMON_HELP}`,
 				);
 			}
 			if (action === "add") {
-				const folder = await api.addModelFolder(resolve(io.cwd, target));
+				const folder = await api.addModelFolder(fullPath(io.cwd, target));
 				if (values.json) json(io, folder);
 				io.err(
-					`Linked ${folder.path}: ${folder.checkpoints} checkpoints and ${folder.loras} LoRAs${skippedText(folder)}.`,
+					`Linked ${folder.path ?? target}: ${folder.checkpoints} checkpoints and ${folder.loras} LoRAs${skippedText(folder)}.`,
 				);
 				return EXIT.ok;
 			}
 			if (action === "remove") {
-				// By its id, else by its path as typed here.
-				const folders = await api.modelFolders();
-				const path = resolve(io.cwd, target);
-				const folder =
-					folders.find((f) => f.id === target) ??
-					folders.find((f) => f.path === path);
-				if (!folder) throw new UsageError(`No linked folder ${target}.`);
-				await api.removeModelFolder(folder.id);
+				// By its id, else by its path: the server knows a folder by any name.
+				await api.removeModelFolder(
+					FOLDER_ID.test(target) ? target : fullPath(io.cwd, target),
+				);
 				if (values.json) json(io, { id: target, removed: true });
 				io.err(`Removed ${target}. Its files stay where they are.`);
 				return EXIT.ok;

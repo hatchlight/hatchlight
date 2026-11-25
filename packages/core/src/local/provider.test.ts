@@ -1314,6 +1314,98 @@ describe("running", () => {
 		]);
 	});
 
+	test("a job's LoRA folder goes when the engine fails or the job is canceled, and is named for Windows", async () => {
+		const SDXL = { ...FLUX, loraBase: "sdxl" as const };
+		const { fake, calls, store, gpuRoot, dir } = await setup(SDXL);
+		const app = await mkdtemp(join(tmpdir(), "hatchlight-comfyui-"));
+		dirs.push(app);
+		await mkdir(join(app, "models", "loras"), { recursive: true });
+		await Bun.write(
+			join(app, "models", "loras", "Ink.safetensors"),
+			safetensors(["lora_unet_input_blocks_4_1_proj_in.alpha"]),
+		);
+		const folders = new LinkedFolders({
+			root: () => gpuRoot,
+			ownIds: { lora: async () => [], checkpoint: async () => [] },
+		});
+		store.loras = new LoraShelf({ root: () => gpuRoot, linked: folders.loras });
+		await folders.add(app);
+		// A Windows engine under WSL: the job's folder is a Windows path, and
+		// never holds symbolic links, which it could not follow.
+		const base = store.runtime;
+		store.runtime = async () => ({ ...(await base()), throughWindows: true });
+		const symlinked: string[] = [];
+		const local = (spawn: Spawn) =>
+			new LocalProvider({
+				store: store as never,
+				catalog: [SDXL],
+				spawn,
+				freeMemory: async () => null,
+				windowsPath: async (path) => `W:${path}`,
+				links: {
+					symlink: async (from) => {
+						symlinked.push(from);
+					},
+				},
+			});
+		const jobs = async () =>
+			(await readdir(dir)).filter((name) => name.startsWith("loras-"));
+		const start = async (provider: LocalProvider) => {
+			await provider.load();
+			const [model] = provider.listModels();
+			return provider.submit({
+				model: model as never,
+				params: params({ loras: [{ id: "ink", weight: 1 }] }),
+				references: [],
+			});
+		};
+		const failing = local(fake([], 3, null));
+		const events: ProviderEvent[] = [];
+		for await (const event of failing.events(await start(failing), {
+			apiKey: undefined,
+			signal: new AbortController().signal,
+		})) {
+			events.push(event);
+		}
+		expect(events.at(-1)?.type).toBe("failed");
+		const argv = calls[0] ?? [];
+		const loraDir = argv[argv.indexOf("--lora-model-dir") + 1] ?? "";
+		expect(loraDir).toStartWith(`W:${join(dir, "loras-")}`);
+		expect(symlinked).toEqual([]);
+		expect(await jobs()).toEqual([]);
+
+		const hanging = local(fake(["HANG"]));
+		const controller = new AbortController();
+		const run = (async () => {
+			for await (const _ of hanging.events(await start(hanging), {
+				apiKey: undefined,
+				signal: controller.signal,
+			})) {
+			}
+		})();
+		await Bun.sleep(30);
+		expect(await jobs()).toHaveLength(1);
+		controller.abort();
+		await expect(run).rejects.toThrow();
+		expect(await jobs()).toEqual([]);
+	});
+
+	test("a linked checkpoint runs from its folder, named for Windows", async () => {
+		const args = await engineArguments(
+			{
+				...runtime(FLUX),
+				files: { model: "/mnt/c/ComfyUI/models/checkpoints/dream.safetensors" },
+			},
+			FLUX.defaults,
+			params({ seed: 1 }),
+			"/scratch/out.png",
+			async (path) => `W:${path}`,
+		);
+		expect(args[args.indexOf("-m") + 1]).toBe(
+			"W:/mnt/c/ComfyUI/models/checkpoints/dream.safetensors",
+		);
+	});
+
 	test("a LoRA deleted after the job was asked for fails the job, saying so", async () => {
 		const SDXL = { ...FLUX, loraBase: "sdxl" as const };
 		const { provider, fake, store } = await setup(SDXL);

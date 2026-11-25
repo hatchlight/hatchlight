@@ -132,6 +132,8 @@ export interface LinkedFiles<T extends ShelfItem> {
 	get(id: string): Promise<T | null>;
 	/** Where the file is, once the list was read. */
 	path(id: string): string | null;
+	/** Resolves once what is known of the files was read. */
+	ready(): Promise<void>;
 	/** Keeps changed notes, already checked by the kind. */
 	update(id: string, notes: Notes<T>): Promise<void>;
 	/** Whether a linked file has this id, so a new file takes another. */
@@ -341,6 +343,8 @@ export class Shelf<T extends ShelfItem> {
 				this.unreadable(),
 			);
 			const notes = this.kind.inspect(header, fileName);
+			// Linked ids are known before one is chosen.
+			await this.options.linked?.ready();
 			const keep = async (): Promise<T> => {
 				const existing = new Set(
 					(await readdir(dir).catch(() => [] as string[])).map((n) =>

@@ -200,7 +200,8 @@ export interface LinkedFrom {
  */
 export interface ModelFolder {
 	id: string;
-	path: string;
+	/** Left out for people who may not change the folders, on a server. */
+	path?: string;
 	/** The layout found; null when the folder was read as a plain folder. */
 	app: ModelFolderApp | null;
 	/** False when the folder was not there at the last look (a drive unplugged). */
@@ -447,6 +448,8 @@ export interface ModelSpec {
 	pricing?: { usdPerOutput?: number; usdPerSecond?: number };
 	/** Absent for models the project has not described yet. */
 	profile?: ModelProfile;
+	/** Set for a model found in another app's folder. */
+	linked?: LinkedFrom;
 }
 
 export type JobStatus =
@@ -769,6 +772,8 @@ export interface LocalModelSpec {
 	 * the model on a real GPU.
 	 */
 	loraBase?: LoraBase;
+	/** Set for a checkpoint found in another app's folder. */
+	linked?: LinkedFrom;
 }
 
 export type LocalModelState =

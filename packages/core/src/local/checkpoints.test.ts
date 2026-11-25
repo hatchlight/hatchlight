@@ -99,6 +99,27 @@ describe("the checkpoint shelf", () => {
 		expect(await shelf.list()).toHaveLength(3);
 	});
 
+	test("a Lightning, Turbo, Hyper or LCM model gets few steps and low guidance", async () => {
+		const shelf = await setup();
+		for (const name of [
+			"dreamshaperXL_lightningDPMSDE.safetensors",
+			"sdxl_turbo.safetensors",
+			"Hyper-SD15.safetensors",
+			"LCM_Dreamshaper_v7.safetensors",
+		]) {
+			const model = await shelf.add(new Blob([safetensors(SDXL)]), name);
+			expect(model).toMatchObject({ steps: 6, cfgScale: 2 });
+		}
+		// The same guess for a model found in another app's folder.
+		const { CHECKPOINT_KIND } = await import("./checkpoints");
+		expect(
+			CHECKPOINT_KIND.inspect(
+				{ keys: SDXL, metadata: {} },
+				"juggernautXL_lightning.safetensors",
+			),
+		).toMatchObject({ steps: 6, cfgScale: 2 });
+	});
+
 	test("settings can be changed, within what makes sense", async () => {
 		const shelf = await setup();
 		const { id } = await shelf.add(

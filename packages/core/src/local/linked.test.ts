@@ -489,10 +489,10 @@ describe("a job's LoRA folder", () => {
 				throughWindows: true,
 				links,
 			});
-			const [cached] = await readdir(cache);
-			expect(cached).toMatch(/^ink-style-\d+-\d+\.safetensors$/);
+			const [cached] = await readdir(join(cache, "ink-style"));
+			expect(cached).toMatch(/^\d+-\d+\.safetensors$/);
 			expect((await stat(join(folder.dir, "ink-style.safetensors"))).ino).toBe(
-				(await stat(join(cache, cached ?? ""))).ino,
+				(await stat(join(cache, "ink-style", cached ?? ""))).ino,
 			);
 			await folder.remove();
 		}
@@ -507,6 +507,156 @@ describe("a job's LoRA folder", () => {
 			links,
 		});
 		expect(copies).toBe(2);
-		expect(await readdir(cache)).toHaveLength(1);
+		expect(await readdir(join(cache, "ink-style"))).toHaveLength(1);
+	});
+
+	test("each LoRA's copies are its own: one never deletes another's", async () => {
+		const { source, dir, cache } = await files();
+		const links = {
+			link: async (from: string, to: string) => {
+				if (from === source) throw new Error("EXDEV");
+				await Bun.write(to, Bun.file(from));
+			},
+			symlink: async () => {
+				throw new Error("EPERM");
+			},
+		};
+		// Another job's copy, still being written.
+		await mkdir(join(cache, "foo"), { recursive: true });
+		await writeFile(join(cache, "foo", "1-1.safetensors.x.part"), "");
+		for (const id of ["foo", "foo-2"]) {
+			await lorasFolder([{ id, path: source }], {
+				dir: `${dir}-${id}`,
+				cache,
+				throughWindows: true,
+				links,
+			});
+		}
+		await writeFile(source, safetensors(SDXL_LORA, { changed: "yes" }));
+		await lorasFolder([{ id: "foo", path: source }], {
+			dir: `${dir}-again`,
+			cache,
+			throughWindows: true,
+			links,
+		});
+		expect((await readdir(cache)).sort()).toEqual(["foo", "foo-2"]);
+		expect(await readdir(join(cache, "foo-2"))).toHaveLength(1);
+		const foo = await readdir(join(cache, "foo"));
+		expect(foo).toContain("1-1.safetensors.x.part");
+		expect(foo.filter((n) => n.endsWith(".safetensors"))).toHaveLength(1);
+	});
+});
+
+describe("looking after the scratch folder", () => {
+	test("copies of LoRAs no folder has, and folders of crashed jobs, go", async () => {
+		const { folders, models } = await setup();
+		const app = await temporary();
+		await comfyui(app);
+		const folder = await folders.add(app);
+		const scratch = join(models, "tmp");
+		const cache = join(scratch, "linked-loras");
+		await mkdir(join(cache, "ink-style"), { recursive: true });
+		await mkdir(join(cache, "gone"), { recursive: true });
+		const crashed = join(scratch, `loras-${crypto.randomUUID()}`);
+		const running = join(scratch, `loras-${crypto.randomUUID()}`);
+		await mkdir(crashed);
+		await mkdir(running);
+		const old = new Date(Date.now() - 24 * 60 * 60 * 1000);
+		await utimes(crashed, old, old);
+		await folders.rescan();
+		expect(await readdir(cache)).toEqual(["ink-style"]);
+		expect(await readdir(scratch)).not.toContain(
+			crashed.slice(scratch.length + 1),
+		);
+		expect(await readdir(scratch)).toContain(running.slice(scratch.length + 1));
+		await folders.remove(folder.id);
+		expect(await readdir(cache)).toEqual([]);
+	});
+});
+
+describe("where a look goes", () => {
+	test("never through a link out of the folder, nor into Hatchlight's own", async () => {
+		const { folders, loras, models } = await setup();
+		await loras.add(new Blob([safetensors(SDXL_LORA)]), "Mine.safetensors");
+		const outside = await temporary();
+		await tree(outside, { "far.safetensors": safetensors(SDXL_LORA) });
+		const app = await temporary();
+		await tree(app, { "mine/near.safetensors": safetensors(SDXL_LORA) });
+		const { symlink } = await import("node:fs/promises");
+		await symlink(outside, join(app, "elsewhere"));
+		await symlink(models, join(app, "hatchlight"));
+		await symlink(app, join(app, "mine", "loop"));
+		expect(await folders.add(app)).toMatchObject({ loras: 1 });
+		expect((await loras.list()).map((l) => l.id).sort()).toEqual([
+			"mine",
+			"near",
+		]);
+	});
+
+	test("a folder of an app may be a link to another drive", async () => {
+		const { folders } = await setup();
+		const drive = await temporary();
+		await tree(drive, { "Ink.safetensors": safetensors(SDXL_LORA) });
+		const app = await temporary();
+		await mkdir(join(app, "models"));
+		const { symlink } = await import("node:fs/promises");
+		await symlink(drive, join(app, "models", "loras"));
+		expect(await folders.add(app)).toMatchObject({ app: "comfyui", loras: 1 });
+	});
+
+	test("too many folders: it stops, and says so", async () => {
+		const { folders } = await setup();
+		const app = await temporary();
+		await mkdir(join(app, "models", "loras"), { recursive: true });
+		for (let n = 0; n < 5_001; n++) {
+			await mkdir(join(app, "models", "loras", String(n)));
+		}
+		expect(await folders.add(app)).toMatchObject({ truncated: true });
+	});
+
+	test("a home folder or a drive is refused, unless it is an app's", async () => {
+		const { folders } = await setup();
+		const { homedir } = await import("node:os");
+		const refused = await folders.add(homedir()).catch((error) => error);
+		// Holding the test's models folder is refused first, where it is so.
+		expect(["modelFolderTooBroad", "modelFolderInside"]).toContain(
+			refused.code,
+		);
+	});
+
+	test("a folder inside or holding one linked already is refused", async () => {
+		const { folders } = await setup();
+		const parent = await temporary();
+		await comfyui(join(parent, "ComfyUI"));
+		await folders.add(join(parent, "ComfyUI"));
+		for (const path of [join(parent, "ComfyUI", "models"), parent]) {
+			await expect(folders.add(path)).rejects.toMatchObject({
+				code: "modelFolderOverlaps",
+			});
+		}
+	});
+
+	test("Stability Matrix wins a tie in its Data folder", async () => {
+		const root = await temporary();
+		await tree(root, {
+			"Data/Models/Lora/a.safetensors": safetensors(SDXL_LORA),
+		});
+		expect((await detectLayout(join(root, "Data"))).app).toBe(
+			"stabilityMatrix",
+		);
+	});
+
+	test("an upload's id avoids linked ones before the list was read", async () => {
+		const file = join(await temporary(), "model-folders.json");
+		const first = await setup(file);
+		const app = await temporary();
+		await comfyui(app);
+		await first.folders.add(app);
+		const again = await setup(file);
+		const added = await again.loras.add(
+			new Blob([safetensors(SDXL_LORA)]),
+			"Ink Style.safetensors",
+		);
+		expect(added.id).toBe("ink-style-2");
 	});
 });

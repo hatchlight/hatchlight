@@ -140,6 +140,15 @@ describe("folders", () => {
 		await expect(
 			t.run("folders", ["remove", folder?.id ?? ""]),
 		).rejects.toThrow("No linked folder");
+		// A full path is sent as typed, and a removal by path reaches the server.
+		await t.run("folders", ["add", app]);
+		await t.run("folders", ["remove", `${app}/`]);
+		await t.run("folders", ["--json"]);
+		expect(t.json()).toEqual([]);
+		await expect(t.run("folders", ["add", "D:\\Models"])).rejects.toThrow(
+			// As Linux names it, or as a system without drives refuses it.
+			/\/mnt\/d\/Models|Not a full path: D:\\Models/,
+		);
 	});
 });
 

@@ -31,6 +31,9 @@ export const CHECKPOINT_DEFAULTS: Record<
 	sd1: { steps: 20, cfgScale: 7 },
 };
 
+/** How a distilled model (Lightning, Turbo, Hyper, LCM) is run. */
+export const FEW_STEPS = { steps: 6, cfgScale: 2 };
+
 /** The catalog model a checkpoint's family is run like. */
 export const CHECKPOINT_TEMPLATES: Record<CheckpointBase, string> = {
 	sdxl: "sdxl-base",
@@ -95,7 +98,10 @@ export const CHECKPOINT_KIND: ShelfKind<CheckpointInfo> = {
 		return {
 			name,
 			base,
-			...CHECKPOINT_DEFAULTS[base],
+			// Distilled models make a picture in a few steps, with low guidance.
+			...(/lightning|turbo|hyper|lcm/i.test(`${name} ${fileName}`)
+				? FEW_STEPS
+				: CHECKPOINT_DEFAULTS[base]),
 			// Pony and the models tuned from it are trained to skip one.
 			clipSkip: /pony/i.test(`${name} ${fileName}`) ? 2 : null,
 		};

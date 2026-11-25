@@ -58,6 +58,8 @@ export const ERROR_CODES = [
 	"modelFolderLinked",
 	"modelFolderMissing",
 	"modelFolderNotFound",
+	"modelFolderOverlaps",
+	"modelFolderTooBroad",
 	"modelLinked",
 	"modelsBusy",
 	"modelsFolderFixed",

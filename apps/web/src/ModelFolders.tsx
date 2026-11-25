@@ -39,6 +39,11 @@ export function LinkedLabel({ linked }: { linked: LinkedFrom }) {
 	);
 }
 
+/** The short tag of a model from another app, where models are listed. */
+export function linkedTag(t: I18n["t"], linked: LinkedFrom): string {
+	return linked.app ? appText(t, linked.app) : t("folders.tag");
+}
+
 /** Refreshes what a change of linked folders shows elsewhere too. */
 function useRefresh() {
 	const client = useQueryClient();
@@ -67,8 +72,9 @@ function FolderRow({ folder }: { folder: ModelFolder }) {
 	return (
 		<li className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-line bg-bg/60 px-4 py-3">
 			<div className="min-w-0 flex-1 basis-60">
+				{/* Only those who change the folders see where they are. */}
 				<p className="truncate font-mono text-sm" title={folder.path}>
-					{folder.path}
+					{folder.path ?? appText(t, folder.app)}
 				</p>
 				<p className="mt-0.5 text-sm text-dim">
 					{folder.available
@@ -98,8 +104,8 @@ function FolderRow({ folder }: { folder: ModelFolder }) {
 			{can.admin && (
 				<ConfirmButton
 					label={t("folders.remove")}
-					ariaLabel={t("folders.removeNamed", { path: folder.path })}
-					question={t("folders.removeAsk", { path: folder.path })}
+					ariaLabel={t("folders.removeNamed", { path: folder.path ?? "" })}
+					question={t("folders.removeAsk", { path: folder.path ?? "" })}
 					confirm={t("folders.removeConfirm")}
 					disabled={remove.isPending}
 					onConfirm={() => remove.mutate()}
@@ -232,7 +238,7 @@ export function ModelFolders() {
 						</div>
 					</form>
 				)}
-				{add.isPending && (
+				{(add.isPending || rescan.isPending) && (
 					<p className="text-sm text-dim" role="status">
 						{t("folders.reading")}
 					</p>
