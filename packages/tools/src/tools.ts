@@ -82,6 +82,8 @@ export interface Tool<Shape extends z.ZodRawShape = z.ZodRawShape> {
 	input: Shape;
 	/** Only looks; changes nothing and spends nothing. */
 	readOnly?: boolean;
+	/** May replace something that exists, such as a file. */
+	destructive?: boolean;
 	run(
 		args: z.infer<z.ZodObject<Shape>>,
 		context: ToolContext,
@@ -454,14 +456,31 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 						"For models that redraw a picture: how much it changes, 0.05 to 1.",
 					),
 				aspect_ratio: z.string().optional().describe('Such as "16:9".'),
-				count: z.number().int().min(1).max(8).optional(),
-				seed: z.number().int().nonnegative().optional(),
+				count: z
+					.number()
+					.int()
+					.min(1)
+					.max(8)
+					.optional()
+					.describe("How many to make with each model, 1 to 8 (default 1)."),
+				seed: z
+					.number()
+					.int()
+					.nonnegative()
+					.optional()
+					.describe("The same seed and settings make the same picture again."),
 				duration_seconds: z
 					.number()
 					.int()
 					.optional()
 					.describe("Video length, for video models."),
-				session_id: z.string().regex(ID).optional(),
+				session_id: z
+					.string()
+					.regex(ID)
+					.optional()
+					.describe(
+						"A session id (ses_…) from an earlier result, to add to it. Without one, a new session starts.",
+					),
 				wait: z
 					.boolean()
 					.optional()
@@ -514,7 +533,7 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 		tool({
 			name: "upscale",
 			title: "Upscale a picture",
-			description: `Makes a picture larger and sharper with an installed upscaler, free and local when one is. Give a ${options.files ? "picture id (ast_…) or an image file path" : "picture id (ast_…)"}.`,
+			description: `Makes a picture larger and sharper (usually 4 times wider and taller) with an installed upscaler, and returns a preview and the new picture's id. The original is kept. A local upscaler is used first, which is free; paid ones only when paid models are allowed. Fails, saying so, when no upscaler is installed. To change what a picture shows, use generate with reference_images instead.`,
 			input: {
 				image: z
 					.string()
@@ -523,7 +542,13 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 							? "A picture id (ast_…) or an image file path."
 							: "A picture id (ast_…).",
 					),
-				session_id: z.string().regex(ID).optional(),
+				session_id: z
+					.string()
+					.regex(ID)
+					.optional()
+					.describe(
+						"A session id (ses_…) to add the result to. Without one, a new session starts.",
+					),
 			},
 			async run(args, context) {
 				const models = await usable();
@@ -552,8 +577,15 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 			name: "job_status",
 			title: "Check a session",
 			description:
-				"Says how a session's latest turn, and any turn still running, stand, with previews of what is done. For generations started with wait set to false, or that took too long.",
-			input: { session_id: z.string().regex(ID) },
+				"Says how a session's latest turn, and any turn still running, stand: each job's model and state (with the error when one failed), and for what is done its time, cost, ids and previews. Use it after generate returned before its jobs finished, because wait was false or they took long. Changes nothing.",
+			input: {
+				session_id: z
+					.string()
+					.regex(ID)
+					.describe(
+						"The session id (ses_…) that generate or upscale returned.",
+					),
+			},
 			readOnly: true,
 			async run({ session_id }) {
 				const [detail, models] = await Promise.all([
@@ -579,8 +611,19 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 			title: "Search the gallery",
 			description: `Finds pictures and videos made before, newest first, by words in their prompts. Returns ids to use with get_image${options.files ? ", save_image," : ""} or as reference_images.`,
 			input: {
-				query: z.string().optional(),
-				limit: z.number().int().min(1).max(50).optional(),
+				query: z
+					.string()
+					.optional()
+					.describe(
+						"Words to find in prompts. Without it, the newest are listed.",
+					),
+				limit: z
+					.number()
+					.int()
+					.min(1)
+					.max(50)
+					.optional()
+					.describe("How many to list, 1 to 50 (default 20)."),
 			},
 			readOnly: true,
 			async run({ query, limit }) {
@@ -599,8 +642,15 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 		tool({
 			name: "get_image",
 			title: "Look at a picture",
-			description: "Shows a picture by its id, made small enough to look at.",
-			input: { asset_id: z.string().regex(ASSET_ID) },
+			description: `Shows a picture by its id, made small enough to look at, with its full size and type. Use it to check a result before iterating on it. Videos cannot be shown${options.files ? "; save_image writes any picture or video at full size" : ""}. Changes nothing.`,
+			input: {
+				asset_id: z
+					.string()
+					.regex(ASSET_ID)
+					.describe(
+						"A picture id (ast_…) from generate, upscale, job_status or search_gallery.",
+					),
+			},
 			readOnly: true,
 			async run({ asset_id }) {
 				const { data, mime } = await reel.asset(asset_id);
@@ -628,10 +678,17 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 				description:
 					"Writes a picture or video, at full size, to a file. The path must be absolute; an existing file is kept unless overwrite is true.",
 				input: {
-					asset_id: z.string().regex(ASSET_ID),
+					asset_id: z
+						.string()
+						.regex(ASSET_ID)
+						.describe("The id (ast_…) of the picture or video to save."),
 					path: z.string().describe("Absolute path of the file to write."),
-					overwrite: z.boolean().optional(),
+					overwrite: z
+						.boolean()
+						.optional()
+						.describe("Replace a file that is already there (default false)."),
 				},
+				destructive: true,
 				async run({ asset_id, path, overwrite }) {
 					if (!isAbsolute(path)) return failure("The path must be absolute.");
 					const { data, mime } = await reel.asset(asset_id);
