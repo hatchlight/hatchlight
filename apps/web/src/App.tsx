@@ -8,6 +8,7 @@ import {
 	Plus,
 	Settings as SettingsIcon,
 	Trash2,
+	Trophy,
 } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Logo, Mark } from "@/components/Logo";
@@ -71,6 +72,9 @@ const Models = lazy(() =>
 );
 const HubOpen = lazy(() =>
 	import("./HubOpen").then((m) => ({ default: m.HubOpen })),
+);
+const RankingView = lazy(() =>
+	import("./Ranking").then((m) => ({ default: m.Ranking })),
 );
 const Settings = lazy(() =>
 	import("./Settings").then((m) => ({ default: m.Settings })),
@@ -177,6 +181,7 @@ export function App() {
 								<HubOpen target={route.target} />
 							</>
 						)}
+						{route.view === "ranking" && <RankingView />}
 						{route.view === "settings" && <Settings />}
 					</Suspense>
 				</div>
@@ -221,7 +226,16 @@ function AppSidebar({ route, demo }: { route: Route; demo: boolean }) {
 			icon: Cpu,
 			current: route.view === "models" || route.view === "hub",
 		},
-	].filter((place) => !demo || place.to !== href.models);
+		{
+			to: href.ranking,
+			label: t("nav.ranking"),
+			icon: Trophy,
+			current: route.view === "ranking",
+		},
+		// A demo has one model: nothing to install, and nothing to rank.
+	].filter(
+		(place) => !demo || (place.to !== href.models && place.to !== href.ranking),
+	);
 
 	return (
 		<>

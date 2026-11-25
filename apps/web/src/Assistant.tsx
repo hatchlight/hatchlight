@@ -21,7 +21,7 @@ import { Mark } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { type AssistantBrain, api, type SessionDetail } from "./api";
-import { JobCard } from "./Chat";
+import { JobCard, useComparison } from "./Chat";
 import { usd } from "./format";
 import { type I18n, useI18n } from "./i18n";
 import { Lightbox, type LightboxItem } from "./Lightbox";
@@ -74,25 +74,33 @@ function TurnResults(props: {
 	onUseAsReference(assetId: string): void;
 }) {
 	const { turn } = props;
+	const i18n = useI18n();
+	const comparison = useComparison(turn, props.models);
 	return (
-		<div
-			className={cn(
-				"grid gap-3.5",
-				turn.jobs.length > 1 ? "grid-cols-2" : "max-w-xl",
+		<>
+			<div
+				className={cn(
+					"grid gap-3.5",
+					turn.jobs.length > 1 ? "grid-cols-2" : "max-w-xl",
+				)}
+			>
+				{comparison.jobs.map((job, index) => (
+					<JobCard
+						key={job.id}
+						index={index}
+						job={job}
+						prompt={turn.prompt}
+						model={props.models.get(job.modelId)}
+						onOpen={props.onOpen}
+						onUseAsReference={props.onUseAsReference}
+						compare={comparison.of(job, index)}
+					/>
+				))}
+			</div>
+			{comparison.error != null && (
+				<p className="text-sm text-danger">{i18n.explain(comparison.error)}</p>
 			)}
-		>
-			{turn.jobs.map((job, index) => (
-				<JobCard
-					key={job.id}
-					index={index}
-					job={job}
-					prompt={turn.prompt}
-					model={props.models.get(job.modelId)}
-					onOpen={props.onOpen}
-					onUseAsReference={props.onUseAsReference}
-				/>
-			))}
-		</div>
+		</>
 	);
 }
 

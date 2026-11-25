@@ -659,6 +659,42 @@ test("people see only their own sessions, pictures, jobs and events", async () =
 	await listening;
 });
 
+test("a person picks the best of their own comparisons only, and ranks only those", async () => {
+	const { call, setupOwner, invite, runtime } = await serverApp();
+	const owner = await setupOwner();
+	const ana = await invite(owner);
+	const bia = await invite(owner);
+	const created = await call("/api/turns", {
+		method: "POST",
+		who: ana,
+		body: { prompt: "a portrait", modelIds: ["fake/alpha", "fake/beta"] },
+	});
+	const { session, turn } = (await created.json()) as {
+		session: { id: string };
+		turn: { id: string };
+	};
+	await runtime.engine.idle();
+	const detail = (await (
+		await call(`/api/sessions/${session.id}`, { who: ana })
+	).json()) as { turns: { jobs: { assets: { id: string }[] }[] }[] };
+	const assetId = detail.turns[0]?.jobs[1]?.assets[0]?.id;
+	const pick = (who: Who, body: unknown) =>
+		call(`/api/turns/${turn.id}/pick`, { method: "PUT", who, body });
+
+	const refused = await pick(bia, { assetId });
+	expect(refused.status).toBe(404);
+	expect(await errorCode(refused)).toBe("turnNotFound");
+	expect((await pick(ana, { assetId })).status).toBe(204);
+
+	const ranking = async (who: Who) =>
+		(await (await call("/api/ranking?kind=portrait", { who })).json()) as {
+			comparisons: number;
+			models: { modelId: string }[];
+		};
+	expect((await ranking(ana)).models[0]?.modelId).toBe("fake/beta");
+	expect(await ranking(bia)).toMatchObject({ comparisons: 0, models: [] });
+});
+
 test("a training shows only to whoever started it, and to admins", async () => {
 	let training: TrainingView = {
 		id: "trn_1",

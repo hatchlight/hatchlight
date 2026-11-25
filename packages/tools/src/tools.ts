@@ -1,6 +1,14 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
-import type { JobView, ModelSpec } from "@hatchlight/core/types";
+import { promptKinds } from "@hatchlight/core/ranking";
+import {
+	type JobView,
+	type ModelSpec,
+	PROMPT_KINDS,
+	type PromptKind,
+	RANKING_PERIODS,
+	type Ranking,
+} from "@hatchlight/core/types";
 import { z } from "zod";
 import type { Reel } from "./reel";
 import { done, isLocal, money, type SpendGuard, TERMINAL } from "./spend";
@@ -186,20 +194,70 @@ export function bestLocalModel(
 	references: number,
 ): ModelSpec | undefined {
 	return models
-		.filter(
-			(m) =>
-				isLocal(m) &&
-				m.media === "image" &&
-				m.capabilities.upscale == null &&
-				(references > 0
-					? m.capabilities.maxReferenceImages >= references
-					: m.operations.includes("generate")),
-		)
+		.filter((m) => fitsByDefault(m, references))
 		.toSorted(
 			(a, b) =>
 				(b.profile?.quality ?? 0) - (a.profile?.quality ?? 0) ||
 				(b.profile?.speed ?? 0) - (a.profile?.speed ?? 0),
 		)[0];
+}
+
+/** A free picture model on this computer that can take `references` pictures. */
+function fitsByDefault(model: ModelSpec, references: number): boolean {
+	return (
+		isLocal(model) &&
+		model.media === "image" &&
+		model.capabilities.upscale == null &&
+		(references > 0
+			? model.capabilities.maxReferenceImages >= references
+			: model.operations.includes("generate"))
+	);
+}
+
+/**
+ * The model the person picked most often in comparisons, among `fits`,
+ * for prompts of the kind given; null while there are too few picks to say.
+ */
+export async function preferredModel(
+	reel: Pick<Reel, "ranking">,
+	fits: ModelSpec[],
+	prompt: string,
+	references: number,
+): Promise<ModelSpec | null> {
+	if (!reel.ranking || fits.length === 0) return null;
+	const byId = new Map(fits.map((m) => [m.id, m]));
+	const kind = promptKinds(prompt, references)[0];
+	for (const query of kind ? [{ kind }, {}] : [{}]) {
+		const ranking = await reel.ranking(query).catch(() => null);
+		const top = ranking?.models.find((m) => !m.few && byId.has(m.modelId));
+		if (top) return byId.get(top.modelId) ?? null;
+	}
+	return null;
+}
+
+/** A ranking in lines an agent can read. */
+function rankingLines(ranking: Ranking, kind?: PromptKind): string[] {
+	const what = kind ? ` for ${kind} prompts` : "";
+	if (ranking.models.length === 0) {
+		return [
+			`The user has not picked a best result in any comparison${what} yet. In the Hatchlight app they can compare models on one prompt and mark the best result.`,
+		];
+	}
+	return [
+		`From ${ranking.comparisons} comparison(s)${what} where the user picked the best result, best first:`,
+		...ranking.models.map((m, i) => {
+			const time =
+				m.msPerOutput != null ? `${(m.msPerOutput / 1000).toFixed(1)} s` : null;
+			const cost =
+				m.usdPerOutput == null
+					? null
+					: m.usdPerOutput === 0
+						? "free"
+						: `$${m.usdPerOutput.toFixed(3)}`;
+			const per = [time, cost].filter(Boolean).join(", ");
+			return `${i + 1}. ${m.name} (${m.modelId}): won ${m.wins} of ${m.comparisons} (${Math.round(m.winRate * 100)}%)${per ? `; median ${per} per ${m.media}` : ""}${m.few ? "; few comparisons, not reliable yet" : ""}`;
+		}),
+	];
 }
 
 /** Models that can be used now: ready, and paid only when allowed. */
@@ -495,7 +553,14 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 				if (named) return named;
 				let ids = args.models ?? [];
 				if (ids.length === 0) {
-					const fit = bestLocalModel(models, given.length);
+					// What the person picked most in comparisons, else the best on paper.
+					const fit =
+						(await preferredModel(
+							reel,
+							models.filter((m) => fitsByDefault(m, given.length)),
+							args.prompt,
+							given.length,
+						)) ?? bestLocalModel(models, given.length);
 					if (!fit) {
 						return failure(
 							given.length > 0
@@ -636,6 +701,32 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 								`- ${item.id} — ${item.mime} — ${item.modelId ?? "uploaded"} — ${new Date(item.createdAt).toISOString()} — "${item.prompt ?? ""}"`,
 						)
 						.join("\n"),
+				);
+			},
+		}),
+		tool({
+			name: "model_ranking",
+			title: "Rank the user's models",
+			description:
+				"Says which models the user prefers, from the comparisons where they picked the best result: wins out of comparisons, and the median time and cost per picture on their computer. Narrow it by kind of prompt to answer questions such as which model they prefer for portraits. Changes nothing.",
+			input: {
+				kind: z
+					.enum(PROMPT_KINDS)
+					.optional()
+					.describe(
+						"Only prompts of this kind (pictures given count as editing).",
+					),
+				media: z.enum(["image", "video"]).optional(),
+				period: z
+					.enum(RANKING_PERIODS)
+					.optional()
+					.describe("30d for the last 30 days; all time by default."),
+			},
+			readOnly: true,
+			async run(args) {
+				if (!reel.ranking) return failure("No ranking is kept here.");
+				return text(
+					rankingLines(await reel.ranking(args), args.kind).join("\n"),
 				);
 			},
 		}),

@@ -28,6 +28,7 @@ describe("settings", () => {
 			assistantWith: "auto",
 			otherAppsPaid: false,
 			otherAppsModel: null,
+			blindPicks: false,
 		});
 	});
 
@@ -39,6 +40,7 @@ describe("settings", () => {
 			assistantWith: "auto",
 			otherAppsPaid: false,
 			otherAppsModel: null,
+			blindPicks: false,
 		});
 		expect(await settings.set(ana, { improveWith: "local" })).toEqual({
 			translateWith: "openai",
@@ -46,6 +48,7 @@ describe("settings", () => {
 			assistantWith: "auto",
 			otherAppsPaid: false,
 			otherAppsModel: null,
+			blindPicks: false,
 		});
 		expect(await settings.get(bia)).toEqual({
 			translateWith: "local",
@@ -53,6 +56,7 @@ describe("settings", () => {
 			assistantWith: "auto",
 			otherAppsPaid: false,
 			otherAppsModel: null,
+			blindPicks: false,
 		});
 		expect(await new FileSettingsStore(path).get(ana)).toEqual({
 			translateWith: "openai",
@@ -60,6 +64,7 @@ describe("settings", () => {
 			assistantWith: "auto",
 			otherAppsPaid: false,
 			otherAppsModel: null,
+			blindPicks: false,
 		});
 	});
 
@@ -77,6 +82,7 @@ describe("settings", () => {
 			assistantWith: "auto",
 			otherAppsPaid: false,
 			otherAppsModel: null,
+			blindPicks: false,
 		});
 		await writeFile(path, "not json");
 		expect(await new FileSettingsStore(path).get(ana)).toEqual({
@@ -85,6 +91,7 @@ describe("settings", () => {
 			assistantWith: "auto",
 			otherAppsPaid: false,
 			otherAppsModel: null,
+			blindPicks: false,
 		});
 	});
 

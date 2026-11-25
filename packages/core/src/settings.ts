@@ -14,6 +14,7 @@ export const DEFAULT_SETTINGS: Settings = {
 	assistantWith: "auto",
 	otherAppsPaid: false,
 	otherAppsModel: null,
+	blindPicks: false,
 };
 
 export interface SettingsStore {
@@ -51,6 +52,10 @@ export class FileSettingsStore implements SettingsStore {
 			otherAppsPaid: mine.otherAppsPaid === true,
 			otherAppsModel:
 				typeof mine.otherAppsModel === "string" ? mine.otherAppsModel : null,
+			blindPicks:
+				typeof mine.blindPicks === "boolean"
+					? mine.blindPicks
+					: DEFAULT_SETTINGS.blindPicks,
 		};
 	}
 

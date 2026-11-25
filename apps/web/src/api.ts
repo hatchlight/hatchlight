@@ -19,6 +19,8 @@ import type {
 	ModelFolderSuggestion,
 	ModelSpec,
 	ProviderStatus,
+	Ranking,
+	RankingQuery,
 	Session,
 	Settings,
 	TokenExpiryDays,
@@ -529,6 +531,14 @@ export const api = {
 		request<ModelFolder[]>("/api/model-folders/rescan", { method: "POST" }),
 	removeModelFolder: (id: string) =>
 		request<void>(`/api/model-folders/${id}`, { method: "DELETE" }),
+	pick: (turnId: string, assetId: string | null) =>
+		request<void>(`/api/turns/${turnId}/pick`, send("PUT", { assetId })),
+	ranking: (query: RankingQuery) =>
+		request<Ranking>(
+			`/api/ranking?${new URLSearchParams(
+				Object.entries(query).filter(([, value]) => value != null),
+			)}`,
+		),
 	settings: () => request<Settings>("/api/settings"),
 	saveSettings: (change: Partial<Settings>) =>
 		request<Settings>("/api/settings", send("PUT", change)),

@@ -6,6 +6,7 @@ import { newId } from "./ids";
 import type { KeyStore } from "./keys";
 import { sniffMime } from "./mime";
 import type { ProviderRegistry } from "./provider";
+import { rankModels } from "./ranking";
 import {
 	type Asset,
 	type CreateTurnInput,
@@ -16,6 +17,8 @@ import {
 	type JobView,
 	type ModelSpec,
 	type ProviderStatus,
+	type Ranking,
+	type RankingQuery,
 	type Session,
 	type Turn,
 	type TurnView,
@@ -36,6 +39,7 @@ export interface ReelServiceDeps {
 }
 
 const UPLOAD_MIMES = ["image/png", "image/jpeg", "image/webp"];
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Fits the requested parameters to what one model supports. */
 export function adaptParams(
@@ -404,5 +408,51 @@ export class ReelService {
 
 	listGallery(ctx: UserContext, query: GalleryQuery): Promise<GalleryItem[]> {
 		return this.deps.repo.listGallery(ctx, query);
+	}
+
+	/**
+	 * Marks one result of a turn as the best of its comparison, replacing
+	 * an earlier pick; null clears it. Only a result of that turn, and only
+	 * where there was more than one to choose from.
+	 */
+	async pickResult(
+		ctx: UserContext,
+		turnId: string,
+		assetId: string | null,
+	): Promise<void> {
+		const turn = await this.deps.repo.getTurn(ctx, turnId);
+		if (!turn) throw new NotFoundError("Turn not found", "turnNotFound");
+		if (assetId == null) {
+			await this.deps.repo.setPick(ctx, turnId, null);
+			return;
+		}
+		const job = turn.jobs.find((j) => j.assets.some((a) => a.id === assetId));
+		if (!job) {
+			throw new ValidationError(
+				"That picture is not one of this turn's results",
+				"pickNotInTurn",
+			);
+		}
+		if (turn.jobs.flatMap((j) => j.assets).length < 2) {
+			throw new ValidationError(
+				"Only a turn with several results has a best one",
+				"pickNeedsComparison",
+			);
+		}
+		await this.deps.repo.setPick(ctx, turnId, {
+			assetId,
+			modelId: job.modelId,
+		});
+	}
+
+	/** How the person's picks rank the models they compared. */
+	async ranking(ctx: UserContext, query: RankingQuery = {}): Promise<Ranking> {
+		const since = query.period === "30d" ? Date.now() - 30 * DAY_MS : undefined;
+		const picked = await this.deps.repo.listPickedTurns(ctx, since);
+		return rankModels(picked, {
+			media: query.media,
+			kind: query.kind,
+			model: (id) => this.deps.registry.model(id),
+		});
 	}
 }

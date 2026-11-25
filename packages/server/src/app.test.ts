@@ -186,6 +186,63 @@ test("a turn is created, runs, and shows up in its session", async () => {
 	expect((await call(`/api/sessions/${session.id}`)).status).toBe(404);
 });
 
+test("the best of a comparison is picked, cleared and ranked", async () => {
+	const { call, post, runtime } = await setup();
+	const created = await post("/api/turns", {
+		prompt: "a red fox",
+		modelIds: ["fake/alpha", "fake/beta"],
+	});
+	const { session, turn } = (await created.json()) as {
+		session: { id: string };
+		turn: { id: string };
+	};
+	await runtime.engine.idle();
+	const detail = async () =>
+		(await (await call(`/api/sessions/${session.id}`)).json()) as {
+			turns: {
+				pickedAssetId: string | null;
+				jobs: { assets: { id: string }[] }[];
+			}[];
+		};
+	const assetId = (await detail()).turns[0]?.jobs[0]?.assets[0]?.id;
+	const pick = (body: unknown) =>
+		post(`/api/turns/${turn.id}/pick`, body, "PUT");
+
+	expect((await pick({ assetId })).status).toBe(204);
+	expect((await detail()).turns[0]?.pickedAssetId).toBe(assetId);
+	const ranking = (await (
+		await call("/api/ranking?media=image&period=30d&kind=all")
+	).json()) as { comparisons: number; models: { modelId: string }[] };
+	expect(ranking.comparisons).toBe(1);
+	expect(ranking.models[0]?.modelId).toBe("fake/alpha");
+
+	expect((await pick({ assetId: null })).status).toBe(204);
+	expect((await detail()).turns[0]?.pickedAssetId).toBeNull();
+
+	for (const body of [{}, { assetId: 3 }]) {
+		expect((await pick(body)).status).toBe(400);
+	}
+	expect(
+		(await post("/api/turns/trn_nope/pick", { assetId }, "PUT")).status,
+	).toBe(404);
+	for (const query of ["media=sound", "period=week", "kind=cats"]) {
+		expect((await call(`/api/ranking?${query}`)).status).toBe(400);
+	}
+});
+
+test("hiding model names until a pick is a person's choice", async () => {
+	const { call, post } = await setup();
+	expect(
+		((await (await call("/api/settings")).json()) as { blindPicks: boolean })
+			.blindPicks,
+	).toBe(false);
+	const set = await post("/api/settings", { blindPicks: true }, "PUT");
+	expect(((await set.json()) as { blindPicks: boolean }).blindPicks).toBe(true);
+	expect(
+		(await post("/api/settings", { blindPicks: "yes" }, "PUT")).status,
+	).toBe(400);
+});
+
 test("invalid requests get a 400 with the reason", async () => {
 	const { post, call } = await setup();
 	for (const body of [

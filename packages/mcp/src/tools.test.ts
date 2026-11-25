@@ -51,7 +51,7 @@ async function agent(options: Partial<McpOptions> = {}) {
 	});
 	const call = async (name: string, args: Record<string, unknown> = {}) =>
 		(await client.callTool({ name, arguments: args })) as CallToolResult;
-	return { call, dataDir, client };
+	return { call, dataDir, client, hatchlight };
 }
 
 const textOf = (result: CallToolResult) =>
@@ -80,6 +80,7 @@ test("it offers the tools an agent needs, and none that installs models", async 
 		"get_image",
 		"job_status",
 		"list_models",
+		"model_ranking",
 		"save_image",
 		"search_gallery",
 		"upscale",
@@ -209,6 +210,39 @@ test("pictures made before are found, looked at and saved", async () => {
 	expect(again.isError).toBe(true);
 	const relative = await call("save_image", { asset_id: id, path: "x.png" });
 	expect(textOf(relative)).toContain("must be absolute");
+});
+
+test("an agent reads which model the person prefers, and changes nothing", async () => {
+	const { call, client, hatchlight } = await agent({ allowPaid: true });
+	const { tools } = await client.listTools();
+	expect(
+		tools.find((t) => t.name === "model_ranking")?.annotations?.readOnlyHint,
+	).toBe(true);
+	expect(textOf(await call("model_ranking", { kind: "portrait" }))).toContain(
+		"has not picked a best result in any comparison for portrait prompts",
+	);
+
+	const made = textOf(
+		await call("generate", {
+			prompt: "a portrait of a fox",
+			models: ["fake/alpha", "fake/beta"],
+		}),
+	);
+	const session = await hatchlight.session(
+		made.match(/Session (ses_\w+)/)?.[1] as string,
+	);
+	const turn = session.turns[0];
+	await hatchlight.pick(
+		turn?.id as string,
+		turn?.jobs[1]?.assets[0]?.id as string,
+	);
+	const ranked = textOf(await call("model_ranking", { kind: "portrait" }));
+	expect(ranked).toContain("From 1 comparison(s) for portrait prompts");
+	expect(ranked).toMatch(/1\. Fake beta \(fake\/beta\): won 1 of 1 \(100%\)/);
+	expect(ranked).toContain("few comparisons");
+	expect(textOf(await call("model_ranking", { kind: "landscape" }))).toContain(
+		"has not picked",
+	);
 });
 
 test("upscaling says how to get an upscaler when none is installed", async () => {

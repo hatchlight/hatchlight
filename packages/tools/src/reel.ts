@@ -4,6 +4,8 @@ import type {
 	GalleryItem,
 	ModelSpec,
 	ProviderStatus,
+	Ranking,
+	RankingQuery,
 	Session,
 	TurnView,
 } from "@hatchlight/core/types";
@@ -27,4 +29,6 @@ export interface Reel {
 	asset(id: string): Promise<{ data: Uint8Array; mime: string }>;
 	/** Where a person can see a session in the app. */
 	sessionUrl(id: string): string;
+	/** How the person's picks rank the models they compared, where known. */
+	ranking?(query: RankingQuery): Promise<Ranking>;
 }

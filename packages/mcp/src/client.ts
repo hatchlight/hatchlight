@@ -6,6 +6,8 @@ import type {
 	LocalModelEvent,
 	ModelSpec,
 	ProviderStatus,
+	Ranking,
+	RankingQuery,
 	Session,
 	TrainerEvent,
 	TurnView,
@@ -100,6 +102,22 @@ export class HatchlightClient implements Reel {
 			mime: response.headers.get("content-type") ?? "application/octet-stream",
 		};
 	}
+
+	/** How the person's picks rank the models they compared. */
+	ranking = (query: RankingQuery = {}) => {
+		const search = new URLSearchParams(
+			Object.entries(query).filter(([, value]) => value != null),
+		);
+		return this.request<Ranking>(`/api/ranking?${search}`);
+	};
+
+	/** Marks the best result of a turn; null clears it. */
+	pick = (turnId: string, assetId: string | null) =>
+		this.request<void>(`/api/turns/${encodeURIComponent(turnId)}/pick`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ assetId }),
+		});
 
 	cancelJob = (id: string) =>
 		this.post(`/api/jobs/${encodeURIComponent(id)}/cancel`);

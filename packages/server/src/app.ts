@@ -19,7 +19,11 @@ import {
 	mayUsePaid,
 	NotFoundError,
 	type PaidRefusal,
+	PROMPT_KINDS,
+	type PromptKind,
 	paidError,
+	RANKING_PERIODS,
+	type RankingPeriod,
 	type ReelService,
 	SERVER_KEYS,
 	type SettingsStore,
@@ -922,6 +926,45 @@ export function createApp(options: AppOptions): Hono {
 		return c.json(result, 201);
 	});
 
+	app.put("/api/turns/:id/pick", async (c) => {
+		const { assetId } = await json(c);
+		if (assetId !== null && typeof assetId !== "string") {
+			throw new ValidationError("assetId must be a picture id or null");
+		}
+		await service.pickResult(user(c), c.req.param("id"), assetId);
+		return c.body(null, 204);
+	});
+
+	app.get("/api/ranking", async (c) => {
+		const media = c.req.query("media");
+		const period = c.req.query("period");
+		const kind = c.req.query("kind");
+		if (media != null && media !== "image" && media !== "video") {
+			throw new ValidationError("media must be image or video");
+		}
+		if (period != null && !RANKING_PERIODS.includes(period as never)) {
+			throw new ValidationError(
+				`period must be one of ${RANKING_PERIODS.join(", ")}`,
+			);
+		}
+		if (
+			kind != null &&
+			kind !== "all" &&
+			!PROMPT_KINDS.includes(kind as never)
+		) {
+			throw new ValidationError(
+				`kind must be all or one of ${PROMPT_KINDS.join(", ")}`,
+			);
+		}
+		return c.json(
+			await service.ranking(user(c), {
+				media,
+				period: period as RankingPeriod | undefined,
+				kind: kind === "all" ? undefined : (kind as PromptKind | undefined),
+			}),
+		);
+	});
+
 	app.get("/api/jobs/:id/preview", (c) => {
 		const { data, mime } = service.jobPreview(user(c), c.req.param("id"));
 		return new Response(data, {
@@ -1151,8 +1194,14 @@ export function createApp(options: AppOptions): Hono {
 				`assistantWith must be one of ${IMPROVE_WITH.join(", ")}`,
 			);
 		}
+		if (body.blindPicks !== undefined && typeof body.blindPicks !== "boolean") {
+			throw new ValidationError("blindPicks must be true or false");
+		}
 		return c.json(
 			await options.settings.set(user(c), {
+				...(typeof body.blindPicks === "boolean" && {
+					blindPicks: body.blindPicks,
+				}),
 				...(isImproveWith(body.assistantWith) && {
 					assistantWith: body.assistantWith,
 				}),

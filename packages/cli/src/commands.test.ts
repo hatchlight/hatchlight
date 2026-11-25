@@ -275,6 +275,34 @@ describe("gallery and get", () => {
 	});
 });
 
+test("ranking lists the models by the results picked as the best", async () => {
+	const t = await terminal();
+	await t.run("ranking");
+	expect(t.err.join()).toContain("No comparison has a pick yet");
+	await t.run("generate", [
+		"a portrait of a fox",
+		"--allow-paid",
+		"-m",
+		"fake/alpha",
+		"-m",
+		"fake/beta",
+		"--json",
+	]);
+	const { sessionId } = t.json();
+	const turn = (await t.api.session(sessionId)).turns[0];
+	await t.api.pick(turn?.id as string, turn?.jobs[0]?.assets[0]?.id as string);
+
+	await t.run("ranking", ["--kind", "portrait"]);
+	expect(t.out[0]).toMatch(/^1\.\s+Fake alpha\s+1\/1\s+100%/);
+	expect(t.out[0]).toContain("few comparisons");
+	expect(t.out[1]).toMatch(/^2\.\s+Fake beta\s+0\/1\s+0%/);
+	await t.run("ranking", ["--kind", "landscape", "--json"]);
+	expect(t.json()).toMatchObject({ comparisons: 0, models: [] });
+	await expect(t.run("ranking", ["--kind", "cats"])).rejects.toThrow(
+		"--kind takes one of",
+	);
+});
+
 test("open shows the app, or a session in it", async () => {
 	const t = await terminal();
 	await t.run("open");

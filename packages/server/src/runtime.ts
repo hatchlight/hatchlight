@@ -162,6 +162,7 @@ export function localReel(service: ReelService, ctx: UserContext): Reel {
 			};
 		},
 		sessionUrl: (id) => `#/s/${encodeURIComponent(id)}`,
+		ranking: (query) => service.ranking(ctx, query),
 	};
 }
 

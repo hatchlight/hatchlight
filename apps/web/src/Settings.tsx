@@ -748,6 +748,38 @@ function OtherApps() {
 	);
 }
 
+/** How comparisons are shown: with the models' names, or blind until a pick. */
+function Comparisons() {
+	const { t, explain } = useI18n();
+	const client = useQueryClient();
+	const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
+	const save = useMutation({
+		mutationFn: (blindPicks: boolean) => api.saveSettings({ blindPicks }),
+		onSuccess: (saved) => client.setQueryData(["settings"], saved),
+	});
+	return (
+		<Card className={SECTION}>
+			<SectionHeader
+				title={t("settings.comparisons")}
+				intro={t("settings.comparisonsIntro")}
+			/>
+			<CardContent className="flex flex-col gap-3">
+				<Label className="min-h-10 gap-3 font-normal">
+					<Switch
+						checked={settings.data?.blindPicks ?? false}
+						disabled={!settings.data || save.isPending}
+						onCheckedChange={(checked) => save.mutate(checked)}
+					/>
+					{t("settings.blindPicks")}
+				</Label>
+				{save.error && (
+					<p className="text-sm text-danger">{explain(save.error)}</p>
+				)}
+			</CardContent>
+		</Card>
+	);
+}
+
 export function Settings() {
 	const { t, explain, language, setLanguage, languages } = useI18n();
 	const id = useId();
@@ -804,6 +836,7 @@ export function Settings() {
 				</Card>
 				<AccountSettings />
 				<Translation />
+				<Comparisons />
 				{server ? (
 					<>
 						{can.paid && (

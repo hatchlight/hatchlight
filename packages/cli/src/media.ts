@@ -1,12 +1,16 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import type { ParseArgsOptionsConfig } from "node:util";
-import type {
-	EngineEvent,
-	JobView,
-	ModelSpec,
-	ProgressStage,
-	TurnView,
+import {
+	type EngineEvent,
+	type JobView,
+	type ModelSpec,
+	PROMPT_KINDS,
+	type ProgressStage,
+	type PromptKind,
+	RANKING_PERIODS,
+	type RankingPeriod,
+	type TurnView,
 } from "@hatchlight/core/types";
 import {
 	ASSET_ID,
@@ -23,6 +27,7 @@ import {
 	COMMON_HELP,
 	type Command,
 	type Context,
+	duration,
 	EXIT,
 	type Io,
 	id,
@@ -685,6 +690,78 @@ ${COMMON_HELP}`,
 			)) {
 				io.out(line);
 			}
+			return EXIT.ok;
+		},
+	},
+
+	ranking: {
+		summary: "Rank the models by the results picked as the best",
+		usage: `Usage: hatchlight ranking [options]
+
+Ranks the models compared on this computer by how often their result was
+picked as the best (in the app), with the median time and cost per picture.
+Models with few comparisons are marked: their win rate says little yet.
+
+  --kind <k>        Only prompts of a kind: ${PROMPT_KINDS.join(", ")}
+  --media <m>       image or video
+  --period <p>      30d or all (default all)
+${COMMON_HELP}`,
+		options: {
+			kind: { type: "string" },
+			media: { type: "string" },
+			period: { type: "string" },
+		},
+		async run(values, _positionals, { api, io }) {
+			const kind = values.kind as string | undefined;
+			const media = values.media as string | undefined;
+			const period = values.period as string | undefined;
+			if (kind != null && !PROMPT_KINDS.includes(kind as PromptKind)) {
+				throw new UsageError(`--kind takes one of ${PROMPT_KINDS.join(", ")}.`);
+			}
+			if (media != null && media !== "image" && media !== "video") {
+				throw new UsageError("--media takes image or video.");
+			}
+			if (
+				period != null &&
+				!RANKING_PERIODS.includes(period as RankingPeriod)
+			) {
+				throw new UsageError("--period takes 30d or all.");
+			}
+			const ranking = await api.ranking({
+				kind: kind as PromptKind | undefined,
+				media,
+				period: period as RankingPeriod | undefined,
+			});
+			if (values.json) {
+				json(io, ranking);
+				return EXIT.ok;
+			}
+			if (ranking.models.length === 0) {
+				io.err(
+					"No comparison has a pick yet. Compare models on one prompt in the app and mark the best result.",
+				);
+				return EXIT.ok;
+			}
+			for (const line of table(
+				ranking.models.map((m, i) => [
+					`${i + 1}.`,
+					m.name,
+					`${m.wins}/${m.comparisons}`,
+					`${Math.round(m.winRate * 100)}%`,
+					m.msPerOutput == null ? "-" : duration(m.msPerOutput / 1000),
+					m.usdPerOutput == null
+						? "-"
+						: m.usdPerOutput === 0
+							? "free"
+							: money(m.usdPerOutput),
+					m.few ? "few comparisons" : "",
+				]),
+			)) {
+				io.out(line);
+			}
+			io.err(
+				`Sorted by a cautious win rate: under ${ranking.minComparisons} comparisons a model ranks lower than its wins alone say.`,
+			);
 			return EXIT.ok;
 		},
 	},

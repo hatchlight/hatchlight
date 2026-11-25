@@ -1,8 +1,19 @@
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
-import { and, desc, eq, inArray, lt, notInArray, or, sql } from "drizzle-orm";
+import {
+	and,
+	desc,
+	eq,
+	gte,
+	inArray,
+	lt,
+	notInArray,
+	or,
+	sql,
+} from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
+import type { PickedTurn } from "../ranking";
 import {
 	type Asset,
 	type AssistantEntry,
@@ -53,6 +64,15 @@ export interface Repository {
 	/** Stores a turn with its jobs and bumps the session's `updatedAt`. */
 	createTurn(turn: Turn, jobs: Job[]): Promise<void>;
 	listTurns(ctx: UserContext, sessionId: string): Promise<TurnView[]>;
+	getTurn(ctx: UserContext, id: string): Promise<TurnView | null>;
+	/** Keeps the person's best result of a turn; null forgets it. */
+	setPick(
+		ctx: UserContext,
+		turnId: string,
+		pick: { assetId: string; modelId: string } | null,
+	): Promise<void>;
+	/** The person's turns with a pick, made since `since` when given. */
+	listPickedTurns(ctx: UserContext, since?: number): Promise<PickedTurn[]>;
 	createAsset(asset: Asset): Promise<void>;
 	getAssets(ctx: UserContext, ids: string[]): Promise<Asset[]>;
 	/** Deletes a person's asset; says how many of theirs still share its file. */
@@ -217,22 +237,87 @@ export class SqliteRepository implements Repository {
 			)
 			.orderBy(schema.turns.createdAt)
 			.all();
+		return this.withJobs(turns);
+	}
+
+	async getTurn(ctx: UserContext, id: string) {
+		const turn = this.db
+			.select()
+			.from(schema.turns)
+			.where(and(eq(schema.turns.id, id), eq(schema.turns.userId, ctx.userId)))
+			.get();
+		return turn ? (this.withJobs([turn])[0] ?? null) : null;
+	}
+
+	async setPick(
+		ctx: UserContext,
+		turnId: string,
+		pick: { assetId: string; modelId: string } | null,
+	) {
+		const mine = and(
+			eq(schema.picks.turnId, turnId),
+			eq(schema.picks.userId, ctx.userId),
+		);
+		if (!pick) {
+			this.db.delete(schema.picks).where(mine).run();
+			return;
+		}
+		this.db
+			.insert(schema.picks)
+			.values({ turnId, userId: ctx.userId, ...pick, createdAt: Date.now() })
+			.onConflictDoUpdate({
+				target: schema.picks.turnId,
+				set: { ...pick, createdAt: Date.now() },
+				setWhere: eq(schema.picks.userId, ctx.userId),
+			})
+			.run();
+	}
+
+	async listPickedTurns(ctx: UserContext, since?: number) {
+		const rows = this.db
+			.select({ turn: schema.turns, pick: schema.picks })
+			.from(schema.picks)
+			.innerJoin(schema.turns, eq(schema.turns.id, schema.picks.turnId))
+			.where(
+				and(
+					eq(schema.picks.userId, ctx.userId),
+					eq(schema.turns.userId, ctx.userId),
+					since != null ? gte(schema.turns.createdAt, since) : undefined,
+				),
+			)
+			.orderBy(schema.turns.createdAt)
+			.all();
+		const views = this.withJobs(rows.map((row) => row.turn));
+		return rows.map((row, index) => ({
+			turn: views[index] as TurnView,
+			assetId: row.pick.assetId,
+			modelId: row.pick.modelId,
+		}));
+	}
+
+	/** Turns with their jobs, their jobs' pictures, and the person's pick. */
+	private withJobs(turns: Turn[]): TurnView[] {
 		if (turns.length === 0) return [];
+		const ids = turns.map((t) => t.id);
 		const jobs = this.db
 			.select()
 			.from(schema.jobs)
-			.where(
-				inArray(
-					schema.jobs.turnId,
-					turns.map((t) => t.id),
-				),
-			)
+			.where(inArray(schema.jobs.turnId, ids))
 			.orderBy(schema.jobs.position)
 			.all();
+		const picks = new Map(
+			this.db
+				.select()
+				.from(schema.picks)
+				.where(inArray(schema.picks.turnId, ids))
+				.all()
+				.map((pick) => [pick.turnId, pick.assetId]),
+		);
 		const views = this.withAssets(jobs);
 		return turns.map((turn) => ({
 			...turn,
 			jobs: views.filter((job) => job.turnId === turn.id),
+			pickedAssetId: picks.get(turn.id) ?? null,
 		}));
 	}
 

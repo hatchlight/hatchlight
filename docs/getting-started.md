@@ -154,6 +154,30 @@ with**, and install the translator if it asks. **Improve prompt** turns a
 short idea into a detailed prompt. Both run on your computer on Windows; on
 macOS and Linux they need a cloud key.
 
+## Which model you prefer
+
+When you compare models, mark the result you like best with **This one**
+under it; press it again to clear it, or pick another. It works in both
+views, with the mouse or the keyboard.
+
+**Models you prefer** in the sidebar ranks the models by your picks: how
+many comparisons each won, and its median time and cost per picture on your
+computer. Narrow it to pictures or videos, the last 30 days, or a kind of
+prompt, such as portraits, text in the picture or editing. A model with few
+comparisons is marked and ranks lower until there are more, so one lucky win
+does not top the list.
+
+To choose without knowing which model made what, turn on **Settings >
+Comparisons > Hide model names until I pick**: the results show as Model A,
+Model B…, in an order of their own, until you pick.
+
+**Copy as Markdown** and **Download image** share the ranking with only the
+model names, the numbers, your GPU and the date; tick **Include one example
+per model** to add the pictures you picked. In the terminal,
+`hatchlight ranking --kind portrait` prints the same, and agents can ask for
+it with the `model_ranking` tool. When you leave the model to the assistant,
+it uses your favourite once you have picked enough.
+
 ## Change a picture
 
 Any picture can be the start of the next one. Click it, then:
