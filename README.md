@@ -7,6 +7,7 @@
 
 <p align="center">
   <a href="https://github.com/hatchlight/hatchlight/releases/latest"><strong>Download</strong></a> ·
+  <a href="docs/getting-started.md">Getting started</a> ·
   <a href="https://hatchlight.app">Website</a> ·
   <a href="CONTRIBUTING.md">Contribute</a>
 </p>
@@ -105,6 +106,12 @@ reader. More languages are welcome: see [Translate](CONTRIBUTING.md#translate).
 
 Under WSL on Windows, the Windows engines run.
 
+About 8 GB of graphics card memory runs the quick models, such as SDXL Turbo;
+4 to 6 GB runs Stable Diffusion 1.5 and the smallest version of Z-Image
+Turbo. With
+less, or no graphics card, cloud models still work. See
+[Which model to start with](docs/getting-started.md#which-model-to-start-with).
+
 Some parts need more:
 
 - training a LoRA needs Windows (or WSL) and an NVIDIA card with 12 GB of
@@ -117,15 +124,13 @@ Some parts need more:
 
 **Desktop app:** download the installer for your system from the
 [latest release](https://github.com/hatchlight/hatchlight/releases/latest). It
-updates itself when a new version comes out.
+updates itself when a new version comes out. The installers are not signed
+yet: if Windows or macOS warns you,
+[Getting started](docs/getting-started.md#install) says what to do.
 
-The installers are not signed yet:
-
-- **Windows:** if Windows says it protected your computer, choose **More
-  info**, then **Run anyway**.
-- **macOS:** if macOS says the app is damaged or cannot be opened, move it to
-  Applications, run `xattr -cr /Applications/Hatchlight.app` in Terminal, and
-  open it again.
+**New to Hatchlight?** [Getting started](docs/getting-started.md) walks you
+from the first picture to editing, styles of your own, and what to do when
+something goes wrong.
 
 **From source**, with [Bun](https://bun.sh) 1.4 or newer:
 
@@ -136,84 +141,29 @@ bun run build
 bun run start
 ```
 
-This opens `http://localhost:4096`. The first screen walks you to a first
-picture: download a model that runs on your computer, or paste an API key.
+This opens `http://localhost:4096`. `bun run start --help` lists the options.
+Keys can also come from the environment: `FAL_KEY`, `OPENAI_API_KEY`,
+`GEMINI_API_KEY`, `REPLICATE_API_TOKEN`, `OPENROUTER_API_KEY`.
 
 **As a server** for the people of your home or a small team, on a home
 server or NAS with an NVIDIA card: run the Docker image, with accounts and a
 private gallery for each person. See [Self-hosting](docs/self-hosting.md).
 
-`bun run start --help` lists the options. Keys can also come from the
-environment: `FAL_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,
-`REPLICATE_API_TOKEN`, `OPENROUTER_API_KEY`.
+## Use it from the terminal or an AI agent
 
-## Use it from the terminal
-
-The same program makes pictures from the command line. From the Hatchlight
-folder, `bun run start <command>`:
+The same program makes pictures from the command line, and lets agents that
+speak the [Model Context Protocol](https://modelcontextprotocol.io), such as
+Claude Code or Claude Desktop, use your models. With [Bun](https://bun.sh)
+installed:
 
 ```sh
-bun run start models                         # what can be used now
-bun run start generate "a lighthouse at dusk" -m local/sdxl-turbo -o out/
-bun run start generate "the same, at night" -r out/first.png --seed 7
-bun run start upscale ast_… -o big.png
-bun run start gallery lighthouse             # find what was made before
-bun run start get ast_… -o lighthouse.png
-bun run start generate --batch prompts.txt -o out/   # one prompt per line
-bun run start chat "a poster of a lighthouse, then make it warmer"
-```
-
-`generate` waits and shows how each model is doing. With the app open, Ctrl+C
-stops waiting while the job goes on, to follow with `status <session>`. Compare models by
-repeating `-m`. Every command takes `--json` for scripts and has `--help`.
-Like agents, it uses the Hatchlight already running or starts one for the
-command, and only models on your computer unless you pass `--allow-paid`.
-
-Setting up works from the terminal too:
-
-```sh
-bun run start doctor                 # the GPU, disk, models and what is missing
-bun run start catalog                # models to download, and how they fit
-bun run start install sdxl-turbo     # download one and wait until it is ready
-bun run start keys set fal           # asks for the key without showing it
-bun run start loras add style.safetensors
-bun run start trainer install        # then train a LoRA from your pictures:
-bun run start train photos/ --name "My dog" --trigger qzxdog --consent --samples out/
-```
-
-`bun run start completions zsh` (or `bash`, `fish`) prints tab completion for
-your shell; its `--help` says where to put it.
-
-## Use it from an AI agent
-
-`hatchlight mcp` lets an agent that speaks the
-[Model Context Protocol](https://modelcontextprotocol.io), such as Claude Code
-or Claude Desktop, make pictures and videos with your models: list them,
-generate and compare, redraw a picture, upscale it, and search and save from
-your gallery. In the app, **Settings → Use with AI agents** connects Claude
-Desktop for you and shows the command for Claude Code. Without the app, the
-[npm package](https://www.npmjs.com/package/hatchlight) runs on
-[Bun](https://bun.sh):
-
-```sh
+bunx hatchlight generate "a lighthouse at dusk" -m local/sdxl-turbo -o out/
 claude mcp add hatchlight -- bunx hatchlight mcp
 ```
 
-From a source checkout:
-
-```sh
-claude mcp add hatchlight -- bun "$PWD/packages/cli/src/index.ts" mcp
-```
-
-It uses the Hatchlight already running, or starts one that stops with the
-agent. By default only models on your computer are used, so it costs nothing;
-`--allow-paid --spend-limit 5` also lets it use your cloud keys, up to $5 per
-connection. Agents cannot install models: you do, in the app. See
-`bun run start mcp --help`.
-
-On a Hatchlight server, agents connect with an API token instead, over
-HTTP at `/mcp` or with `hatchlight mcp --url`: see
-[Agents](docs/self-hosting.md#agents) in the self-hosting guide.
+In the app, **Settings > Use with AI agents** connects Claude Desktop for you.
+[Command line and agents](docs/command-line.md) covers every command, setting
+up from the terminal, and spending limits for agents.
 
 ## Your data
 
