@@ -14,9 +14,17 @@ import type {
 	AssistantEntryBody,
 	GenerationParams,
 	JobStatus,
+	LibraryEntry,
+	LibraryKind,
 	SpendingKind,
 	UserRole,
 } from "../types";
+
+/** What a library row keeps in `data`. */
+export type LibraryData = Omit<
+	LibraryEntry,
+	"id" | "kind" | "name" | "createdAt" | "updatedAt"
+>;
 
 export const sessions = sqliteTable(
 	"sessions",
@@ -309,4 +317,24 @@ export const picks = sqliteTable(
 		createdAt: integer("created_at").notNull(),
 	},
 	(t) => [index("picks_user").on(t.userId)],
+);
+
+/**
+ * A person's characters and styles, to use again by name. Names are unique
+ * per person and kind, whatever their case, through `name_key`.
+ */
+export const library = sqliteTable(
+	"library",
+	{
+		id: text("id").primaryKey(),
+		userId: text("user_id").notNull(),
+		kind: text("kind").$type<LibraryKind>().notNull(),
+		name: text("name").notNull(),
+		nameKey: text("name_key").notNull(),
+		/** The rest of the entry: pictures, LoRAs, words and settings. */
+		data: text("data", { mode: "json" }).$type<LibraryData>().notNull(),
+		createdAt: integer("created_at").notNull(),
+		updatedAt: integer("updated_at").notNull(),
+	},
+	(t) => [uniqueIndex("library_name").on(t.userId, t.kind, t.nameKey)],
 );

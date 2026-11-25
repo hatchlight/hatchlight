@@ -2,13 +2,17 @@ import {
 	AccessError,
 	type AccountService,
 	type Asset,
+	findLibraryEntry,
 	type JobEngine,
 	type JobView,
 	type KeySource,
+	type LibraryKind,
 	type LocalModelStore,
+	libraryTags,
 	MAX_LORAS,
 	type ModelSpec,
 	mayUsePaid,
+	NotFoundError,
 	nearestRatio,
 	type PaidRefusal,
 	type ProviderStatus,
@@ -411,6 +415,26 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 		return { prompt: text.replace(/\s{2,}/g, " ").trim(), loras };
 	}
 
+	/**
+	 * The id of the character or style a prompt names as `<style:name>`,
+	 * mirroring `<lora:…>`; refused when the name means none, or several.
+	 */
+	function libraryId(
+		ctx: UserContext,
+		kind: LibraryKind,
+		name: string | undefined,
+	): string | undefined {
+		if (!name) return undefined;
+		const found = findLibraryEntry(service.listLibrary(ctx), kind, name);
+		if (found.entry) return found.entry.id;
+		throw new NotFoundError(
+			found.matches.length > 0
+				? `"${name}" could be ${found.matches.map((e) => e.name).join(" or ")}: give the whole name`
+				: `No ${kind} named ${name} in Hatchlight's library`,
+			"libraryEntryNotFound",
+		);
+	}
+
 	/** Each app's session, by person and title, once found or made. */
 	const sessions = new Map<string, Promise<string>>();
 	async function sessionFor(c: Context, ctx: UserContext): Promise<string> {
@@ -567,7 +591,12 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 				"maskWithoutReference",
 			);
 		}
-		const { prompt, loras } = await withLoras(ask.prompt, model);
+		const tagged = libraryTags(ask.prompt);
+		const { prompt: words, loras } = await withLoras(tagged.prompt, model);
+		const character = libraryId(ctx, "character", tagged.character);
+		const style = libraryId(ctx, "style", tagged.style);
+		// A character alone is a prompt: it says who to draw.
+		const prompt = words || tagged.character || "";
 		if (!prompt) throw new ValidationError("prompt must be some words");
 		for (const picture of ask.pictures) await assertPictureSize(picture);
 
@@ -609,6 +638,8 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 					...(mask && { maskAssetId: mask }),
 					...(ask.strength != null && { strength: ask.strength }),
 					...(loras.length > 0 && { loras }),
+					...(character && { characterId: character }),
+					...(style && { styleId: style }),
 				});
 				for (const job of turn.jobs) {
 					jobIds.push(job.id);

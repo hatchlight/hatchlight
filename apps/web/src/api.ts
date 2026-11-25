@@ -15,6 +15,8 @@ import type {
 	CreateTurnInput,
 	GalleryItem,
 	InviteView,
+	LibraryEntry,
+	LibraryInput,
 	LocalModelsView,
 	LoraInfo,
 	ModelFolder,
@@ -533,6 +535,13 @@ export const api = {
 		request<ModelFolder[]>("/api/model-folders/rescan", { method: "POST" }),
 	removeModelFolder: (id: string) =>
 		request<void>(`/api/model-folders/${id}`, { method: "DELETE" }),
+	library: () => request<LibraryEntry[]>("/api/library"),
+	saveLibraryEntry: (input: LibraryInput, id?: string) =>
+		id
+			? request<LibraryEntry>(`/api/library/${id}`, send("PUT", input))
+			: request<LibraryEntry>("/api/library", send("POST", input)),
+	deleteLibraryEntry: (id: string) =>
+		request<void>(`/api/library/${id}`, { method: "DELETE" }),
 	pick: (turnId: string, assetId: string | null) =>
 		request<void>(`/api/turns/${turnId}/pick`, send("PUT", { assetId })),
 	checkConsistency: (check: ConsistencyCheck) =>
@@ -579,3 +588,13 @@ export const demoUrl = (
 	index: number,
 	size: "card" | "large" = "card",
 ) => `/api/local-models/${modelId}/demos/${index}?size=${size}${media("&")}`;
+
+/** The person's characters and styles; a demo's visitor keeps none. */
+export function useLibrary() {
+	const demo = useDemo() !== null;
+	return useQuery({
+		queryKey: ["library"],
+		queryFn: api.library,
+		enabled: !demo,
+	});
+}

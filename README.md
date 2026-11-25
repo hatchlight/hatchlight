@@ -32,6 +32,9 @@ own keys. Open source, no account, no telemetry.
   blind if you like, and Hatchlight ranks the models by your picks, with the
   median time and cost on your computer. Share the ranking as an image or
   Markdown.
+- **Saved characters and styles.** Keep a character's pictures, LoRAs and
+  words, or a style, and use them by name in the app, the chat, the terminal
+  and other apps.
 - **Runs on your graphics card.** Hatchlight looks at your computer, picks the
   version of each model that fits it, downloads and checks the files, and runs
   them. Free, private, and offline once downloaded.

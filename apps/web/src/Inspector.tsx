@@ -10,7 +10,12 @@ import {
 } from "@/components/ui/collapsible";
 import { api, assetUrl } from "./api";
 import { useI18n } from "./i18n";
-import { DeleteAsset, itemFacts, type LightboxItem } from "./Lightbox";
+import {
+	DeleteAsset,
+	itemFacts,
+	type LightboxItem,
+	SaveToLibrary,
+} from "./Lightbox";
 
 interface Props {
 	item: LightboxItem | null;
@@ -126,6 +131,7 @@ export function Inspector({
 						{t("inspector.openLarge")}
 					</Button>
 				</div>
+				<SaveToLibrary item={item} className="[&>button]:h-[42px]" />
 				{talkHref && (
 					<Button
 						variant="ghost"

@@ -6,6 +6,8 @@ import type {
 import type {
 	AssistantView,
 	CheckpointInfo,
+	LibraryEntry,
+	LibraryInput,
 	LocalModelsView,
 	LoraInfo,
 	ModelFolder,
@@ -71,6 +73,10 @@ export class Api extends HatchlightClient {
 		});
 	removeLora = (id: string) =>
 		this.send("DELETE", `/api/loras/${encodeURIComponent(id)}`);
+	addToLibrary = (input: LibraryInput) =>
+		this.send<LibraryEntry>("POST", "/api/library", input);
+	removeFromLibrary = (id: string) =>
+		this.send("DELETE", `/api/library/${encodeURIComponent(id)}`);
 	checkpoints = () => this.request<CheckpointInfo[]>("/api/checkpoints");
 
 	/** What Hatchlight does with a repository on Hugging Face. */

@@ -293,7 +293,14 @@ export function demoTurn(
 	body: Record<string, unknown>,
 	config: DemoConfig,
 ): Record<string, unknown> {
-	const { extras: _extras, loras: _loras, ...rest } = body;
+	// Nor a library: a visitor keeps none.
+	const {
+		extras: _extras,
+		loras: _loras,
+		characterId: _characterId,
+		styleId: _styleId,
+		...rest
+	} = body;
 	const clamp = (value: unknown, most: number) =>
 		typeof value === "number" && Number.isFinite(value)
 			? Math.min(value, most)

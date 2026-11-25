@@ -80,6 +80,7 @@ test("it offers the tools an agent needs, and none that installs models", async 
 		"generate",
 		"get_image",
 		"job_status",
+		"list_library",
 		"list_models",
 		"model_ranking",
 		"save_image",
@@ -285,6 +286,60 @@ test("an agent reads which model the person prefers, and changes nothing", async
 	expect(textOf(await call("model_ranking", { kind: "landscape" }))).toContain(
 		"has not picked",
 	);
+});
+
+test("an agent lists the library and makes pictures with a character and a style by name", async () => {
+	const { call, client, app, hatchlight } = await agent({ allowPaid: true });
+	const { tools } = await client.listTools();
+	expect(
+		tools.find((t) => t.name === "list_library")?.annotations?.readOnlyHint,
+	).toBe(true);
+	expect(textOf(await call("list_library"))).toContain("The library is empty");
+	const keep = (body: object) =>
+		app.request("http://127.0.0.1:4096/api/library", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		});
+	await keep({ kind: "character", name: "Rex", prompt: "a corgi", seed: 4 });
+	await keep({
+		kind: "style",
+		name: "Watercolor",
+		prompt: "soft watercolor",
+		modelId: "fake/beta",
+	});
+	await keep({ kind: "style", name: "Watercolor night", prompt: "dark" });
+	const listed = textOf(await call("list_library", { kind: "style" }));
+	expect(listed).toContain('style "Watercolor": words "soft watercolor"');
+	expect(listed).not.toContain("Rex");
+
+	const ambiguous = await call("generate", {
+		prompt: "Rex on the beach",
+		character: "rex",
+		style: "water",
+	});
+	expect(ambiguous.isError).toBe(true);
+	expect(textOf(ambiguous)).toContain('"Watercolor" or "Watercolor night"');
+	expect((await call("generate", { prompt: "x", style: "oil" })).isError).toBe(
+		true,
+	);
+
+	const made = await call("generate", {
+		prompt: "Rex on the beach",
+		character: "rex",
+		style: "watercolor",
+	});
+	expect(made.isError).toBeFalsy();
+	// No model named: the style's own.
+	expect(textOf(made)).toContain("Fake beta: done");
+	const session = await hatchlight.session(
+		textOf(made).match(/Session (ses_\w+)/)?.[1] as string,
+	);
+	expect(session.turns[0]?.jobs[0]?.params).toMatchObject({
+		prompt: "Rex on the beach, a corgi, soft watercolor",
+		seed: 4,
+		library: { character: "Rex", style: "Watercolor" },
+	});
 });
 
 test("with names hidden until a pick, an agent gets the app's letters, not the models", async () => {

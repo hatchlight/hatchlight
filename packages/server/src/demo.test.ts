@@ -419,6 +419,21 @@ test("a visitor never sees another visitor's sessions, pictures or gallery", asy
 	).toBe(200);
 });
 
+test("a visitor reads an empty library and cannot keep anything in it", async () => {
+	const { call, visitor } = await demoApp();
+	const ana = await visitor();
+	const listed = await call("/api/library", { cookie: ana.cookie });
+	expect(listed.status).toBe(200);
+	expect(await listed.json()).toEqual([]);
+	const kept = await call("/api/library", {
+		method: "POST",
+		cookie: ana.cookie,
+		body: { kind: "style", name: "Ink" },
+	});
+	expect(kept.status).toBe(403);
+	expect(await codeOf(kept)).toBe("notInDemo");
+});
+
 test("a visitor cannot pick among one model's pictures, nor in another's turn", async () => {
 	const { call, visitor, make } = await demoApp();
 	const ana = await visitor();

@@ -185,6 +185,7 @@ export function localReel(
 		},
 		sessionUrl: (id) => `#/s/${encodeURIComponent(id)}`,
 		ranking: (query) => service.ranking(ctx, query),
+		library: async () => service.listLibrary(ctx),
 		...(settings && { settings: () => settings.get(ctx) }),
 		...(checkConsistency && {
 			checkConsistency: (check, signal) =>
@@ -1016,6 +1017,8 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		registry,
 		keys,
 		engine,
+		library: repo.library(),
+		loras: () => models.loras.list(),
 		// On a server, a member whose room is full adds no new pictures.
 		storageRefusal: options.server
 			? (userId) => accounts.storageRefusal(userId)

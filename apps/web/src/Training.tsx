@@ -34,6 +34,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { useAccount, useCan } from "./Accounts";
 import { api, assetUrl, GALLERY_PAGE, sampleUrl } from "./api";
+import { draftFromLora, openLibraryDraft } from "./drafts";
 import { remaining } from "./format";
 import { type I18n, useI18n } from "./i18n";
 
@@ -285,6 +286,29 @@ function Progress({ training }: { training: TrainingView }) {
 								})}
 					</p>
 				)}
+				{training.state === "done" && training.loraId && (
+					<div className="flex flex-wrap gap-2">
+						{(["character", "style"] as const).map((kind) => (
+							<Button
+								key={kind}
+								variant="outline"
+								onClick={() =>
+									openLibraryDraft(
+										draftFromLora(kind, {
+											id: training.loraId as string,
+											name: training.name,
+											trigger: training.trigger,
+										}),
+									)
+								}
+							>
+								{kind === "character"
+									? t("library.saveAsCharacter")
+									: t("library.saveAsStyle")}
+							</Button>
+						))}
+					</div>
+				)}
 				{training.state === "canceled" && (
 					<p className="text-sm text-dim" role="status">
 						{t("training.canceled", { name: training.name })}
@@ -370,7 +394,7 @@ const TRAINABLE = new Set(["image/png", "image/jpeg", "image/webp"]);
 const SMALL_SIDE = 768;
 
 /** Pictures made here, to train on. */
-function GalleryChooser({
+export function GalleryChooser({
 	chosen,
 	toggle,
 	close,

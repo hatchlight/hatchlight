@@ -259,6 +259,25 @@ test("an edit uploads the pictures and turns OpenAI's mask into Hatchlight's", a
 	expect(none.status).toBe(400);
 });
 
+test("other apps name a character or style from the library with tags", async () => {
+	const { post, fake, runtime } = await setup();
+	await runtime.service.saveLibraryEntry(
+		{ userId: "local" },
+		{ kind: "style", name: "Ink wash", prompt: "ink wash painting" },
+	);
+	const made = await post("/sdapi/v1/txt2img", {
+		prompt: "a heron <style:ink wash>",
+		width: 512,
+		height: 512,
+	});
+	expect(made.status).toBe(200);
+	expect(fake.submitted[0]?.prompt).toBe("a heron, ink wash painting");
+	const unknown = await post("/sdapi/v1/txt2img", {
+		prompt: "a heron <style:oil>",
+	});
+	expect(unknown.status).toBe(404);
+});
+
 test("AUTOMATIC1111's txt2img makes batches, tells the seed, and reads LoRA tags", async () => {
 	const { call, post, fake, runtime } = await setup();
 	const file = safetensors(["lora_unet_input_blocks_4_1_proj_in.alpha"], {

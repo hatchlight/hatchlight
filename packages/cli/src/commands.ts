@@ -1,6 +1,7 @@
 import { CHAT_COMMANDS } from "./chat";
 import type { Command } from "./command";
 import { completionsCommand } from "./completions";
+import { LIBRARY_COMMANDS } from "./library";
 import { MANAGE_COMMANDS } from "./manage";
 import { MEDIA_COMMANDS } from "./media";
 import { TRAIN_COMMANDS } from "./train";
@@ -18,6 +19,7 @@ export { extension } from "./media";
 /** Every command a person types, in the order the help lists them. */
 export const COMMANDS: Record<string, Command> = {
 	...MEDIA_COMMANDS,
+	...LIBRARY_COMMANDS,
 	...CHAT_COMMANDS,
 	...MANAGE_COMMANDS,
 	...TRAIN_COMMANDS,

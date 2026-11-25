@@ -10,6 +10,8 @@ export type Route =
 	/** A repository opened from Hugging Face; null when the link was not valid. */
 	| { view: "hub"; target: HubTarget | null }
 	| { view: "ranking" }
+	/** The person's characters and styles. */
+	| { view: "library" }
 	| { view: "settings" };
 
 export function parse(hash: string): Route {
@@ -34,6 +36,7 @@ export function parse(hash: string): Route {
 		return focus ? { view: "models", focus } : { view: "models" };
 	}
 	if (first === "ranking") return { view: "ranking" };
+	if (first === "library") return { view: "library" };
 	if (first === "settings") return { view: "settings" };
 	if (first === "talk") return { view: "chat", talk: true };
 	if (first === "s" && second) {
@@ -65,6 +68,7 @@ export const href = {
 	/** A link that was not one to a repository. */
 	hubInvalid: "#/hf/",
 	ranking: "#/ranking",
+	library: "#/library",
 	settings: "#/settings",
 };
 
