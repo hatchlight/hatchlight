@@ -2,7 +2,8 @@
 
 Hatchlight's program makes pictures from the terminal, and lets AI agents
 make them with your models. To use the app itself, see
-[Getting started](getting-started.md).
+[Getting started](getting-started.md); for apps that speak OpenAI's or
+AUTOMATIC1111's image API, see [Use it from other apps](other-apps.md).
 
 - [Getting the command](#getting-the-command)
 - [Make pictures from the terminal](#make-pictures-from-the-terminal)

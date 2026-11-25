@@ -86,6 +86,7 @@ export const ERROR_CODES = [
 	"notInDemo",
 	"notInstalled",
 	"notOnServer",
+	"otherAppsPaidOff",
 	"paidNotAllowed",
 	"passwordChangeRequired",
 	"passwordTooShort",

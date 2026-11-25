@@ -928,6 +928,16 @@ export interface Settings {
 	improveWith: ImproveWith;
 	/** What the assistant thinks with: same choices as improving. */
 	assistantWith: ImproveWith;
+	/**
+	 * Whether other apps, through the OpenAI and AUTOMATIC1111 image APIs,
+	 * may use paid models. Off, they use only free ones.
+	 */
+	otherAppsPaid: boolean;
+	/**
+	 * The model other apps get when they name none they can use, as chosen
+	 * through the AUTOMATIC1111 API; null for the best one installed.
+	 */
+	otherAppsModel: string | null;
 }
 
 /**

@@ -48,6 +48,7 @@ import {
 	RateCounter,
 } from "./demo";
 import { DeviceCookies } from "./devices";
+import { MAX_UPLOAD_BYTES, mountImageApi } from "./image-api";
 import { Limiter } from "./limiter";
 import type { AssistantBrain, ImproveRequest } from "./runtime";
 import {
@@ -175,7 +176,6 @@ const UPSTREAM_CODES = new Set<ErrorCode>([
 ]);
 
 const LOCAL_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
-const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 /** The pictures training can use, and the extension each is written with. */
 const TRAINING_TYPES: Record<string, string> = {
 	"image/png": "png",
@@ -494,10 +494,12 @@ export function createApp(options: AppOptions): Hono {
 		})(c, next);
 	});
 
+	// Wrong tokens slow down, per address, on /mcp and the image APIs alike.
+	const failures = new Limiter({ freeTries: 10 });
+	const addressOf = (c: Context) => c.get("client") ?? peerOf(c) ?? "unknown";
 	if (accounts && options.mcp && server) {
 		const answer = options.mcp;
-		// Wrong tokens slow down, per address; a token runs a few calls at once.
-		const failures = new Limiter({ freeTries: 10 });
+		// A token runs a few calls at once.
 		const running = new Map<string, number>();
 		app.all(
 			"/mcp",
@@ -510,7 +512,7 @@ export function createApp(options: AppOptions): Hono {
 				if (c.req.method !== "POST") {
 					return c.json({ error: "Use POST" }, 405, { allow: "POST" });
 				}
-				const address = c.get("client") ?? peerOf(c) ?? "unknown";
+				const address = addressOf(c);
 				const wait = failures.wait(address);
 				if (wait > 0) {
 					throw new AccessError(
@@ -697,6 +699,9 @@ export function createApp(options: AppOptions): Hono {
 			now: demo.now,
 		});
 		app.use("/api/*", visitors.gate);
+		// The image APIs for other apps too: a demo serves its page only.
+		app.use("/v1/*", visitors.gate);
+		app.use("/sdapi/*", visitors.gate);
 		app.post("/api/visitor", visitors.start);
 	}
 	if (accounts) {
@@ -1115,6 +1120,24 @@ export function createApp(options: AppOptions): Hono {
 				`translateWith must be one of ${TRANSLATE_WITH.join(", ")}`,
 			);
 		}
+		if (
+			body.otherAppsPaid !== undefined &&
+			typeof body.otherAppsPaid !== "boolean"
+		) {
+			throw new ValidationError("otherAppsPaid must be true or false");
+		}
+		const { otherAppsModel } = body;
+		if (
+			otherAppsModel !== undefined &&
+			otherAppsModel !== null &&
+			!service
+				.listModels()
+				.some((m) => m.id === otherAppsModel && m.media === "image")
+		) {
+			throw new ValidationError(
+				"otherAppsModel must be an image model's id, or null",
+			);
+		}
 		if (body.improveWith !== undefined && !isImproveWith(body.improveWith)) {
 			throw new ValidationError(
 				`improveWith must be one of ${IMPROVE_WITH.join(", ")}`,
@@ -1138,6 +1161,12 @@ export function createApp(options: AppOptions): Hono {
 				}),
 				...(isImproveWith(body.improveWith) && {
 					improveWith: body.improveWith,
+				}),
+				...(typeof body.otherAppsPaid === "boolean" && {
+					otherAppsPaid: body.otherAppsPaid,
+				}),
+				...(otherAppsModel !== undefined && {
+					otherAppsModel: otherAppsModel as string | null,
 				}),
 			}),
 		);
@@ -1701,6 +1730,20 @@ export function createApp(options: AppOptions): Hono {
 			}
 			unsubscribe();
 		});
+	});
+
+	// Other apps make pictures here through the APIs they already speak.
+	mountImageApi(app, {
+		service,
+		engine,
+		models,
+		settings: options.settings,
+		accounts,
+		server,
+		user,
+		paidRefusal,
+		failures,
+		address: addressOf,
 	});
 
 	app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));

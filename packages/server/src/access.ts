@@ -86,6 +86,23 @@ export const ROUTE_ACCESS: Readonly<Record<string, Access>> = {
 	"GET /api/model-folders": "member",
 	"GET /api/trainer": "member",
 	"GET /api/captioner": "member",
+	// Other apps making pictures through the OpenAI and AUTOMATIC1111 APIs,
+	// with API tokens only.
+	"GET /v1/models": "member",
+	"POST /v1/images/generations": "member",
+	"POST /v1/images/edits": "member",
+	"POST /sdapi/v1/txt2img": "member",
+	"POST /sdapi/v1/img2img": "member",
+	"GET /sdapi/v1/sd-models": "member",
+	"GET /sdapi/v1/options": "member",
+	"POST /sdapi/v1/options": "member",
+	"GET /sdapi/v1/samplers": "member",
+	"GET /sdapi/v1/schedulers": "member",
+	"GET /sdapi/v1/upscalers": "member",
+	"GET /sdapi/v1/sd-vae": "member",
+	"GET /sdapi/v1/loras": "member",
+	"GET /sdapi/v1/progress": "member",
+	"POST /sdapi/v1/interrupt": "member",
 
 	// Training holds the GPU for long and adds a LoRA everyone sees.
 	"POST /api/loras": "train",
@@ -160,6 +177,15 @@ export const ROUTE_SCOPE: Readonly<Record<string, TokenScope>> = {
 	"GET /api/model-folders": "read",
 	"GET /api/trainer": "read",
 	"GET /api/captioner": "read",
+	"GET /v1/models": "read",
+	"GET /sdapi/v1/sd-models": "read",
+	"GET /sdapi/v1/options": "read",
+	"GET /sdapi/v1/samplers": "read",
+	"GET /sdapi/v1/schedulers": "read",
+	"GET /sdapi/v1/upscalers": "read",
+	"GET /sdapi/v1/sd-vae": "read",
+	"GET /sdapi/v1/loras": "read",
+	"GET /sdapi/v1/progress": "read",
 
 	"DELETE /api/sessions/:id": "generate",
 	"POST /api/turns": "generate",
@@ -171,6 +197,13 @@ export const ROUTE_SCOPE: Readonly<Record<string, TokenScope>> = {
 	"POST /api/assistant/messages": "generate",
 	"POST /api/sessions/:id/assistant/stop": "generate",
 	"POST /api/sessions/:id/assistant/answers": "generate",
+	"POST /v1/images/generations": "generate",
+	"POST /v1/images/edits": "generate",
+	"POST /sdapi/v1/txt2img": "generate",
+	"POST /sdapi/v1/img2img": "generate",
+	// Which model the API uses when an app names none.
+	"POST /sdapi/v1/options": "generate",
+	"POST /sdapi/v1/interrupt": "generate",
 
 	"POST /api/loras": "train",
 	"POST /api/trainings": "train",
@@ -320,6 +353,23 @@ export const DEMO_ACCESS: Readonly<Record<string, DemoAccess>> = {
 	"GET /api/agents": "refused",
 	"PUT /api/agents/claude-desktop": "refused",
 	"DELETE /api/agents/claude-desktop": "refused",
+
+	// Other apps' image APIs: a public demo is for people on its page.
+	"GET /v1/models": "refused",
+	"POST /v1/images/generations": "refused",
+	"POST /v1/images/edits": "refused",
+	"POST /sdapi/v1/txt2img": "refused",
+	"POST /sdapi/v1/img2img": "refused",
+	"GET /sdapi/v1/sd-models": "refused",
+	"GET /sdapi/v1/options": "refused",
+	"POST /sdapi/v1/options": "refused",
+	"GET /sdapi/v1/samplers": "refused",
+	"GET /sdapi/v1/schedulers": "refused",
+	"GET /sdapi/v1/upscalers": "refused",
+	"GET /sdapi/v1/sd-vae": "refused",
+	"GET /sdapi/v1/loras": "refused",
+	"GET /sdapi/v1/progress": "refused",
+	"POST /sdapi/v1/interrupt": "refused",
 };
 
 /** What a demo lets in for a route; anything not named is refused. */

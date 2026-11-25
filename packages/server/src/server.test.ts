@@ -1077,6 +1077,96 @@ test("a token pays only with the paid scope, and up to its own limit", async () 
 	).toBe("tokenNotPaid");
 });
 
+test("other apps' image APIs take an API token, its scopes and its paid scope", async () => {
+	const { call, setupOwner, invite, runtime, userId, paid } = await serverApp();
+	const owner = await setupOwner();
+	await call("/api/providers/paid/key", {
+		method: "PUT",
+		who: owner,
+		body: { key: "server-key" },
+	});
+	const member = await invite(owner, { canUsePaid: true }, "ana");
+	const token = (scopes: TokenScope[]) =>
+		runtime.accounts.createApiToken(userId("ana"), { name: "app", scopes })
+			.token;
+	// As programs send it: a token, and no Origin.
+	const asApp = (path: string, token?: string, body?: unknown) =>
+		call(path, {
+			method: body === undefined ? "GET" : "POST",
+			who: token ? { token } : {},
+			headers: { origin: "" },
+			body,
+		});
+
+	const none = await asApp("/v1/models");
+	expect(none.status).toBe(401);
+	expect(none.headers.get("www-authenticate")).toContain("Bearer");
+	expect(((await none.json()) as { error: { type: string } }).error.type).toBe(
+		"authentication_error",
+	);
+	// A browser's cookie never opens them.
+	expect((await call("/sdapi/v1/sd-models", { who: member })).status).toBe(401);
+
+	// A token that may only read lists the models, and makes nothing.
+	const reader = token(["read"]);
+	expect((await asApp("/v1/models", reader)).status).toBe(200);
+	const scoped = await asApp("/sdapi/v1/txt2img", reader, { prompt: "x" });
+	expect(scoped.status).toBe(403);
+	expect(((await scoped.json()) as { error: string }).error).toBe("tokenScope");
+
+	// One that may generate makes pictures in its person's gallery.
+	const maker = token(["read", "generate"]);
+	const made = await asApp("/v1/images/generations", maker, {
+		prompt: "a fox",
+	});
+	expect(made.status).toBe(200);
+	const gallery = async (who: Who) =>
+		(await (await call("/api/gallery", { who })).json()) as unknown[];
+	expect(await gallery(member)).toHaveLength(1);
+	expect(await gallery(owner)).toHaveLength(0);
+
+	// Paid models: off until the person turns them on for other apps, and
+	// then only for a token with the paid scope.
+	const ask = (token: string) =>
+		asApp("/v1/images/generations", token, {
+			prompt: "x",
+			model: "paid/alpha",
+		});
+	const code = async (response: Response) =>
+		((await response.json()) as { error: { code: string } }).error.code;
+	const off = await ask(maker);
+	expect(off.status).toBe(403);
+	expect(await code(off)).toBe("otherAppsPaidOff");
+	await call("/api/settings", {
+		method: "PUT",
+		who: member,
+		body: { otherAppsPaid: true },
+	});
+	const unpaid = await ask(maker);
+	expect(unpaid.status).toBe(403);
+	expect(await code(unpaid)).toBe("tokenNotPaid");
+	expect(paid.submitted).toHaveLength(0);
+	expect((await ask(token(["read", "generate", "paid"]))).status).toBe(200);
+	expect(paid.submitted).toHaveLength(1);
+});
+
+test("wrong tokens sent to the image APIs slow down, as on /mcp", async () => {
+	const { call, setupOwner } = await serverApp();
+	await setupOwner();
+	const statuses: number[] = [];
+	for (let i = 0; i < 12; i++) {
+		statuses.push(
+			(
+				await call("/sdapi/v1/options", {
+					who: { token: "hl_wrong" },
+				})
+			).status,
+		);
+	}
+	expect(statuses.slice(0, 10).every((s) => s === 401)).toBe(true);
+	expect(statuses.at(-1)).toBe(429);
+});
+
 test("making a token takes the password, and the code with two-step sign-in", async () => {
 	const { call, setupOwner, runtime, userId } = await serverApp();
 	const owner = await setupOwner();
@@ -1300,17 +1390,24 @@ test("every route lets in exactly who it should", async () => {
 				.get("content-type")
 				?.includes("application/json");
 			if (!isJson) await response.body?.cancel();
-			const body = (isJson ? await response.json() : {}) as { code?: string };
+			const body = ((isJson ? await response.json() : null) ?? {}) as {
+				code?: string;
+				error?: string | { code?: string };
+			};
+			// The image APIs answer errors in their own shapes.
+			const code =
+				body.code ??
+				(typeof body.error === "string" ? body.error : body.error?.code);
 			const refused =
 				response.status === 401 ||
 				(response.status === 403 &&
-					["forbidden", "signInRequired", "tokenScope"].includes(
-						body.code ?? "",
-					));
+					["forbidden", "signInRequired", "tokenScope"].includes(code ?? ""));
 			const token = TOKENS[name];
+			// Other apps sign in with a token only, never a browser's cookie.
+			const tokenOnly = !pattern.startsWith("/api/");
 			const allowed = token
 				? tokenMay(route, access, token)
-				: MAY[access].includes(name);
+				: !tokenOnly && MAY[access].includes(name);
 			if (refused === allowed) {
 				wrong.push(
 					`${route} as ${name}: ${response.status} ${body.code ?? ""}`,
@@ -1336,7 +1433,7 @@ test("every API route declares who may call it", async () => {
 		app.routes
 			// Middleware and the catch-all apply to every route.
 			.filter((route) => route.method !== "ALL" && route.path !== "/api/*")
-			.filter((route) => route.path.startsWith("/api/"))
+			.filter((route) => /^\/(api|v1|sdapi)\//.test(route.path))
 			.map((route) => `${route.method} ${route.path}`),
 	);
 	const undeclared = [...routes].filter((route) => !(route in ROUTE_ACCESS));

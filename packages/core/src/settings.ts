@@ -12,6 +12,8 @@ export const DEFAULT_SETTINGS: Settings = {
 	translateWith: "local",
 	improveWith: "auto",
 	assistantWith: "auto",
+	otherAppsPaid: false,
+	otherAppsModel: null,
 };
 
 export interface SettingsStore {
@@ -46,6 +48,9 @@ export class FileSettingsStore implements SettingsStore {
 			assistantWith: isImproveWith(mine.assistantWith)
 				? mine.assistantWith
 				: DEFAULT_SETTINGS.assistantWith,
+			otherAppsPaid: mine.otherAppsPaid === true,
+			otherAppsModel:
+				typeof mine.otherAppsModel === "string" ? mine.otherAppsModel : null,
 		};
 	}
 
