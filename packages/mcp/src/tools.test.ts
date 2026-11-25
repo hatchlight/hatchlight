@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { APP_VERSION, FakeProvider } from "@hatchlight/core";
+import { APP_VERSION, blindOrder, FakeProvider } from "@hatchlight/core";
 import { picture } from "@hatchlight/core/testing";
 import type { ModelSpec } from "@hatchlight/core/types";
 import { createApp, createRuntime } from "@hatchlight/server";
@@ -51,7 +51,7 @@ async function agent(options: Partial<McpOptions> = {}) {
 	});
 	const call = async (name: string, args: Record<string, unknown> = {}) =>
 		(await client.callTool({ name, arguments: args })) as CallToolResult;
-	return { call, dataDir, client };
+	return { call, dataDir, client, hatchlight, app };
 }
 
 const textOf = (result: CallToolResult) =>
@@ -80,6 +80,7 @@ test("it offers the tools an agent needs, and none that installs models", async 
 		"get_image",
 		"job_status",
 		"list_models",
+		"model_ranking",
 		"save_image",
 		"search_gallery",
 		"upscale",
@@ -209,6 +210,77 @@ test("pictures made before are found, looked at and saved", async () => {
 	expect(again.isError).toBe(true);
 	const relative = await call("save_image", { asset_id: id, path: "x.png" });
 	expect(textOf(relative)).toContain("must be absolute");
+});
+
+test("an agent reads which model the person prefers, and changes nothing", async () => {
+	const { call, client, hatchlight } = await agent({ allowPaid: true });
+	const { tools } = await client.listTools();
+	expect(
+		tools.find((t) => t.name === "model_ranking")?.annotations?.readOnlyHint,
+	).toBe(true);
+	expect(textOf(await call("model_ranking", { kind: "portrait" }))).toContain(
+		"has not picked a best result in any comparison for portrait prompts",
+	);
+
+	const made = textOf(
+		await call("generate", {
+			prompt: "a portrait of a fox",
+			models: ["fake/alpha", "fake/beta"],
+		}),
+	);
+	const session = await hatchlight.session(
+		made.match(/Session (ses_\w+)/)?.[1] as string,
+	);
+	const turn = session.turns[0];
+	await hatchlight.pick(
+		turn?.id as string,
+		turn?.jobs[1]?.assets[0]?.id as string,
+	);
+	const ranked = textOf(await call("model_ranking", { kind: "portrait" }));
+	expect(ranked).toContain("From 1 comparison(s) for portrait prompts");
+	expect(ranked).toMatch(/1\. Fake beta \(fake\/beta\): won 1 of 1 \(100%\)/);
+	expect(ranked).toContain("few comparisons");
+	expect(textOf(await call("model_ranking", { kind: "landscape" }))).toContain(
+		"has not picked",
+	);
+});
+
+test("with names hidden until a pick, an agent gets the app's letters, not the models", async () => {
+	const { call, hatchlight, app } = await agent({ allowPaid: true });
+	await app.request("http://127.0.0.1:4096/api/settings", {
+		method: "PUT",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ blindPicks: true }),
+	});
+	const made = textOf(
+		await call("generate", {
+			prompt: "a fox",
+			models: ["fake/alpha", "fake/beta"],
+		}),
+	);
+	expect(made).toContain("Model A: done.");
+	expect(made).toContain("Model B: done.");
+	expect(made).toContain("do not name or guess the models");
+	expect(made).not.toMatch(/Fake (alpha|beta)| s,|\$0/);
+	const sessionId = made.match(/Session (ses_\w+)/)?.[1] as string;
+	const status = textOf(await call("job_status", { session_id: sessionId }));
+	expect(status).toContain("Model A: done.");
+	expect(status).not.toContain("Fake");
+	// The same letters as the app: its blind order, by turn.
+	const turn = (await hatchlight.session(sessionId)).turns[0];
+	const first = blindOrder(turn?.jobs ?? [], turn?.id as string)[0];
+	expect(status).toContain(`- Model A: done. ${first?.assets[0]?.id}`);
+	expect(textOf(await call("search_gallery", { query: "fox" }))).toContain(
+		"model hidden until the user picks",
+	);
+
+	await hatchlight.pick(turn?.id as string, first?.assets[0]?.id as string);
+	const picked = textOf(await call("job_status", { session_id: sessionId }));
+	expect(picked).toContain("Fake alpha: done");
+	expect(picked).not.toContain("Model A");
+	expect(textOf(await call("search_gallery", { query: "fox" }))).toContain(
+		"fake/alpha",
+	);
 });
 
 test("upscaling says how to get an upscaler when none is installed", async () => {

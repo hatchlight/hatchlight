@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import type { JobView, ModelSpec, TurnView } from "@hatchlight/core/types";
 import type { Reel } from "./reel";
 import { SpendGuard } from "./spend";
-import { createTools, type ToolContext } from "./tools";
+import {
+	bestLocalModel,
+	createTools,
+	preferredModel,
+	type ToolContext,
+} from "./tools";
 
 const local = {
 	id: "local/z",
@@ -96,6 +101,78 @@ describe("the tools for the assistant inside the app", () => {
 			files: true,
 		});
 		expect(tools.map((t) => t.name)).toContain("save_image");
+	});
+});
+
+describe("the model used when none is named", () => {
+	const other = { ...local, id: "local/y", name: "Y" } as ModelSpec;
+	const rank = (modelId: string, few: boolean) => ({
+		modelId,
+		few,
+		name: modelId,
+		media: "image" as const,
+		comparisons: few ? 1 : 9,
+		wins: few ? 1 : 7,
+		winRate: 0.7,
+		score: 0.4,
+		msPerOutput: null,
+		usdPerOutput: 0,
+		exampleAssetId: null,
+	});
+	const asked: unknown[] = [];
+	const ranked = (byKind: Record<string, ReturnType<typeof rank>[]>) => ({
+		ranking: async (query: { kind?: string }) => {
+			asked.push(query);
+			return {
+				models: byKind[query.kind ?? "all"] ?? [],
+				comparisons: 9,
+				minComparisons: 5,
+			};
+		},
+	});
+
+	test("is the one the person picks most for that kind of prompt", async () => {
+		asked.length = 0;
+		const reel = ranked({
+			portrait: [rank("local/y", false)],
+			all: [rank("local/z", false)],
+		});
+		expect(
+			(await preferredModel(reel, [local, other], "a portrait of a cat", 0))
+				?.id,
+		).toBe("local/y");
+		expect(asked).toEqual([{ kind: "portrait" }]);
+		// No ranking for the kind: the person's overall favourite.
+		expect((await preferredModel(reel, [local, other], "a beach", 0))?.id).toBe(
+			"local/z",
+		);
+	});
+
+	test("is never a model the person mostly picked against", async () => {
+		const losing = { ...rank("local/y", false), wins: 2, winRate: 2 / 9 };
+		expect(
+			await preferredModel(
+				ranked({ all: [losing] }),
+				[local, other],
+				"a fox",
+				0,
+			),
+		).toBeNull();
+		// So the best on paper is used.
+		expect(bestLocalModel([local, other], 0)?.id).toBe("local/z");
+	});
+
+	test("is left to the best on paper while picks are few or out of reach", async () => {
+		expect(
+			await preferredModel(
+				ranked({ all: [rank("local/y", true), rank("fal/x", false)] }),
+				[local, other],
+				"a fox",
+				0,
+			),
+		).toBeNull();
+		expect(await preferredModel({}, [local, other], "a fox", 0)).toBeNull();
+		expect(bestLocalModel([local, other], 0)?.id).toBe("local/z");
 	});
 });
 

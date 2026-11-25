@@ -1,7 +1,7 @@
 import { storedValue } from "@hatchlight/core/legacy";
 import type { JobView, ModelSpec, TurnView } from "@hatchlight/core/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ImagePlus, Info, Maximize2 } from "lucide-react";
+import { Check, ImagePlus, Info, Maximize2 } from "lucide-react";
 import {
 	type CSSProperties,
 	type Dispatch,
@@ -25,6 +25,13 @@ import {
 import { cn } from "@/lib/utils";
 import { api, assetUrl, previewUrl, type SessionDetail, useDemo } from "./api";
 import { Composer, type Draft } from "./Composer";
+import {
+	blindLetter,
+	blindOrder,
+	comparesModels,
+	hasChoice,
+	namesHidden,
+} from "./compare";
 import { DevelopedImage, LatentFrame } from "./Develop";
 import { duration, usd } from "./format";
 import { Inspector } from "./Inspector";
@@ -98,6 +105,105 @@ function PictureAction(props: {
 	);
 }
 
+/** A result's place in its turn's comparison: its name, and picking the best. */
+export interface Comparison {
+	/** The model's name, or a letter while the names are hidden. */
+	name: string;
+	/** The names are hidden, and so are the time and cost that would tell them. */
+	hidden: boolean;
+	/** There is more than one result to choose the best of. */
+	canPick: boolean;
+	picked: string | null;
+	busy: boolean;
+	onPick(assetId: string | null): void;
+}
+
+/**
+ * A turn's results as a comparison: in a blind order when the person hides
+ * the names until they pick, and the way to pick the best.
+ */
+export function useComparison(
+	turn: TurnView,
+	models: Map<string, ModelSpec>,
+): {
+	jobs: JobView[];
+	error: unknown;
+	of(job: JobView, index: number): Comparison;
+} {
+	const { t } = useI18n();
+	const client = useQueryClient();
+	const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
+	const pick = useMutation({
+		mutationFn: (assetId: string | null) => api.pick(turn.id, assetId),
+		onSuccess: (_, assetId) => {
+			client.setQueryData<SessionDetail>(
+				["session", turn.sessionId],
+				(current) =>
+					current && {
+						...current,
+						turns: current.turns.map((each) =>
+							each.id === turn.id ? { ...each, pickedAssetId: assetId } : each,
+						),
+					},
+			);
+			void client.invalidateQueries({ queryKey: ["ranking"] });
+			void client.invalidateQueries({ queryKey: ["gallery"] });
+		},
+	});
+	const blind = settings.data?.blindPicks === true;
+	const hidden = namesHidden(turn, blind);
+	const canPick = hasChoice(turn);
+	return {
+		jobs:
+			blind && comparesModels(turn)
+				? blindOrder(turn.jobs, turn.id)
+				: turn.jobs,
+		error: pick.error,
+		of: (job, index) => ({
+			name: hidden
+				? t("compare.blindName", { letter: blindLetter(index) })
+				: (models.get(job.modelId)?.name ?? job.modelId),
+			hidden,
+			canPick,
+			picked: turn.pickedAssetId ?? null,
+			busy: pick.isPending,
+			onPick: (assetId) => pick.mutate(assetId),
+		}),
+	};
+}
+
+/** Marks a result as the best of its comparison, or clears the mark. */
+function PickButton(props: {
+	label: string;
+	picked: boolean;
+	busy: boolean;
+	onClick(): void;
+}) {
+	const { t } = useI18n();
+	return (
+		<Button
+			variant={props.picked ? "default" : "outline"}
+			size="sm"
+			aria-pressed={props.picked}
+			aria-label={
+				props.picked
+					? t("compare.pickedLabel", { name: props.label })
+					: t("compare.pickLabel", { name: props.label })
+			}
+			disabled={props.busy}
+			onClick={props.onClick}
+			// On a narrow card only its mark shows, so the name keeps its room;
+			// the label says it all to a screen reader either way.
+			className="h-8 gap-1 px-2.5 font-sans text-xs max-md:h-10 @max-[17rem]:w-8 @max-[17rem]:px-0 max-md:@max-[17rem]:w-10"
+		>
+			<Check aria-hidden="true" />
+			<span className="@max-[17rem]:hidden">
+				{props.picked ? t("compare.picked") : t("compare.pick")}
+			</span>
+		</Button>
+	);
+}
+
 export function JobCard(props: {
 	index: number;
 	job: JobView;
@@ -107,14 +213,15 @@ export function JobCard(props: {
 	onUseAsReference(assetId: string): void;
 	/** Makes a picture larger, when an upscaler is installed: by how much. */
 	upscale?: { factor: number; busy: boolean; run(assetId: string): void };
+	compare?: Comparison;
 }) {
-	const { job, model } = props;
+	const { job, model, compare } = props;
 	const i18n = useI18n();
 	const { t } = i18n;
 	const progress = useProgress(job.id);
 	const cancel = useMutation({ mutationFn: () => api.cancelJob(job.id) });
 	const retry = useMutation({ mutationFn: () => api.retryJob(job.id) });
-	const name = model?.name ?? job.modelId;
+	const name = compare?.name ?? model?.name ?? job.modelId;
 	const pending = job.status === "queued" || job.status === "running";
 	// Pictures that finish while watched develop; ones already done just appear.
 	const watched = useRef(pending);
@@ -132,7 +239,10 @@ export function JobCard(props: {
 	const several = job.assets.length > 1;
 	// How long it took and what it cost, under each picture it made.
 	const took =
-		job.status === "succeeded" && job.startedAt && job.finishedAt
+		!compare?.hidden &&
+		job.status === "succeeded" &&
+		job.startedAt &&
+		job.finishedAt
 			? [
 					duration(i18n, job.finishedAt - job.startedAt),
 					job.costUsd != null &&
@@ -276,11 +386,26 @@ export function JobCard(props: {
 								modelName: name,
 								params: job.params,
 								costUsd:
-									job.costUsd == null ? null : job.costUsd / job.assets.length,
+									job.costUsd == null || compare?.hidden
+										? null
+										: job.costUsd / job.assets.length,
 							});
 						const video = asset.mime.startsWith("video/");
+						const label = several
+							? `${name} · ${i18n.number(position + 1)}`
+							: name;
+						const picked = compare?.picked === asset.id;
 						return (
-							<figure key={asset.id} className="flex min-w-0 flex-col gap-1.5">
+							<figure
+								key={asset.id}
+								className={cn(
+									// The mark of a pick is drawn inside the card, so nothing
+									// around it cuts it off or covers the caption.
+									"@container flex min-w-0 flex-col gap-1.5 rounded-[1.15rem] transition-shadow",
+									compare?.canPick && "p-1.5",
+									picked && "ring-2 ring-orange",
+								)}
+							>
 								{video ? (
 									// biome-ignore lint/a11y/useMediaCaption: generated clips have no transcript
 									<video
@@ -309,17 +434,25 @@ export function JobCard(props: {
 										/>
 									</button>
 								)}
-								<figcaption className="flex min-h-8 items-center gap-1 font-mono text-xs text-dim">
+								{/* The actions move under the name when the card is too narrow
+								    for both: they never cover it, nor each other. */}
+								<figcaption className="flex min-h-8 flex-wrap items-center gap-1 font-mono text-xs text-dim">
 									{/* The name on its own line, so narrow cards keep it whole. */}
-									<span className="flex min-w-0 flex-1 flex-col gap-0.5">
-										<span className="truncate text-[#a1a1aa]">
-											{several
-												? `${name} · ${i18n.number(position + 1)}`
-												: name}
-										</span>
-										{took && <span className="tabular-nums">{took}</span>}
+									<span className="flex min-w-0 flex-[1_1_5rem] flex-col gap-0.5">
+										<span className="truncate text-[#a1a1aa]">{label}</span>
+										{took && (
+											<span className="truncate tabular-nums">{took}</span>
+										)}
 									</span>
-									<span className="flex shrink-0">
+									<span className="flex min-w-0 flex-wrap items-center gap-0.5">
+										{compare?.canPick && (
+											<PickButton
+												label={label}
+												picked={picked}
+												busy={compare.busy}
+												onClick={() => compare.onPick(picked ? null : asset.id)}
+											/>
+										)}
 										{video ? (
 											<PictureAction
 												label={t("job.details")}
@@ -382,7 +515,9 @@ function TurnBlock(props: {
 	upscale?: { factor: number; busy: boolean; run(assetId: string): void };
 }) {
 	const { turn } = props;
-	const { t } = useI18n();
+	const i18n = useI18n();
+	const { t } = i18n;
+	const comparison = useComparison(turn, props.models);
 	return (
 		<article className="flex flex-col gap-3.5">
 			<header className="rise-in flex flex-col gap-1 md:flex-row md:items-baseline md:gap-3">
@@ -415,7 +550,7 @@ function TurnBlock(props: {
 					turn.jobs.length > 1 ? "sm:grid-cols-2" : "max-w-xl",
 				)}
 			>
-				{turn.jobs.map((job, index) => (
+				{comparison.jobs.map((job, index) => (
 					<JobCard
 						key={job.id}
 						index={index}
@@ -425,9 +560,13 @@ function TurnBlock(props: {
 						onOpen={props.onOpen}
 						onUseAsReference={props.onUseAsReference}
 						upscale={props.upscale}
+						compare={comparison.of(job, index)}
 					/>
 				))}
 			</div>
+			{comparison.error != null && (
+				<p className="text-sm text-danger">{i18n.explain(comparison.error)}</p>
+			)}
 		</article>
 	);
 }
@@ -490,6 +629,7 @@ export function Chat({
 		enabled: sessionId != null,
 	});
 	const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessions });
+	const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
 	const [skipped, setSkipped] = useState(welcomed);
 	// A first visit: nothing made yet, so show the way to a first picture.
 	const firstRun = !sessionId && !skipped && sessions.data?.length === 0;
@@ -569,15 +709,26 @@ export function Chat({
 	);
 	const turns = session.data?.turns ?? [];
 	// Until one is chosen, the newest picture made is shown.
-	const latest = turns
-		.toReversed()
-		.flatMap((turn) =>
-			turn.jobs.flatMap((job) =>
-				job.assets.map((asset) =>
-					itemOf(turn, job, asset, byId.get(job.modelId)),
+	// In a blind comparison it goes by its letter, as in the turn.
+	const latest = turns.toReversed().flatMap((turn) => {
+		const hidden = namesHidden(turn, settings.data?.blindPicks === true);
+		const order = blindOrder(turn.jobs, turn.id);
+		return turn.jobs.flatMap((job) =>
+			job.assets.map((asset) =>
+				itemOf(
+					turn,
+					job,
+					asset,
+					byId.get(job.modelId),
+					hidden
+						? t("compare.blindName", {
+								letter: blindLetter(order.indexOf(job)),
+							})
+						: undefined,
 				),
 			),
-		)[0];
+		);
+	})[0];
 	const shown = selected ?? latest ?? null;
 
 	return (
@@ -708,13 +859,18 @@ function itemOf(
 	job: JobView,
 	asset: { id: string; mime: string },
 	model: ModelSpec | undefined,
+	/** The letter it goes by while the names are hidden. */
+	hiddenName?: string,
 ): LightboxItem {
 	return {
 		assetId: asset.id,
 		mime: asset.mime,
 		prompt: turn.prompt,
-		modelName: model?.name ?? job.modelId,
+		modelName: hiddenName ?? model?.name ?? job.modelId,
 		params: job.params,
-		costUsd: job.costUsd == null ? null : job.costUsd / job.assets.length,
+		costUsd:
+			job.costUsd == null || hiddenName != null
+				? null
+				: job.costUsd / job.assets.length,
 	};
 }

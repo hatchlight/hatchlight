@@ -531,9 +531,76 @@ export interface JobView extends Job {
 
 export interface TurnView extends Turn {
 	jobs: JobView[];
+	/** The result the person chose as the best of the comparison, if any. */
+	pickedAssetId?: string | null;
 }
 
-export type GalleryItem = Asset;
+/**
+ * Kinds of prompt a ranking can be narrowed to, told by words in the prompt
+ * (and editing by the pictures given). A prompt may be of several kinds.
+ */
+export const PROMPT_KINDS = [
+	"portrait",
+	"landscape",
+	"text",
+	"product",
+	"illustration",
+	"photo",
+	"editing",
+] as const;
+export type PromptKind = (typeof PROMPT_KINDS)[number];
+
+export const RANKING_PERIODS = ["30d", "all"] as const;
+export type RankingPeriod = (typeof RANKING_PERIODS)[number];
+
+export interface RankingQuery {
+	media?: Media;
+	/** Unset, all time. */
+	period?: RankingPeriod;
+	/** Unset, every kind of prompt. */
+	kind?: PromptKind;
+}
+
+/** How one model fared in a person's comparisons on this computer. */
+export interface ModelRank {
+	modelId: string;
+	name: string;
+	media: Media;
+	/** Comparisons it was in that the person picked a best of. */
+	comparisons: number;
+	/** Of those, how many it won. */
+	wins: number;
+	winRate: number;
+	/**
+	 * What the list is sorted by: the lower bound of the win rate's 95%
+	 * Wilson interval, so 1 win of 1 does not top 8 of 10.
+	 */
+	score: number;
+	/** Too few comparisons to say much. */
+	few: boolean;
+	/** Median time per picture or video, or null when none was timed. */
+	msPerOutput: number | null;
+	/** Median cost per picture or video: 0 when free, null when unknown. */
+	usdPerOutput: number | null;
+	/** The latest picture it won with, to show as an example. */
+	exampleAssetId: string | null;
+}
+
+export interface Ranking {
+	models: ModelRank[];
+	/** Comparisons counted, with a pick. */
+	comparisons: number;
+	/** Below this many comparisons a model is marked `few`. */
+	minComparisons: number;
+}
+
+export type GalleryItem = Asset & {
+	/**
+	 * Made in a comparison of models whose best result is not picked yet:
+	 * its model is not shown while the person hides names until a pick.
+	 */
+	unpicked?: boolean;
+};
 
 export interface CreateTurnInput extends GenerationParamsInput {
 	/** Omit to start a new session. */
@@ -938,6 +1005,8 @@ export interface Settings {
 	 * through the AUTOMATIC1111 API; null for the best one installed.
 	 */
 	otherAppsModel: string | null;
+	/** Hide which model made which result of a comparison until one is picked. */
+	blindPicks: boolean;
 }
 
 /**

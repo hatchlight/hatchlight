@@ -419,6 +419,38 @@ test("a visitor never sees another visitor's sessions, pictures or gallery", asy
 	).toBe(200);
 });
 
+test("a visitor cannot pick among one model's pictures, nor in another's turn", async () => {
+	const { call, visitor, make } = await demoApp();
+	const ana = await visitor();
+	const bia = await visitor();
+	const { sessionId } = await make(ana, { count: 2 });
+	const detail = (await (
+		await call(`/api/sessions/${sessionId}`, { cookie: ana.cookie })
+	).json()) as {
+		turns: { id: string; jobs: { assets: { id: string }[] }[] }[];
+	};
+	const turn = detail.turns[0];
+	const assetId = turn?.jobs[0]?.assets[1]?.id;
+	const pick = (who: Visitor) =>
+		call(`/api/turns/${turn?.id}/pick`, {
+			method: "PUT",
+			cookie: who.cookie,
+			body: { assetId },
+		});
+	expect((await pick(bia)).status).toBe(404);
+	// The demo's one model is compared with nothing, so there is no best.
+	const own = await pick(ana);
+	expect(own.status).toBe(400);
+	expect(await codeOf(own)).toBe("pickNeedsComparison");
+	// Nothing is ranked, and hidden names stay off.
+	for (const who of [ana, bia]) {
+		const ranking = await call("/api/ranking", { cookie: who.cookie });
+		expect(await ranking.json()).toMatchObject({ comparisons: 0, models: [] });
+		const settings = await call("/api/settings", { cookie: who.cookie });
+		expect(await settings.json()).toMatchObject({ blindPicks: false });
+	}
+});
+
 test("a visitor's media key loads their pictures, and opens nothing else", async () => {
 	const { call, visitor, make } = await demoApp();
 	const ana = await visitor();

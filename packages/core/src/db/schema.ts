@@ -292,3 +292,21 @@ export const visitors = sqliteTable(
 		index("visitors_last_seen").on(t.lastSeenAt),
 	],
 );
+
+/**
+ * The result a person chose as the best of a comparison, one per turn. The
+ * winning model is kept with it, so the ranking outlives a deleted picture.
+ */
+export const picks = sqliteTable(
+	"picks",
+	{
+		turnId: text("turn_id")
+			.primaryKey()
+			.references(() => turns.id, { onDelete: "cascade" }),
+		userId: text("user_id").notNull(),
+		assetId: text("asset_id").notNull(),
+		modelId: text("model_id").notNull(),
+		createdAt: integer("created_at").notNull(),
+	},
+	(t) => [index("picks_user").on(t.userId)],
+);

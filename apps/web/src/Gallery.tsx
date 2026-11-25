@@ -34,8 +34,12 @@ export function Gallery({
 			last.length < GALLERY_PAGE ? undefined : last.at(-1),
 	});
 	const items = pages.data?.pages.flat() ?? [];
-	const modelName = (id: string | null) =>
-		id ? (models.data?.find((m) => m.id === id)?.name ?? id) : null;
+	const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
+	// A blind comparison not picked yet keeps its models unnamed here too.
+	const modelName = (item: GalleryItem) =>
+		!item.modelId || (item.unpicked && settings.data?.blindPicks)
+			? null
+			: (models.data?.find((m) => m.id === item.modelId)?.name ?? item.modelId);
 
 	// The next page loads as the end of the grid comes near; the button
 	// below stays for keyboards and for browsers that never report it.
@@ -105,7 +109,7 @@ export function Gallery({
 				<ul className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
 					{items.map((item) => {
 						const video = item.mime.startsWith("video/");
-						const model = modelName(item.modelId);
+						const model = modelName(item);
 						return (
 							<li key={item.id}>
 								<button

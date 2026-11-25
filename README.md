@@ -28,6 +28,10 @@ own keys. Open source, no account, no telemetry.
 
 - **Compare models side by side.** One prompt goes to several models, and each
   result shows its time and cost.
+- **Learn which model you prefer.** Pick the best result of a comparison,
+  blind if you like, and Hatchlight ranks the models by your picks, with the
+  median time and cost on your computer. Share the ranking as an image or
+  Markdown.
 - **Runs on your graphics card.** Hatchlight looks at your computer, picks the
   version of each model that fits it, downloads and checks the files, and runs
   them. Free, private, and offline once downloaded.

@@ -36,6 +36,7 @@ hatchlight generate "the same, at night" -r out/first.png --seed 7
 hatchlight upscale ast_… -o big.png
 hatchlight gallery lighthouse             # find what was made before
 hatchlight get ast_… -o lighthouse.png
+hatchlight ranking --kind portrait       # the models you picked most
 hatchlight generate --batch prompts.txt -o out/   # one prompt per line
 hatchlight chat "a poster of a lighthouse, then make it warmer"
 ```
