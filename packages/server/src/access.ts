@@ -293,6 +293,8 @@ export const DEMO_ACCESS: Readonly<Record<string, DemoAccess>> = {
 	"POST /api/checkpoints": "refused",
 	"PATCH /api/checkpoints/:id": "refused",
 	"DELETE /api/checkpoints/:id": "refused",
+	"GET /api/hugging-face": "refused",
+	"POST /api/hugging-face/downloads": "refused",
 
 	// Training and captions hold the GPU for long.
 	"GET /api/trainer": "refused",
