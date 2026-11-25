@@ -9,6 +9,7 @@ import {
 	nameOf,
 	type SafetensorsHeader,
 	Shelf,
+	type ShelfKind,
 	type ShelfOptions,
 } from "./shelf";
 
@@ -29,6 +30,9 @@ export const CHECKPOINT_DEFAULTS: Record<
 	sdxl: { steps: 30, cfgScale: 7 },
 	sd1: { steps: 20, cfgScale: 7 },
 };
+
+/** How a distilled model (Lightning, Turbo, Hyper, LCM) is run. */
+export const FEW_STEPS = { steps: 6, cfgScale: 2 };
 
 /** The catalog model a checkpoint's family is run like. */
 export const CHECKPOINT_TEMPLATES: Record<CheckpointBase, string> = {
@@ -72,65 +76,66 @@ function setting(
 	return value >= min && value <= max ? value : null;
 }
 
+/** What a whole model in one file is, and how it is checked. */
+export const CHECKPOINT_KIND: ShelfKind<CheckpointInfo> = {
+	folder: "checkpoints",
+	maxBytes: MAX_CHECKPOINT_BYTES,
+	errors: {
+		missing: "checkpointMissing",
+		tooLarge: "checkpointTooLarge",
+		unreadable: "checkpointUnreadable",
+		invalid: "checkpointSettingsInvalid",
+	},
+	inspect(header, fileName) {
+		const base = checkpointBaseOf(header);
+		if (!base) {
+			throw new ValidationError(
+				"This file is not a whole SDXL or SD 1.5 model with its VAE",
+				"checkpointUnknownBase",
+			);
+		}
+		const name = nameOf(header.metadata, fileName, "Model");
+		return {
+			name,
+			base,
+			// Distilled models make a picture in a few steps, with low guidance.
+			...(/lightning|turbo|hyper|lcm/i.test(`${name} ${fileName}`)
+				? FEW_STEPS
+				: CHECKPOINT_DEFAULTS[base]),
+			// Pony and the models tuned from it are trained to skip one.
+			clipSkip: /pony/i.test(`${name} ${fileName}`) ? 2 : null,
+		};
+	},
+	parse(notes) {
+		const { name, base } = notes;
+		const steps = setting(notes.steps, 1, 150, true);
+		const cfgScale = setting(notes.cfgScale, 0, 30, false);
+		const clipSkip =
+			notes.clipSkip == null ? null : setting(notes.clipSkip, 1, 12, true);
+		if (
+			typeof name !== "string" ||
+			!name.trim() ||
+			name.length > 80 ||
+			!CHECKPOINT_BASES.includes(base as CheckpointBase) ||
+			steps == null ||
+			cfgScale == null ||
+			(notes.clipSkip != null && clipSkip == null)
+		) {
+			return null;
+		}
+		return {
+			name: name.trim(),
+			base: base as CheckpointBase,
+			steps,
+			cfgScale,
+			clipSkip,
+		};
+	},
+};
+
 /** The checkpoints kept in the models folder, each a file and its notes. */
 export class CheckpointShelf extends Shelf<CheckpointInfo> {
-	constructor(options: ShelfOptions) {
-		super(
-			{
-				folder: "checkpoints",
-				maxBytes: MAX_CHECKPOINT_BYTES,
-				errors: {
-					missing: "checkpointMissing",
-					tooLarge: "checkpointTooLarge",
-					unreadable: "checkpointUnreadable",
-					invalid: "checkpointSettingsInvalid",
-				},
-				inspect(header, fileName) {
-					const base = checkpointBaseOf(header);
-					if (!base) {
-						throw new ValidationError(
-							"This file is not a whole SDXL or SD 1.5 model with its VAE",
-							"checkpointUnknownBase",
-						);
-					}
-					const name = nameOf(header.metadata, fileName, "Model");
-					return {
-						name,
-						base,
-						...CHECKPOINT_DEFAULTS[base],
-						// Pony and the models tuned from it are trained to skip one.
-						clipSkip: /pony/i.test(`${name} ${fileName}`) ? 2 : null,
-					};
-				},
-				parse(notes) {
-					const { name, base } = notes;
-					const steps = setting(notes.steps, 1, 150, true);
-					const cfgScale = setting(notes.cfgScale, 0, 30, false);
-					const clipSkip =
-						notes.clipSkip == null
-							? null
-							: setting(notes.clipSkip, 1, 12, true);
-					if (
-						typeof name !== "string" ||
-						!name.trim() ||
-						name.length > 80 ||
-						!CHECKPOINT_BASES.includes(base as CheckpointBase) ||
-						steps == null ||
-						cfgScale == null ||
-						(notes.clipSkip != null && clipSkip == null)
-					) {
-						return null;
-					}
-					return {
-						name: name.trim(),
-						base: base as CheckpointBase,
-						steps,
-						cfgScale,
-						clipSkip,
-					};
-				},
-			},
-			options,
-		);
+	constructor(options: ShelfOptions<CheckpointInfo>) {
+		super(CHECKPOINT_KIND, options);
 	}
 }

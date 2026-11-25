@@ -3,6 +3,7 @@ import type {
 	CheckpointInfo,
 	LocalModelsView,
 	LoraInfo,
+	ModelFolder,
 	TrainerStatus,
 	TrainingView,
 } from "@hatchlight/core/types";
@@ -66,6 +67,14 @@ export class Api extends HatchlightClient {
 	removeLora = (id: string) =>
 		this.send("DELETE", `/api/loras/${encodeURIComponent(id)}`);
 	checkpoints = () => this.request<CheckpointInfo[]>("/api/checkpoints");
+
+	modelFolders = () => this.request<ModelFolder[]>("/api/model-folders");
+	addModelFolder = (path: string) =>
+		this.send<ModelFolder>("POST", "/api/model-folders", { path });
+	removeModelFolder = (id: string) =>
+		this.send("DELETE", `/api/model-folders/${encodeURIComponent(id)}`);
+	rescanModelFolders = () =>
+		this.send<ModelFolder[]>("POST", "/api/model-folders/rescan");
 
 	trainer = () => this.request<TrainerStatus>("/api/trainer");
 	installTrainer = () => this.send("POST", "/api/trainer/install");

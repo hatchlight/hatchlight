@@ -15,6 +15,7 @@ export * from "./local/engines";
 export * from "./local/eyes";
 export * from "./local/file-lock";
 export * from "./local/hardware";
+export * from "./local/linked";
 export * from "./local/loras";
 export * from "./local/provider";
 export * from "./local/shelf";

@@ -69,7 +69,9 @@ only that part, make room around it, crop, turn or flip it, or upscale it.
 
 **Your own styles.** Load LoRAs and your own SDXL or SD 1.5 checkpoints, or
 train an SDXL LoRA from your pictures: Hatchlight writes the captions, shows
-sample pictures while it learns, and lets you keep an earlier step.
+sample pictures while it learns, and lets you keep an earlier step. Already
+have models in ComfyUI, AUTOMATIC1111, Forge or Stability Matrix? Point
+Hatchlight at that folder and it uses them where they are, without copying.
 
 **An assistant.** Talk to it in the Chat view: "make the fox bigger", "now in
 16:9, with FLUX". It picks models, writes the prompts and makes the pictures.
@@ -126,7 +128,9 @@ Some parts need more:
 [latest release](https://github.com/hatchlight/hatchlight/releases/latest). It
 updates itself when a new version comes out. The installers are not signed
 yet: if Windows or macOS warns you,
-[Getting started](docs/getting-started.md#install) says what to do.
+[Getting started](docs/getting-started.md#install) says what to do. Signing
+the Windows installers through SignPath Foundation is being set up: see the
+[code signing policy](CODE_SIGNING_POLICY.md).
 
 **New to Hatchlight?** [Getting started](docs/getting-started.md) walks you
 from the first picture to editing, styles of your own, and what to do when
@@ -221,3 +225,10 @@ security problem, see [SECURITY.md](SECURITY.md).
 
 [MIT](LICENSE). The models and engines the app downloads keep their own
 licenses: see [THIRD_PARTY.md](THIRD_PARTY.md).
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io),
+certificate by [SignPath Foundation](https://signpath.org). Who builds,
+reviews and approves what is signed, and what Hatchlight sends over the
+network: [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md).

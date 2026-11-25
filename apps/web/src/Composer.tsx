@@ -54,6 +54,7 @@ import { Extend } from "./Extend";
 import { useI18n } from "./i18n";
 import { type ChosenLora, LoraPicker, useLoras } from "./Loras";
 import { MaskPainter } from "./MaskPainter";
+import { linkedTag } from "./ModelFolders";
 import { PickerDialog } from "./Picker";
 
 export interface Draft {
@@ -417,8 +418,9 @@ export function Composer(props: Props) {
 									)}
 								/>
 								<span className="min-w-0 flex-1 truncate">{model.name}</span>
+								{/* A model from another app's folder says which app. */}
 								<span className="shrink-0 font-mono text-[11px] text-dim">
-									{model.providerId}
+									{model.linked ? linkedTag(t, model.linked) : model.providerId}
 								</span>
 							</Toggle>
 						);

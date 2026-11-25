@@ -11,6 +11,7 @@ import { join, resolve } from "node:path";
 import {
 	AccountService,
 	appEnv,
+	appHomes,
 	assistantChoice,
 	type Captioner,
 	type ChatMessage,
@@ -24,6 +25,7 @@ import {
 	FsAssetStore,
 	type Hardware,
 	improvePrompt,
+	installPlaces,
 	JobEngine,
 	type KeySource,
 	keysSecret,
@@ -498,6 +500,11 @@ export interface RuntimeOptions {
 	 * Without it the folder cannot be changed from the app.
 	 */
 	modelsLocationFile?: string;
+	/**
+	 * Where other apps are often installed, to suggest their models folders.
+	 * Defaults to the usual places on this computer.
+	 */
+	modelFolderPlaces?: () => Promise<string[]>;
 	/** Defaults to the built-in providers. */
 	providers?: ProviderAdapter[];
 	/** Models that can be downloaded. Defaults to the built-in catalog. */
@@ -609,6 +616,16 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		locationFile: options.modelsLocationFile,
 		// Engines a Docker image comes with, used instead of downloading them.
 		enginesDir: appEnv(process.env, "ENGINES_DIR"),
+		// Other apps' folders are this machine's, whoever signs in.
+		modelFolders: {
+			file: join(options.dataDir, "model-folders.json"),
+			places:
+				options.modelFolderPlaces ??
+				(async () => {
+					const { homes, drives } = await appHomes();
+					return installPlaces(homes, drives, join);
+				}),
+		},
 	});
 	const trainer = new Trainer({
 		dir: options.trainerDir ?? join(options.dataDir, "trainer"),
@@ -1015,7 +1032,13 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 				visitors: forgotten.length,
 			};
 		},
-		start: () => engine.start(),
+		start: async () => {
+			// What changed in other apps' folders while Hatchlight was closed.
+			void models.folders.rescan().catch((error) => {
+				console.error("Could not look in the linked model folders", error);
+			});
+			await engine.start();
+		},
 		close: () => {
 			// The assistant's work stops before the database it writes to closes.
 			assistant.close();

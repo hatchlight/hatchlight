@@ -20,6 +20,7 @@ const MAX_CHECKPOINT_BYTES = 16 * 1024 ** 3;
 import { useCan } from "./Accounts";
 import { useI18n } from "./i18n";
 import { baseText } from "./Loras";
+import { LinkedLabel } from "./ModelFolders";
 import { ConfirmButton, LABEL, SECTION } from "./Training";
 
 /** One model added by hand: how it runs, and a way to delete it. */
@@ -71,11 +72,17 @@ function CheckpointRow({ checkpoint }: { checkpoint: CheckpointInfo }) {
 					<p className="mt-0.5 text-sm text-dim">
 						{t("checkpoints.family", { base: baseText(t, checkpoint.base) })}
 					</p>
+					{checkpoint.linked && (
+						<p className="mt-1.5">
+							<LinkedLabel linked={checkpoint.linked} />
+						</p>
+					)}
 				</div>
 				<span className="font-mono text-xs text-dim">
 					{bytes(checkpoint.size)}
 				</span>
-				{can.admin && (
+				{/* Another app's file is removed with its folder, never from here. */}
+				{can.admin && !checkpoint.linked && (
 					<ConfirmButton
 						label={t("checkpoints.delete")}
 						ariaLabel={t("checkpoints.deleteNamed", { name: checkpoint.name })}
