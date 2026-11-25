@@ -209,6 +209,53 @@ describe("Z-Image Turbo, guided", () => {
 	});
 });
 
+describe("models that follow pictures on a 12 GB card", () => {
+	test("run within a memory budget, which the engine is given", async () => {
+		for (const id of [
+			"flux-2-klein-4b",
+			"flux-2-klein-base-4b",
+			"qwen-image-edit-2511",
+			"longcat-image-edit",
+			"longcat-image-edit-turbo",
+			"z-image-turbo-guided",
+		]) {
+			expect(models.find((m) => m.id === id)?.defaults.vramBudget, id).toBe(
+				true,
+			);
+		}
+		const klein = models.find((m) => m.id === "flux-2-klein-4b");
+		const variant = klein?.variants.find((v) => v.id === "q8");
+		if (!klein || !variant) throw new Error("no FLUX.2 klein");
+		const args = await engineArguments(
+			{
+				model: klein,
+				variant,
+				build: {} as never,
+				executable: "/engines/sd-cli",
+				throughWindows: false,
+				fit: "gpu",
+				files: Object.fromEntries(
+					variant.files.map((f) => [f.role, `/m/${f.name}`]),
+				),
+				scratch: "/scratch",
+				gpuMemoryBytes: 12_282 * 2 ** 20,
+			},
+			klein.defaults,
+			{
+				prompt: "the same woman, now sitting",
+				count: 1,
+				referenceAssetIds: ["a"],
+				extras: {},
+			},
+			"/o.png",
+			async (p) => p,
+			["/s/person.png"],
+		);
+		expect(args[args.indexOf("--max-vram") + 1]).toBe("8");
+		expect(args[args.indexOf("-r") + 1]).toBe("/s/person.png");
+	});
+});
+
 describe("variants chosen for a card", () => {
 	test("FLUX.2 klein is 8-bit on a 12 GB card: 16-bit runs out when editing", () => {
 		const gpu = {

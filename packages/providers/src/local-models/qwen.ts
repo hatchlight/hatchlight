@@ -234,6 +234,9 @@ export function qwenModels(): LocalModelSpec[] {
 				},
 			],
 			defaults: {
+				// Its smallest weights (12.8 GB) are larger than a 12 GB card: it
+				// runs in pieces, within a memory budget.
+				vramBudget: true,
 				size: 1024,
 				aspectRatios: ALL_RATIOS,
 				steps: 20,
@@ -409,6 +412,10 @@ export function qwenModels(): LocalModelSpec[] {
 				},
 			],
 			defaults: {
+				// On a 12 GB card its 8-bit weights (6.7 GB), the encoder and the
+				// pictures it follows are about what made FLUX.2 klein and the
+				// guided Z-Image Turbo run out: within a memory budget instead.
+				vramBudget: true,
 				size: 1024,
 				aspectRatios: ALL_RATIOS,
 				steps: 20,
@@ -466,6 +473,9 @@ export function qwenModels(): LocalModelSpec[] {
 				},
 			],
 			defaults: {
+				// Its only weights (12.5 GB) are larger than a 12 GB card: it runs
+				// in pieces, within a memory budget.
+				vramBudget: true,
 				size: 1024,
 				aspectRatios: ALL_RATIOS,
 				steps: 8,

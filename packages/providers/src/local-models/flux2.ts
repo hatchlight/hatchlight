@@ -173,6 +173,10 @@ export function flux2Models(): LocalModelSpec[] {
 				},
 			],
 			defaults: {
+				// Measured on a 12 GB card with the engine pinned now: following a
+				// picture at 1024 px no longer fits beside the model without a
+				// memory budget (20 s with it).
+				vramBudget: true,
 				size: 1024,
 				aspectRatios: ALL_RATIOS,
 				steps: 4,
@@ -270,6 +274,9 @@ export function flux2Models(): LocalModelSpec[] {
 				},
 			],
 			defaults: {
+				// The same files as FLUX.2 klein 4B, which follows a picture on a
+				// 12 GB card only within a memory budget.
+				vramBudget: true,
 				size: 1024,
 				aspectRatios: ALL_RATIOS,
 				steps: 20,
