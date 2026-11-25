@@ -49,7 +49,7 @@ import { Toggle } from "@/components/ui/toggle";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
 import { Adjust } from "./Adjust";
-import { api, assetUrl } from "./api";
+import { api, assetUrl, useDemo } from "./api";
 import { Extend } from "./Extend";
 import { useI18n } from "./i18n";
 import { type ChosenLora, LoraPicker, useLoras } from "./Loras";
@@ -171,6 +171,9 @@ export function Composer(props: Props) {
 	const [suggestion, setSuggestion] = useState<string | null>(null);
 	const [improving, setImproving] = useState<AbortController | null>(null);
 	const [improveError, setImproveError] = useState<unknown>(null);
+	// A public demo takes no uploads, and has no language model to write with:
+	// references are the visitor's own pictures, used as they are.
+	const demo = useDemo() !== null;
 	const [only] = references.length === 1 ? references : [];
 	const marked = only != null && mask?.reference === only ? mask : null;
 	const maskId = marked?.id ?? null;
@@ -549,7 +552,11 @@ export function Composer(props: Props) {
 				</div>
 			)}
 
-			<div className="flex flex-col gap-2.5">
+			<div
+				className="flex flex-col gap-2.5"
+				// In a demo they come only from the gallery: none, nothing to show.
+				hidden={demo && references.length === 0}
+			>
 				<span className={LABEL}>{t("composer.referenceImages")}</span>
 				<ul
 					className="flex flex-wrap gap-2"
@@ -557,22 +564,30 @@ export function Composer(props: Props) {
 				>
 					{references.map((id) => (
 						<li key={id} className="relative">
-							<button
-								type="button"
-								onClick={() => {
-									leaveSheet();
-									setAdjusting(id);
-								}}
-								aria-label={t("composer.adjust")}
-								title={t("composer.adjust")}
-								className="block rounded-[10px] outline-none focus-visible:ring-3 focus-visible:ring-ring/60"
-							>
+							{demo ? (
 								<img
 									src={assetUrl(id)}
 									alt={t("common.reference")}
-									className="size-14 rounded-[10px] object-cover transition-opacity hover:opacity-80"
+									className="block size-14 rounded-[10px] object-cover"
 								/>
-							</button>
+							) : (
+								<button
+									type="button"
+									onClick={() => {
+										leaveSheet();
+										setAdjusting(id);
+									}}
+									aria-label={t("composer.adjust")}
+									title={t("composer.adjust")}
+									className="block rounded-[10px] outline-none focus-visible:ring-3 focus-visible:ring-ring/60"
+								>
+									<img
+										src={assetUrl(id)}
+										alt={t("common.reference")}
+										className="size-14 rounded-[10px] object-cover transition-opacity hover:opacity-80"
+									/>
+								</button>
+							)}
 							{id === only && marked && (
 								// The marked area, as it was painted.
 								<img
@@ -593,7 +608,7 @@ export function Composer(props: Props) {
 							</button>
 						</li>
 					))}
-					<li>
+					<li hidden={demo}>
 						<button
 							type="button"
 							onClick={() => fileInput.current?.click()}
@@ -614,7 +629,7 @@ export function Composer(props: Props) {
 						</button>
 					</li>
 				</ul>
-				{only != null && canMask && (
+				{only != null && canMask && !demo && (
 					<div className="flex flex-wrap gap-1.5">
 						<Button
 							variant="outline"
@@ -770,7 +785,9 @@ export function Composer(props: Props) {
 							}
 						/>
 						<PromptInputActions className="justify-between gap-2">
-							{improving ? (
+							{demo ? (
+								<span />
+							) : improving ? (
 								<Button
 									variant="ghost"
 									onClick={(event) => {

@@ -22,6 +22,7 @@ import {
 	type ReelService,
 	SERVER_KEYS,
 	type SettingsStore,
+	type SqliteVisitors,
 	TRANSLATE_WITH,
 	type Trainer,
 	type TrainerEvent,
@@ -37,11 +38,19 @@ import { streamSSE } from "hono/streaming";
 import { mountAccounts } from "./accounts-routes";
 import type { Agents } from "./agents";
 import { requireAccess } from "./auth";
+import {
+	demoGate,
+	demoLimit,
+	demoTurn,
+	HourlyCounter,
+	notInDemo,
+} from "./demo";
 import { DeviceCookies } from "./devices";
 import { Limiter } from "./limiter";
 import type { AssistantBrain, ImproveRequest } from "./runtime";
 import {
 	DEFAULT_LORA_QUOTA,
+	type DemoConfig,
 	hostName,
 	isLoopback,
 	type LoraQuota,
@@ -65,6 +74,15 @@ export interface AppOptions {
 	 * computer.
 	 */
 	server?: ServerTransport;
+	/**
+	 * A public demo, on a server's transport: no accounts, an anonymous
+	 * identity for each visitor, and only what DEMO_ACCESS allows.
+	 */
+	demo?: {
+		config: DemoConfig;
+		visitors: SqliteVisitors;
+		now?: () => number;
+	};
 	/** Whether keys the person relied on were set aside at start; see Runtime. */
 	keysLost?: (user: { userId: string; owner: boolean }) => boolean;
 	dismissKeysLost?: (userId: string) => void;
@@ -188,6 +206,23 @@ const SECURITY_HEADERS: Record<string, string> = {
 		"camera=(), microphone=(), geolocation=(), payment=(), usb=()",
 };
 
+/**
+ * The headers for a demo that the sites named may show in a frame, as
+ * Hugging Face shows a Space. X-Frame-Options cannot name a site, so the
+ * policy's frame-ancestors alone decides.
+ */
+function framedHeaders(ancestors: string[]): Record<string, string> {
+	if (ancestors.length === 0) return SECURITY_HEADERS;
+	const { "x-frame-options": _deny, ...rest } = SECURITY_HEADERS;
+	return {
+		...rest,
+		"content-security-policy": CONTENT_SECURITY_POLICY.replace(
+			"frame-ancestors 'none'",
+			`frame-ancestors 'self' ${ancestors.join(" ")}`,
+		),
+	};
+}
+
 /** The connection's address, which the server passes in as `peer`. */
 const peerOf = (c: Context): string | null =>
 	(c.env as { peer?: string } | undefined)?.peer ?? null;
@@ -282,24 +317,34 @@ function declaredSize(options: {
 export function createApp(options: AppOptions): Hono {
 	const { service, engine, models } = options;
 	const server = options.server;
-	// A personal install has no accounts, even when given them.
-	const accounts = server ? options.accounts : undefined;
-	if (server && !accounts) throw new Error("Server mode needs accounts");
+	// A demo is reached as a server is, by strangers: it needs the transport.
+	const demo = server ? options.demo : undefined;
+	if (options.demo && !server) throw new Error("A demo needs a transport");
+	// A personal install has no accounts, even when given them; nor a demo.
+	const accounts = server && !demo ? options.accounts : undefined;
+	if (server && !demo && !accounts) {
+		throw new Error("Server mode needs accounts");
+	}
 	const user =
 		options.resolveUser ??
-		(server
-			? (c: Context): UserContext => {
-					const { user, apiToken } = c.get("viewer");
-					return { userId: user.id, tokenId: apiToken?.ref ?? null };
-				}
-			: () => LOCAL_USER);
+		(demo
+			? (c: Context): UserContext => ({ userId: c.get("visitor") })
+			: server
+				? (c: Context): UserContext => {
+						const { user, apiToken } = c.get("viewer");
+						return { userId: user.id, tokenId: apiToken?.ref ?? null };
+					}
+				: () => LOCAL_USER);
 	const app = new Hono();
+	const securityHeaders = demo
+		? framedHeaders(demo.config.frameAncestors)
+		: SECURITY_HEADERS;
 
 	// Every answer, the page included, keeps to what the interface needs.
 	app.use("*", async (c, next) => {
 		await next();
 		const headers = c.res.headers;
-		for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+		for (const [name, value] of Object.entries(securityHeaders)) {
 			// Stored files keep their stricter sandbox.
 			if (!headers.has(name)) headers.set(name, value);
 		}
@@ -384,8 +429,15 @@ export function createApp(options: AppOptions): Hono {
 	// when passwords would cross the network unencrypted.
 	app.get("/api/server", (c) =>
 		c.json({
-			mode: server ? "server" : "personal",
+			mode: demo ? "demo" : server ? "server" : "personal",
 			secure: c.get("https") === true,
+			// What the interface tells visitors of a demo.
+			...(demo && {
+				demo: {
+					ttlHours: demo.config.ttlHours,
+					picturesPerHour: demo.config.picturesPerHour,
+				},
+			}),
 		}),
 	);
 
@@ -527,6 +579,63 @@ export function createApp(options: AppOptions): Hono {
 		return body;
 	};
 
+	// Pictures each visitor, and each address, asked for in the last hour.
+	const visitorPictures = new HourlyCounter({ now: demo?.now });
+	const addressPictures = new HourlyCounter({ now: demo?.now });
+	/**
+	 * Takes `pictures` from the visitor's and their address's hourly limits,
+	 * or refuses; gives back what it takes if `make` fails.
+	 */
+	const withinDemoLimits = async <T>(
+		c: Context,
+		pictures: number,
+		make: () => Promise<T>,
+	): Promise<T> => {
+		if (!demo) return make();
+		const visitor = user(c).userId;
+		const address = c.get("client") ?? "unknown";
+		const mine = visitorPictures.take(
+			visitor,
+			pictures,
+			demo.config.picturesPerHour,
+		);
+		if (mine > 0) throw demoLimit(mine);
+		const theirs = addressPictures.take(
+			address,
+			pictures,
+			demo.config.picturesPerHourPerIp,
+		);
+		if (theirs > 0) {
+			visitorPictures.refund(visitor, pictures);
+			throw demoLimit(theirs);
+		}
+		try {
+			return await make();
+		} catch (error) {
+			visitorPictures.refund(visitor, pictures);
+			addressPictures.refund(address, pictures);
+			throw error;
+		}
+	};
+	/** Providers that need a key: a demo uses none of them. */
+	const paidProviders = async (c: Context) =>
+		new Set(
+			(await service.listProviders(user(c)))
+				.filter((p) => p.requiresKey)
+				.map((p) => p.id),
+		);
+
+	if (demo) {
+		// Only what a demo allows, each visitor as their own anonymous person.
+		app.use(
+			"/api/*",
+			demoGate({
+				visitors: demo.visitors,
+				config: demo.config,
+				now: demo.now,
+			}),
+		);
+	}
 	if (accounts) {
 		// On a server, every route but the public ones needs a signed-in person.
 		app.use("/api/*", requireAccess(accounts));
@@ -546,6 +655,10 @@ export function createApp(options: AppOptions): Hono {
 
 	app.get("/api/models", async (c) => {
 		const models = service.listModels();
+		if (demo) {
+			const paid = await paidProviders(c);
+			return c.json(models.filter((m) => !paid.has(m.providerId)));
+		}
 		// A token that may not pay is not shown what it could not use.
 		const token = server ? c.get("viewer").apiToken : null;
 		if (!token || token.scopes.includes("paid")) return c.json(models);
@@ -559,6 +672,7 @@ export function createApp(options: AppOptions): Hono {
 
 	app.get("/api/providers", async (c) => {
 		const providers = await service.listProviders(user(c));
+		if (demo) return c.json(providers.filter((p) => !p.requiresKey));
 		if (!server) return c.json(providers);
 		// Usable now: their own key, or the server's while their limit allows.
 		// A key from the environment is the server's.
@@ -683,6 +797,23 @@ export function createApp(options: AppOptions): Hono {
 		if (body.sessionId != null && typeof body.sessionId !== "string") {
 			throw new ValidationError("sessionId must be a string");
 		}
+		if (demo) {
+			// Only models that cost nothing, and at most what the demo allows.
+			const paid = await paidProviders(c);
+			const byId = new Map(service.listModels().map((m) => [m.id, m]));
+			const modelIds = [...new Set(body.modelIds as string[])];
+			if (modelIds.some((id) => paid.has(byId.get(id)?.providerId ?? ""))) {
+				throw notInDemo();
+			}
+			const turn = demoTurn(body, demo.config);
+			const each = typeof turn.count === "number" ? turn.count : 1;
+			const result = await withinDemoLimits(
+				c,
+				Math.max(1, each) * Math.max(1, modelIds.length),
+				() => service.createTurn(user(c), turn as never),
+			);
+			return c.json(result, 201);
+		}
 		if (server) {
 			// Each paid model is paid with the person's own key if they have
 			// one, else the server's: refused if they may not, or past their
@@ -719,7 +850,10 @@ export function createApp(options: AppOptions): Hono {
 	});
 
 	app.post("/api/jobs/:id/retry", async (c) => {
-		await service.retryJob(user(c), c.req.param("id"));
+		// A job makes at most a turn's worth of one model's pictures.
+		await withinDemoLimits(c, demo?.config.maxBatch ?? 1, () =>
+			service.retryJob(user(c), c.req.param("id")),
+		);
 		return c.body(null, 204);
 	});
 
@@ -777,7 +911,8 @@ export function createApp(options: AppOptions): Hono {
 	// Models are shared by everyone using this installation.
 	/** Whether the person asking may see where the server keeps its files. */
 	const seesFolders = (c: Context) =>
-		!server || ["owner", "admin"].includes(c.get("viewer").user.role);
+		!server ||
+		(!demo && ["owner", "admin"].includes(c.get("viewer").user.role));
 	app.get("/api/local-models", async (c) => {
 		const view = await models.listWithMemory();
 		if (seesFolders(c)) return c.json(view);
@@ -1044,7 +1179,7 @@ export function createApp(options: AppOptions): Hono {
 	// On a server, a training shows only to who started it, and to those who
 	// run the server: its name and samples are theirs.
 	const runsServer = (c: Context) =>
-		["owner", "admin"].includes(c.get("viewer").user.role);
+		!demo && ["owner", "admin"].includes(c.get("viewer").user.role);
 	const maySee = (c: Context, training: TrainingView) =>
 		!server || training.startedBy?.userId === user(c).userId || runsServer(c);
 	const forViewer = (c: Context, status: TrainerStatus): TrainerStatus =>

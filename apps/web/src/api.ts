@@ -69,14 +69,28 @@ export class ApiError extends Error {
 	}
 }
 
-/** True when Hatchlight runs as a server, where machine settings are left out. */
-export function useServerMode(): boolean {
-	const server = useQuery({
+/** How Hatchlight runs, asked once. */
+function useServerInfo(): ServerInfo | undefined {
+	return useQuery({
 		queryKey: ["server"],
 		queryFn: api.server,
 		staleTime: Number.POSITIVE_INFINITY,
-	});
-	return server.data?.mode === "server";
+	}).data;
+}
+
+/**
+ * True when Hatchlight runs as a server, or as a public demo, where machine
+ * settings are left out.
+ */
+export function useServerMode(): boolean {
+	const mode = useServerInfo()?.mode;
+	return mode === "server" || mode === "demo";
+}
+
+/** What a public demo tells its visitors, or null when this is not one. */
+export function useDemo(): DemoInfo | null {
+	const info = useServerInfo();
+	return info?.mode === "demo" ? (info.demo ?? null) : null;
 }
 
 /** What the person may grant: a role and what it may do. */
@@ -87,10 +101,18 @@ export interface InviteTerms {
 	monthlyLimitUsd: number | null;
 }
 
+/** What a public demo keeps, and for how long. */
+export interface DemoInfo {
+	ttlHours: number;
+	picturesPerHour: number;
+}
+
 /** How Hatchlight runs, and whether it is reached over https. */
 export interface ServerInfo {
-	mode: "personal" | "server";
+	mode: "personal" | "server" | "demo";
 	secure: boolean;
+	/** Present in a public demo. */
+	demo?: DemoInfo;
 }
 
 let signedOut: (() => void) | null = null;

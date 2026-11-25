@@ -18,6 +18,7 @@ This guide covers the Docker image: `ghcr.io/hatchlight/hatchlight`.
 - [The secret for API keys](#the-secret-for-api-keys)
 - [NAS platforms: Unraid, TrueNAS SCALE](#nas-platforms)
 - [Troubleshooting](#troubleshooting)
+- [A public demo](#public-demo)
 - [What server mode protects, and what it does not](#threat-model)
 
 ## Requirements
@@ -429,6 +430,65 @@ uses the same `/data`. Stop it; if it crashed, the folder is free again after
 
 **The container stops at once.** `docker logs hatchlight` says why, usually a
 missing or malformed `HATCHLIGHT_PUBLIC_URL`.
+
+<a id="public-demo"></a>
+
+## A public demo
+
+`--mode demo` (or `HATCHLIGHT_MODE=demo`) runs Hatchlight as a showcase that
+anyone may try without an account, such as a Hugging Face Space. It is not
+a way to share Hatchlight with people you know: use server mode for that.
+
+- **No login.** Each visitor gets an anonymous identity: a random token in
+  an HttpOnly cookie (`Secure` and `SameSite=None; Partitioned` over HTTPS,
+  so it also works inside the frame Hugging Face shows a Space in). The
+  server keeps only the token's hash. A visitor sees only their own
+  sessions, pictures and gallery.
+- **Only pictures with the installed model.** At start, the server installs
+  `HATCHLIGHT_DEMO_MODEL` (SDXL Turbo unless set) if it is missing, and logs
+  its progress. Visitors cannot install or remove models, add LoRAs or
+  checkpoints, train, upload pictures, set keys, use the assistant or prompt
+  improvement, or reach any account or server setting: those routes answer
+  `403`. Paid cloud models are never offered, even with their keys in the
+  environment.
+- **Limits.** Each visitor, and each address, may ask for only so many
+  pictures an hour; a turn makes at most a few pictures per model, and
+  videos are kept short. Jobs share the card through the same queue as on
+  a server, taking turns between visitors.
+- **Nothing is kept for long.** Sessions and pictures older than
+  `HATCHLIGHT_DEMO_TTL_HOURS` are deleted every ten minutes, and visitors not
+  seen for that long are forgotten.
+
+| Variable                                   | Default                             | What it is                                                                |
+| ------------------------------------------ | ----------------------------------- | ------------------------------------------------------------------------- |
+| `HATCHLIGHT_PUBLIC_URL`                    | `https://$SPACE_HOST`               | The address people open; on a Hugging Face Space, taken from `SPACE_HOST` |
+| `HATCHLIGHT_TRUSTED_PROXIES`               | private networks on a Space         | Proxies whose `X-Forwarded-*` headers are believed                        |
+| `HATCHLIGHT_FRAME_ANCESTORS`               | `https://huggingface.co` on a Space | Sites that may show the demo in a frame, comma-separated                  |
+| `HATCHLIGHT_DEMO_MODEL`                    | `sdxl-turbo`                        | The local model installed at start, from the catalog                      |
+| `HATCHLIGHT_DEMO_TTL_HOURS`                | `24`                                | How long pictures, sessions and idle visitors are kept                    |
+| `HATCHLIGHT_DEMO_PICTURES_PER_HOUR`        | `20`                                | Pictures each visitor may ask for in an hour                              |
+| `HATCHLIGHT_DEMO_PICTURES_PER_HOUR_PER_IP` | `60`                                | Pictures all visitors from one address may ask for in an hour             |
+| `HATCHLIGHT_DEMO_VISITORS_PER_HOUR_PER_IP` | `30`                                | New visitors one address may start in an hour                             |
+| `HATCHLIGHT_DEMO_MAX_BATCH`                | `2`                                 | Pictures one turn may ask of each model                                   |
+| `HATCHLIGHT_DEMO_MAX_SECONDS`              | `4`                                 | The longest video, in seconds                                             |
+
+Behind a proxy, the demo must see the browser's address and scheme. On a
+Hugging Face Space, the proxy connects from a private network and sends
+`X-Forwarded-For` and `X-Forwarded-Proto`; when `SPACE_HOST` is set and
+`HATCHLIGHT_TRUSTED_PROXIES` is not, the private ranges (`10.0.0.0/8`,
+`172.16.0.0/12`, `192.168.0.0/16`, loopback, `fc00::/7`) are trusted, and a
+visitor's own public address can never pass for the proxy. If pictures
+cannot be made and the browser shows `Forbidden origin`, the proxy came
+from elsewhere: set `HATCHLIGHT_TRUSTED_PROXIES` to its address. Limits per
+address count the address the trusted proxy reports; trusting the wrong
+proxy would put every visitor behind one address, or let them choose their
+own.
+
+Files for a Hugging Face Space are in
+[`deploy/huggingface/`](../deploy/huggingface/README.md). The image also
+starts as a user other than root (Spaces run it as user 1000): then nothing
+is handed over, and the data and models folders must already be writable by
+that user.
 
 <a id="threat-model"></a>
 

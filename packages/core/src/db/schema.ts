@@ -268,3 +268,21 @@ export const assetUsage = sqliteTable("asset_usage", {
 	userId: text("user_id").primaryKey(),
 	bytes: integer("bytes").notNull(),
 });
+
+/**
+ * The anonymous visitors of a public demo, each known by a cookie. The id is
+ * the SHA-256 of the cookie's token; what they make is under `userId`.
+ */
+export const visitors = sqliteTable(
+	"visitors",
+	{
+		id: text("id").primaryKey(),
+		userId: text("user_id").notNull(),
+		createdAt: integer("created_at").notNull(),
+		lastSeenAt: integer("last_seen_at").notNull(),
+	},
+	(t) => [
+		uniqueIndex("visitors_user").on(t.userId),
+		index("visitors_last_seen").on(t.lastSeenAt),
+	],
+);

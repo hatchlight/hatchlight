@@ -185,3 +185,123 @@ export function routeScope(
 export function routeAccess(method: string, routePath: string): Access {
 	return ROUTE_ACCESS[`${method.toUpperCase()} ${routePath}`] ?? "owner";
 }
+
+/**
+ * What a public demo lets in, by route:
+ *
+ * - `public`: anyone, with no visitor identity made for them;
+ * - `visitor`: anyone, as the anonymous visitor their cookie names, on
+ *   their own sessions and pictures, and making pictures with the model
+ *   installed for the demo;
+ * - `refused`: nobody. Accounts, installing, training, keys, agents,
+ *   uploads, and anything that uses a language model.
+ *
+ * Every route is named here, so a new one is decided on, not let in by
+ * accident; one missing, or not a route at all, is refused.
+ */
+export type DemoAccess = "public" | "visitor" | "refused";
+
+export const DEMO_ACCESS: Readonly<Record<string, DemoAccess>> = {
+	"GET /api/health": "public",
+	"GET /api/server": "public",
+
+	"GET /api/models": "visitor",
+	"GET /api/providers": "visitor",
+	"GET /api/sessions": "visitor",
+	"GET /api/sessions/:id": "visitor",
+	"DELETE /api/sessions/:id": "visitor",
+	"POST /api/turns": "visitor",
+	"GET /api/jobs/:id/preview": "visitor",
+	"POST /api/jobs/:id/cancel": "visitor",
+	"POST /api/jobs/:id/retry": "visitor",
+	"GET /api/assets/:id": "visitor",
+	"DELETE /api/assets/:id": "visitor",
+	"GET /api/gallery": "visitor",
+	"GET /api/events": "visitor",
+	// Read only: a visitor's choices would be kept for good, and they have none.
+	"GET /api/settings": "visitor",
+	"GET /api/local-models": "visitor",
+	"GET /api/local-models/:id/demos/:index": "visitor",
+
+	// Anything a stranger could upload would be kept and served from here.
+	"POST /api/assets": "refused",
+	// Language models: kept out to keep the demo small.
+	"POST /api/prompts/improve": "refused",
+	"GET /api/assistant": "refused",
+	"POST /api/assistant/messages": "refused",
+	"GET /api/sessions/:id/assistant": "refused",
+	"POST /api/sessions/:id/assistant/stop": "refused",
+	"POST /api/sessions/:id/assistant/answers": "refused",
+	"PUT /api/settings": "refused",
+
+	// No accounts: nobody signs in, sets up or is invited.
+	"GET /api/setup": "refused",
+	"POST /api/setup": "refused",
+	"POST /api/login": "refused",
+	"GET /api/invites/:token": "refused",
+	"POST /api/invites/:token/accept": "refused",
+	"GET /api/password-resets/:token": "refused",
+	"POST /api/password-resets/:token": "refused",
+	"POST /api/logout": "refused",
+	"GET /api/account": "refused",
+	"DELETE /api/account/reset-notice": "refused",
+	"PUT /api/account/keys/:id": "refused",
+	"GET /api/keys/lost": "refused",
+	"DELETE /api/keys/lost": "refused",
+	"DELETE /api/account/keys/:id": "refused",
+	"PUT /api/account/password": "refused",
+	"GET /api/account/sessions": "refused",
+	"DELETE /api/account/sessions": "refused",
+	"DELETE /api/account/sessions/:id": "refused",
+	"POST /api/account/totp": "refused",
+	"PUT /api/account/totp": "refused",
+	"DELETE /api/account/totp": "refused",
+	"GET /api/account/tokens": "refused",
+	"POST /api/account/tokens": "refused",
+	"DELETE /api/account/tokens/:id": "refused",
+	"GET /api/users": "refused",
+	"PATCH /api/users/:id": "refused",
+	"POST /api/users/:id/password": "refused",
+	"GET /api/users/:id/tokens": "refused",
+	"DELETE /api/users/:id/tokens/:token": "refused",
+	"GET /api/invites": "refused",
+	"POST /api/invites": "refused",
+	"DELETE /api/invites/:id": "refused",
+
+	// What is installed is the demo's, set up at start.
+	"GET /api/loras": "refused",
+	"GET /api/checkpoints": "refused",
+	"POST /api/loras": "refused",
+	"DELETE /api/loras/:id": "refused",
+	"POST /api/local-models/:id/install": "refused",
+	"POST /api/local-models/:id/cancel": "refused",
+	"DELETE /api/local-models/:id": "refused",
+	"POST /api/local-models/location": "refused",
+	"POST /api/checkpoints": "refused",
+	"PATCH /api/checkpoints/:id": "refused",
+	"DELETE /api/checkpoints/:id": "refused",
+
+	// Training and captions hold the GPU for long.
+	"GET /api/trainer": "refused",
+	"GET /api/captioner": "refused",
+	"POST /api/trainings": "refused",
+	"POST /api/trainings/cancel": "refused",
+	"POST /api/trainings/finish": "refused",
+	"GET /api/trainings/:id/samples/:step": "refused",
+	"POST /api/captions": "refused",
+	"POST /api/trainer/install": "refused",
+	"POST /api/trainer/install/cancel": "refused",
+	"DELETE /api/trainer": "refused",
+
+	// Keys spend money; agents are set up on the machine.
+	"PUT /api/providers/:id/key": "refused",
+	"DELETE /api/providers/:id/key": "refused",
+	"GET /api/agents": "refused",
+	"PUT /api/agents/claude-desktop": "refused",
+	"DELETE /api/agents/claude-desktop": "refused",
+};
+
+/** What a demo lets in for a route; anything not named is refused. */
+export function demoAccess(method: string, routePath: string): DemoAccess {
+	return DEMO_ACCESS[`${method.toUpperCase()} ${routePath}`] ?? "refused";
+}

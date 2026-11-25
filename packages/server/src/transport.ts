@@ -3,9 +3,48 @@ import { appEnv } from "@hatchlight/core";
 /**
  * How Hatchlight is reached. `personal` is one person on this computer, over
  * loopback. `server` is several people reaching a shared machine over the
- * network, through its public address.
+ * network, through its public address. `demo` is a public showcase anyone
+ * may try without an account: each visitor sees only their own pictures,
+ * makes them only with the model installed for the demo, and within limits.
  */
-export type ServerMode = "personal" | "server";
+export type ServerMode = "personal" | "server" | "demo";
+
+/** The model a demo installs at start, unless HATCHLIGHT_DEMO_MODEL names another. */
+export const DEFAULT_DEMO_MODEL = "sdxl-turbo";
+
+/** What a public demo allows each visitor, and how long it keeps their work. */
+export interface DemoConfig {
+	/** The local model installed at start, the only one visitors use. */
+	model: string;
+	/** Pictures, sessions and idle visitors older than this are deleted. */
+	ttlHours: number;
+	/** Pictures each visitor may ask for in an hour. */
+	picturesPerHour: number;
+	/** Pictures all visitors from one address may ask for in an hour. */
+	picturesPerHourPerIp: number;
+	/** New visitors one address may start in an hour. */
+	visitorsPerHourPerIp: number;
+	/** Pictures one turn may ask of each model. */
+	maxBatch: number;
+	/** The longest video, in seconds. */
+	maxSeconds: number;
+	/** Sites that may show the demo in a frame, such as https://huggingface.co. */
+	frameAncestors: string[];
+}
+
+/**
+ * Addresses of private networks, where the proxy in front of a hosted
+ * container (a Hugging Face Space) connects from. The browser's own address,
+ * public, is never among them, so it cannot pass for a proxy.
+ */
+const PRIVATE_NETWORKS = [
+	"10.0.0.0/8",
+	"172.16.0.0/12",
+	"192.168.0.0/16",
+	"127.0.0.0/8",
+	"fc00::/7",
+	"::1/128",
+];
 
 /** A block of addresses, as 16 bytes: IPv4 is kept as IPv4-mapped IPv6. */
 export interface Cidr {
@@ -44,6 +83,8 @@ export interface ServerConfig {
 	loraQuota: LoraQuota | null;
 	/** The most a member's pictures may take, in bytes; null for no limit. */
 	assetQuotaBytes: number | null;
+	/** Present in demo mode only. */
+	demo: DemoConfig | null;
 }
 
 /** A setting that cannot be used; the message says which and why. */
@@ -52,21 +93,26 @@ export class ConfigError extends Error {}
 /**
  * Reads the server settings from the command line and the environment
  * (HATCHLIGHT_MODE, HATCHLIGHT_HOST, HATCHLIGHT_PUBLIC_URL,
- * HATCHLIGHT_ALLOWED_HOSTS, HATCHLIGHT_TRUSTED_PROXIES). Flags win.
- * Personal mode ignores the network settings, so it stays as it always was.
+ * HATCHLIGHT_ALLOWED_HOSTS, HATCHLIGHT_TRUSTED_PROXIES, and the HATCHLIGHT_DEMO_*
+ * limits). Flags win. Personal mode ignores the network settings, so it
+ * stays as it always was. On a Hugging Face Space (SPACE_HOST is set), a
+ * demo takes its public address from the Space, and trusts the Space's
+ * proxy, on a private network, unless told otherwise.
  */
 export function serverConfig(
 	flags: { mode?: string; host?: string },
 	env: Record<string, string | undefined>,
 ): ServerConfig {
 	const mode = flags.mode ?? appEnv(env, "MODE") ?? "personal";
-	if (mode !== "personal" && mode !== "server") {
-		throw new ConfigError(`Unknown mode: ${mode}. Use "personal" or "server"`);
+	if (mode !== "personal" && mode !== "server" && mode !== "demo") {
+		throw new ConfigError(
+			`Unknown mode: ${mode}. Use "personal", "server" or "demo"`,
+		);
 	}
 	const host =
 		flags.host ??
 		appEnv(env, "HOST") ??
-		(mode === "server" ? "0.0.0.0" : "127.0.0.1");
+		(mode === "personal" ? "127.0.0.1" : "0.0.0.0");
 	if (mode === "personal") {
 		// Personal mode has no login: only this computer may reach it.
 		if (!isLoopback(host)) {
@@ -80,13 +126,19 @@ export function serverConfig(
 			transport: null,
 			loraQuota: null,
 			assetQuotaBytes: null,
+			demo: null,
 		};
 	}
 
-	const publicUrl = appEnv(env, "PUBLIC_URL");
+	// A Space says its own address; one set by hand wins.
+	const spaceHost = mode === "demo" ? env.SPACE_HOST?.trim() : undefined;
+	const publicUrl =
+		appEnv(env, "PUBLIC_URL") ?? (spaceHost ? `https://${spaceHost}` : "");
 	if (!publicUrl) {
 		throw new ConfigError(
-			"Server mode needs HATCHLIGHT_PUBLIC_URL, the address people open, such as https://hatchlight.example.com",
+			mode === "demo"
+				? "Demo mode needs HATCHLIGHT_PUBLIC_URL, the address people open, such as https://demo.example.com (on a Hugging Face Space it comes from SPACE_HOST)"
+				: "Server mode needs HATCHLIGHT_PUBLIC_URL, the address people open, such as https://hatchlight.example.com",
 		);
 	}
 	const publicOrigin = parsePublicUrl(publicUrl);
@@ -94,7 +146,10 @@ export function serverConfig(
 		new URL(publicOrigin).hostname,
 		...list(appEnv(env, "ALLOWED_HOSTS")).map(parseHost),
 	];
-	const trustedProxies = list(appEnv(env, "TRUSTED_PROXIES")).map(parseCidr);
+	const trustedProxies = list(
+		appEnv(env, "TRUSTED_PROXIES") ??
+			(spaceHost ? PRIVATE_NETWORKS.join(",") : undefined),
+	).map(parseCidr);
 	const count = (name: string, fallback: number) => {
 		const value = appEnv(env, name);
 		if (value === undefined) return fallback;
@@ -116,13 +171,68 @@ export function serverConfig(
 		assetGb === undefined
 			? null
 			: Math.floor(count("ASSET_GB_PER_PERSON", 0) * 1024 ** 3);
+	const transport = { publicOrigin, allowedHosts, trustedProxies };
+	if (mode === "demo") {
+		const whole = (name: string, fallback: number, least = 1) => {
+			const value = Math.floor(count(name, fallback));
+			if (value < least) {
+				throw new ConfigError(
+					`HATCHLIGHT_${name} must be a number, ${least} or more`,
+				);
+			}
+			return value;
+		};
+		const frames = appEnv(env, "FRAME_ANCESTORS");
+		return {
+			mode,
+			host,
+			transport,
+			loraQuota: null,
+			assetQuotaBytes: null,
+			demo: {
+				model: appEnv(env, "DEMO_MODEL")?.trim() || DEFAULT_DEMO_MODEL,
+				ttlHours: whole("DEMO_TTL_HOURS", 24),
+				picturesPerHour: whole("DEMO_PICTURES_PER_HOUR", 20),
+				picturesPerHourPerIp: whole("DEMO_PICTURES_PER_HOUR_PER_IP", 60),
+				visitorsPerHourPerIp: whole("DEMO_VISITORS_PER_HOUR_PER_IP", 30),
+				maxBatch: whole("DEMO_MAX_BATCH", 2),
+				maxSeconds: whole("DEMO_MAX_SECONDS", 4),
+				// A Space is shown on huggingface.co, in a frame.
+				frameAncestors:
+					frames === undefined
+						? spaceHost
+							? ["https://huggingface.co"]
+							: []
+						: list(frames).map(parseFrameAncestor),
+			},
+		};
+	}
 	return {
 		mode,
 		host,
-		transport: { publicOrigin, allowedHosts, trustedProxies },
+		transport,
 		loraQuota,
 		assetQuotaBytes,
+		demo: null,
 	};
+}
+
+/** An https origin that may show the demo in a frame. */
+function parseFrameAncestor(value: string): string {
+	let url: URL;
+	try {
+		url = new URL(value);
+	} catch {
+		throw new ConfigError(
+			`Not an address in HATCHLIGHT_FRAME_ANCESTORS: ${value}`,
+		);
+	}
+	if (url.protocol !== "https:" || url.origin !== value.replace(/\/$/, "")) {
+		throw new ConfigError(
+			`HATCHLIGHT_FRAME_ANCESTORS takes https origins, such as https://huggingface.co: ${value}`,
+		);
+	}
+	return url.origin;
 }
 
 const list = (value: string | undefined): string[] =>
