@@ -25,10 +25,9 @@ from the published image, `ghcr.io/hatchlight/hatchlight`, in demo mode.
 1. Create a Space with the Docker SDK and copy this folder's files into its
    repository: `README.md` (this file, whose front matter sets up the
    Space), `Dockerfile` and `start.sh`.
-2. Build from a release that has demo mode (after 0.4.2): set
-   `HATCHLIGHT_IMAGE` in the Dockerfile to, for example,
-   `ghcr.io/hatchlight/hatchlight:0.5.0`. `latest` works, but changes with
-   every release.
+2. The Dockerfile builds from `ghcr.io/hatchlight/hatchlight:0.5.0`, the
+   first release with demo mode. Change `HATCHLIGHT_IMAGE` there to move
+   the Space to a newer release.
 3. Choose hardware with an NVIDIA GPU; SDXL Turbo needs about 8 GB of
    memory.
 4. Optional: turn on persistent storage. The demo then keeps its data and
