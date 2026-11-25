@@ -65,7 +65,10 @@ export function createMcpServer(reel: Reel, options: McpOptions): McpServer {
 				title: tool.title,
 				description: tool.description,
 				inputSchema: tool.input,
-				...(tool.readOnly && { annotations: { readOnlyHint: true } }),
+				annotations: {
+					readOnlyHint: tool.readOnly ?? false,
+					destructiveHint: tool.destructive ?? false,
+				},
 			},
 			async (args: Record<string, unknown>, extra) => {
 				let ticks = 0;
