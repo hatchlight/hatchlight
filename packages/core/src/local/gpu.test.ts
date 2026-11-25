@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { utimesSync } from "node:fs";
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { utimesSync, writeFileSync } from "node:fs";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProviderEvent } from "../provider";
@@ -230,6 +230,22 @@ describe("GpuLock", () => {
 		await acquire(lock(root), 1 * GB);
 		await writeFile(join(root, "gpu", "rewriting"), "");
 		expect(await pending(acquire(lock(root), 1 * GB))).toBe(true);
+	});
+
+	test("a reservation caught while being rewritten is read again for what others reserve", async () => {
+		const root = await folder();
+		const file = join(root, "gpu", "rewriting");
+		await mkdir(join(root, "gpu"), { recursive: true });
+		await writeFile(file, "");
+		setTimeout(() => writeFileSync(file, String(2 * GB)), 10);
+		expect(await lock(root).othersReserved()).toBe(2 * GB);
+	});
+
+	test("a reservation that stays unreadable counts as the whole GPU for what others reserve", async () => {
+		const root = await folder();
+		await mkdir(join(root, "gpu"), { recursive: true });
+		await writeFile(join(root, "gpu", "rewriting"), "");
+		expect(await lock(root).othersReserved()).toBe(Infinity);
 	});
 
 	test("a canceled wait withdraws its request", async () => {

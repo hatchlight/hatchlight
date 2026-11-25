@@ -39,6 +39,8 @@ const HEARTBEAT_MS = 5_000;
 const POLL_MS = 1_000;
 /** Retry a busy mutex this soon: another process holds it for an instant. */
 const MUTEX_RETRY_MS = 20;
+/** Reads of a reservation caught while being rewritten before giving up. */
+const REREAD_ATTEMPTS = 3;
 /** The folder failing this many times in a row fails the job. */
 const MAX_ERRORS = 10;
 
@@ -126,14 +128,22 @@ export class GpuLock {
 		}
 	}
 
-	/** Bytes other Hatchlights sharing the folder have reserved, as far as known. */
-	othersReserved(): number {
-		try {
-			mkdirSync(this.dir, { recursive: true });
-			const { others } = this.look(this.now(), false);
-			return Number.isFinite(others) ? others : 0;
-		} catch {
-			return 0;
+	/**
+	 * Bytes other Hatchlights sharing the folder have reserved, as far as
+	 * known. A reservation caught while being rewritten is read again a
+	 * moment later; still unreadable, it counts as the whole GPU (Infinity).
+	 */
+	async othersReserved(): Promise<number> {
+		for (let attempt = 1; ; attempt++) {
+			let others: number;
+			try {
+				mkdirSync(this.dir, { recursive: true });
+				others = this.look(this.now(), false).others;
+			} catch {
+				return 0;
+			}
+			if (Number.isFinite(others) || attempt >= REREAD_ATTEMPTS) return others;
+			await Bun.sleep(MUTEX_RETRY_MS);
 		}
 	}
 

@@ -20,7 +20,13 @@ const request: WarmRequest = {
 };
 
 /** A fake engine server: each process says it listens, then runs until killed. */
-function fakeServers(options: { failToStart?: boolean } = {}) {
+function fakeServers(
+	options: {
+		failToStart?: boolean;
+		/** Once killed, a server takes this long to exit; never when Infinity. */
+		exitMs?: number;
+	} = {},
+) {
 	const started: string[][] = [];
 	const killed: string[][] = [];
 	const spawn: Spawn = (argv) => {
@@ -43,7 +49,9 @@ function fakeServers(options: { failToStart?: boolean } = {}) {
 			exited,
 			kill: () => {
 				killed.push(argv);
-				exit(0);
+				const exitMs = options.exitMs ?? 0;
+				if (exitMs === 0) exit(0);
+				else if (Number.isFinite(exitMs)) setTimeout(() => exit(0), exitMs);
 			},
 		};
 	};
@@ -230,8 +238,8 @@ describe("warm engines", () => {
 		const signal = new AbortController().signal;
 		const seen: [string, number, number][] = [];
 		const acquired = (name: string) =>
-			async function* (released: number): AsyncIterable<ProviderEvent> {
-				seen.push([name, released, gpu.reserved]);
+			async function* (released: () => number): AsyncIterable<ProviderEvent> {
+				seen.push([name, released(), gpu.reserved]);
 				yield { type: "progress", message: name };
 			};
 		await collect(
@@ -244,10 +252,177 @@ describe("warm engines", () => {
 			warm.run("b", ["sd-server"], request, signal, 5 * GB, acquired("b")),
 		);
 		// Called after the memory is reserved; never for the model reused.
+		// Model a's engine had exited by then: its memory is free again.
 		expect(seen).toEqual([
 			["a", 0, 4 * GB],
-			["b", 4 * GB, 5 * GB],
+			["b", 0, 5 * GB],
 		]);
+		gpu.close();
+	});
+
+	test("waits for an unloaded model's engine to exit before the next model loads", async () => {
+		const root = await mkdtemp(join(tmpdir(), "hatchlight-gpu-"));
+		roots.push(root);
+		const GB = 2 ** 30;
+		const gpu = new GpuLock({ root, capacity: async () => 12 * GB });
+		const servers = fakeServers({ exitMs: 50 });
+		const warm = new WarmEngines({
+			spawn: servers.spawn,
+			fetch: fakeApi().fetch,
+			freePort: async () => 4242,
+			idleMs: 60_000,
+			gpu,
+		});
+		const signal = new AbortController().signal;
+		await collect(warm.run("a", ["sd-server"], request, signal, 4 * GB));
+		const seen: [number, number][] = [];
+		const started = Date.now();
+		await collect(
+			warm.run(
+				"b",
+				["sd-server"],
+				request,
+				signal,
+				5 * GB,
+				async function* (released) {
+					seen.push([released(), servers.started.length]);
+					yield { type: "progress", message: "loading" };
+				},
+			),
+		);
+		expect(Date.now() - started).toBeGreaterThanOrEqual(40);
+		// Nothing left to count twice, and b's server started only afterwards.
+		expect(seen).toEqual([[0, 1]]);
+		gpu.close();
+	});
+
+	test("an engine that does not exit in time still counts as holding its memory", async () => {
+		const root = await mkdtemp(join(tmpdir(), "hatchlight-gpu-"));
+		roots.push(root);
+		const GB = 2 ** 30;
+		const gpu = new GpuLock({ root, capacity: async () => 12 * GB });
+		const warm = new WarmEngines({
+			spawn: fakeServers({ exitMs: Infinity }).spawn,
+			fetch: fakeApi().fetch,
+			freePort: async () => 4242,
+			idleMs: 60_000,
+			exitWaitMs: 20,
+			gpu,
+		});
+		const signal = new AbortController().signal;
+		await collect(warm.run("a", ["sd-server"], request, signal, 4 * GB));
+		const seen: number[] = [];
+		await collect(
+			warm.run(
+				"b",
+				["sd-server"],
+				request,
+				signal,
+				5 * GB,
+				async function* (released) {
+					seen.push(released());
+					yield { type: "progress", message: "loading" };
+				},
+			),
+		);
+		expect(seen).toEqual([4 * GB]);
+		// Not waited for again, though still counted.
+		const started = Date.now();
+		expect(await warm.unloading()).toBe(4 * GB);
+		expect(Date.now() - started).toBeLessThan(15);
+		gpu.close();
+	});
+
+	test("a job canceled before the wait does not wait for an exiting engine", async () => {
+		const root = await mkdtemp(join(tmpdir(), "hatchlight-gpu-"));
+		roots.push(root);
+		const gpu = new GpuLock({ root, capacity: async () => 2 ** 34 });
+		const warm = new WarmEngines({
+			spawn: fakeServers({ exitMs: Infinity }).spawn,
+			fetch: fakeApi().fetch,
+			freePort: async () => 4242,
+			idleMs: 60_000,
+			gpu,
+		});
+		await collect(
+			warm.run("a", ["sd-server"], request, new AbortController().signal, 1),
+		);
+		warm.stop();
+		const controller = new AbortController();
+		controller.abort(new Error("canceled"));
+		const started = Date.now();
+		await expect(warm.unloading(controller.signal)).rejects.toThrow("canceled");
+		expect(Date.now() - started).toBeLessThan(100);
+		gpu.close();
+	});
+
+	test("tells others what a model unloaded for them still holds until its engine exits", async () => {
+		const root = await mkdtemp(join(tmpdir(), "hatchlight-gpu-"));
+		roots.push(root);
+		const GB = 2 ** 30;
+		const gpu = new GpuLock({ root, capacity: async () => 12 * GB });
+		const warm = new WarmEngines({
+			spawn: fakeServers({ exitMs: 50 }).spawn,
+			fetch: fakeApi().fetch,
+			freePort: async () => 4242,
+			idleMs: 60_000,
+			exitWaitMs: 10,
+			gpu,
+		});
+		const signal = new AbortController().signal;
+		expect(await warm.unloading()).toBe(0);
+		await collect(warm.run("a", ["sd-server"], request, signal, 4 * GB));
+		warm.stop();
+		expect(await warm.unloading()).toBe(4 * GB);
+		warm.stop();
+		await Bun.sleep(60);
+		expect(await warm.unloading()).toBe(0);
+		gpu.close();
+	});
+
+	test("an unloaded model's memory stays reserved until its engine exits", async () => {
+		const root = await mkdtemp(join(tmpdir(), "hatchlight-gpu-"));
+		roots.push(root);
+		const GB = 2 ** 30;
+		const gpu = new GpuLock({ root, capacity: async () => 12 * GB });
+		const warm = new WarmEngines({
+			spawn: fakeServers({ exitMs: 50 }).spawn,
+			fetch: fakeApi().fetch,
+			freePort: async () => 4242,
+			idleMs: 60_000,
+			gpu,
+		});
+		const signal = new AbortController().signal;
+		await collect(warm.run("a", ["sd-server"], request, signal, 4 * GB));
+		warm.stop();
+		expect(warm.loaded).toBeNull();
+		expect(gpu.reserved).toBe(4 * GB);
+		await Bun.sleep(60);
+		expect(gpu.reserved).toBe(0);
+		gpu.close();
+	});
+
+	test("an engine that does not exit gives its reservation back after a moment", async () => {
+		const root = await mkdtemp(join(tmpdir(), "hatchlight-gpu-"));
+		roots.push(root);
+		const GB = 2 ** 30;
+		const gpu = new GpuLock({ root, capacity: async () => 12 * GB });
+		const warm = new WarmEngines({
+			spawn: fakeServers({ exitMs: Infinity }).spawn,
+			fetch: fakeApi().fetch,
+			freePort: async () => 4242,
+			idleMs: 60_000,
+			exitWaitMs: 20,
+			gpu,
+		});
+		const signal = new AbortController().signal;
+		await collect(warm.run("a", ["sd-server"], request, signal, 4 * GB));
+		warm.stop();
+		expect(gpu.reserved).toBe(4 * GB);
+		await Bun.sleep(40);
+		expect(gpu.reserved).toBe(0);
+		// Still counted as taken: the engine has not exited.
+		expect(warm.unloadedBytes).toBe(4 * GB);
 		gpu.close();
 	});
 

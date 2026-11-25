@@ -602,6 +602,101 @@ describe("running", () => {
 		expect(events.some((e) => "busyBytes" in e)).toBe(false);
 	});
 
+	test("memory of a model kept loaded, unloaded for this job and still exiting, is not other programs'", async () => {
+		const { store, fake } = await setup();
+		const GB = 2 ** 30;
+		// No server beside the engine: the job runs it once.
+		const warm = {
+			loaded: null,
+			unused: true,
+			stop() {},
+			async stopAndWait() {},
+			async unloading() {
+				return 12 * GB;
+			},
+			unloadedBytes: 12 * GB,
+		};
+		const events = await run(
+			new LocalProvider({
+				store: store as never,
+				catalog: [FLUX],
+				spawn: fake([]),
+				warm: warm as never,
+				freeMemory: async () => ({ freeBytes: 0, totalBytes: 12 * GB }),
+			}),
+		);
+		expect(events.some((e) => "busyBytes" in e)).toBe(false);
+		expect(events.some((e) => e.type === "completed")).toBe(true);
+	});
+
+	test("free memory is read again when an unloaded model's engine exits during the reading", async () => {
+		const { store, fake } = await setup();
+		const GB = 2 ** 30;
+		const warm = {
+			loaded: null,
+			unused: true,
+			stop() {},
+			async stopAndWait() {},
+			async unloading() {
+				return warm.unloadedBytes;
+			},
+			unloadedBytes: 12 * GB,
+		};
+		const readings: number[] = [];
+		const events = await run(
+			new LocalProvider({
+				store: store as never,
+				catalog: [FLUX],
+				spawn: fake([]),
+				warm: warm as never,
+				freeMemory: async () => {
+					readings.push(warm.unloadedBytes);
+					// The engine exits while the first reading is taken.
+					warm.unloadedBytes = 0;
+					return { freeBytes: 0, totalBytes: 12 * GB };
+				},
+			}),
+		);
+		// The second reading, with nothing left exiting, is trusted.
+		expect(readings).toEqual([12 * GB, 0]);
+		expect(events.some((e) => "busyBytes" in e)).toBe(true);
+	});
+
+	test("a reading that stays unsure while Hatchlight's own memory changes says nothing", async () => {
+		const { store, fake } = await setup();
+		const GB = 2 ** 30;
+		let exiting = 12 * GB;
+		const warm = {
+			loaded: null,
+			unused: true,
+			stop() {},
+			async stopAndWait() {},
+			async unloading() {
+				return exiting;
+			},
+			get unloadedBytes() {
+				return exiting;
+			},
+		};
+		let readings = 0;
+		const events = await run(
+			new LocalProvider({
+				store: store as never,
+				catalog: [FLUX],
+				spawn: fake([]),
+				warm: warm as never,
+				freeMemory: async () => {
+					readings++;
+					exiting -= GB;
+					return { freeBytes: 0, totalBytes: 12 * GB };
+				},
+			}),
+		);
+		expect(readings).toBe(2);
+		expect(events.some((e) => "busyBytes" in e)).toBe(false);
+		expect(events.some((e) => e.type === "completed")).toBe(true);
+	});
+
 	test("a cancel while the free memory is read ends the job at once", async () => {
 		const { provider, fake } = await setup();
 		const controller = new AbortController();
