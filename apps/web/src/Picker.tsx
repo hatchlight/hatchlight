@@ -30,7 +30,7 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useCan } from "./Accounts";
-import { api, demoUrl } from "./api";
+import { api, demoUrl, useDemo } from "./api";
 import { FRAME_MS, reduceMotion } from "./Develop";
 import { remaining, usd } from "./format";
 import { type I18n, useI18n } from "./i18n";
@@ -259,6 +259,7 @@ function Hero(props: {
 	const total = props.hardware ? gpuMemory(props.hardware) : null;
 	const local = props.pick?.kind === "local" ? props.pick.model : undefined;
 	const can = useCan();
+	const demo = useDemo() !== null;
 	const need = local ? neededMemory(local) : null;
 	const level = local ? fitLevel(localFit(local)) : null;
 	const share = need && total ? Math.min(1, need / total) : 0;
@@ -392,7 +393,9 @@ function Hero(props: {
 					</div>
 					<div className="mt-auto flex flex-wrap items-center gap-2">
 						{local && !local.ready && !can.admin ? (
-							<p className="text-sm text-dim">{t("models.askAdmin")}</p>
+							<p className="text-sm text-dim">
+								{demo ? t("demo.onlyInstalled") : t("models.askAdmin")}
+							</p>
 						) : (
 							<Button
 								variant="aurora"
@@ -733,6 +736,7 @@ function Download(props: { model: LocalModelStatus; autoStart: boolean }) {
 		state !== "available" || install.isPending || install.isSuccess;
 	const { mutate } = install;
 	const can = useCan();
+	const demo = useDemo() !== null;
 	// Chosen from "Download and use": start without a second click.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: only when the drawer opens
 	useEffect(() => {
@@ -813,7 +817,9 @@ function Download(props: { model: LocalModelStatus; autoStart: boolean }) {
 					{t("picker.download", { size: i18n.bytes(model.size) })}
 				</Button>
 			) : (
-				<p className="text-sm text-dim">{t("models.askAdmin")}</p>
+				<p className="text-sm text-dim">
+					{demo ? t("demo.onlyInstalled") : t("models.askAdmin")}
+				</p>
 			)}
 			{error && <p className="text-sm text-danger">{error}</p>}
 		</div>

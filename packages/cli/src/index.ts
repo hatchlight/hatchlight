@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { writeSync } from "node:fs";
+import { statfs } from "node:fs/promises";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import {
@@ -22,6 +23,7 @@ import {
 	createApp,
 	createRuntime,
 	DataDirInUseError,
+	installDemoModel,
 	localUrl,
 	serverConfig,
 	serveWeb,
@@ -85,8 +87,12 @@ Options for serve:
                    and HATCHLIGHT_LORA_GB_PER_PERSON (default 10), and the
                    room each member's pictures may take:
                    HATCHLIGHT_ASSET_GB_PER_PERSON (unset: no limit)
+                   demo: a public demo anyone may try without an account;
+                   needs HATCHLIGHT_PUBLIC_URL (or SPACE_HOST on a Hugging
+                   Face Space) and installs HATCHLIGHT_DEMO_MODEL at start.
+                   See docs/self-hosting.md for its limits
   --host <a>       Address to listen on (default 127.0.0.1, or 0.0.0.0 in
-                   server mode)
+                   server and demo mode)
   --data-dir <p>   Where sessions, images and keys are stored
                    (default ${defaultDataDir()}). API keys are encrypted
                    with HATCHLIGHT_SECRET_FILE, or secret.key made there
@@ -135,6 +141,7 @@ try {
 	process.exit(1);
 }
 const server = config.transport;
+const demo = config.demo;
 
 const parentPid =
 	values["parent-pid"] == null ? null : Number(values["parent-pid"]);
@@ -170,7 +177,9 @@ const runtime = await createRuntime({
 		? modelsLocationFile(defaultModels)
 		: undefined,
 	migrationsDir,
-	server: server != null,
+	// A demo has no accounts and shares no keys.
+	server: server != null && !demo,
+	demo: demo != null,
 	assetQuotaBytes: config.assetQuotaBytes,
 }).catch((error) => {
 	// Said plainly: another server on the folder, or keys under another secret.
@@ -184,26 +193,49 @@ const runtime = await createRuntime({
 const MAX_MCP_BODY_BYTES = 1024 * 1024;
 const app = createApp({
 	...runtime,
+	// A demo offers none of what holds the GPU for long or writes with a
+	// language model: refused by its routes, and not even wired here.
+	...(demo && {
+		trainer: undefined,
+		captioner: undefined,
+		assistant: undefined,
+		improvePrompt: undefined,
+	}),
 	allowedOrigins: values.dev ? ["http://localhost:5173"] : [],
 	server: server ?? undefined,
+	demo: demo
+		? {
+				config: demo,
+				visitors: runtime.visitors,
+				modelId: `local/${demo.model}`,
+				freeBytes: async () => {
+					const disk = await statfs(dataDir);
+					return disk.bavail * disk.bsize;
+				},
+				log: (line) => writeSync(1, `${line}\n`),
+			}
+		: undefined,
 	// Agents with a token reach a server at /mcp; each of their tool calls
 	// goes through this server's own API, as that token.
-	mcp: server
-		? mcpOverHttp({
-				fetch: (request) =>
-					Promise.resolve(app.fetch(request, { peer: "127.0.0.1" })),
-				maxBodyBytes: MAX_MCP_BODY_BYTES,
-			})
-		: undefined,
+	mcp:
+		server && !demo
+			? mcpOverHttp({
+					fetch: (request) =>
+						Promise.resolve(app.fetch(request, { peer: "127.0.0.1" })),
+					maxBodyBytes: MAX_MCP_BODY_BYTES,
+				})
+			: undefined,
 	loraQuota: config.loraQuota ?? undefined,
-	agents: new Agents(() =>
-		agentsSetup(
-			// The npm package finds its own resources; agents run it by name.
-			!values.resources && resources
-				? { dataDir: values["data-dir"], npmPackage: "hatchlight" }
-				: { dataDir: values["data-dir"], resources },
-		),
-	),
+	agents: demo
+		? undefined
+		: new Agents(() =>
+				agentsSetup(
+					// The npm package finds its own resources; agents run it by name.
+					!values.resources && resources
+						? { dataDir: values["data-dir"], npmPackage: "hatchlight" }
+						: { dataDir: values["data-dir"], resources },
+				),
+			),
 });
 
 if (!values.dev) {
@@ -254,7 +286,28 @@ await writeServerInfo(dataDir, {
 const say = (line: string) => writeSync(1, `${line}\n`);
 // The desktop app reads this line; a server also says where it listens.
 say(`Hatchlight is running at ${url}`);
-if (server) {
+if (demo) {
+	say(`Listening on ${config.host}:${listener.port}`);
+	say(
+		`Public demo: no accounts; pictures and sessions are deleted after ${demo.ttlHours} hours`,
+	);
+	// Visitors only use what is installed: the demo's model is installed now.
+	void installDemoModel(runtime.models, demo.model, say);
+	// What visitors made goes after its time, as do visitors who left.
+	const sweep = () =>
+		runtime
+			.sweepVisitors(Date.now() - demo.ttlHours * 60 * 60 * 1000)
+			.then(({ sessions, assets, visitors }) => {
+				if (sessions + assets + visitors > 0) {
+					say(
+						`Demo cleanup: ${sessions} sessions, ${assets} pictures and ${visitors} visitors deleted`,
+					);
+				}
+			})
+			.catch((error) => console.error("Demo cleanup failed:", error));
+	void sweep();
+	setInterval(sweep, 10 * 60 * 1000);
+} else if (server) {
 	say(`Listening on ${config.host}:${listener.port}`);
 	// Only whoever can read this log can make the first account.
 	const code = runtime.accounts.setupCode();

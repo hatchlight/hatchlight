@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import {
+	addressKey,
 	ConfigError,
+	DEFAULT_DEMO_MODEL,
 	hostName,
 	inBlocks,
 	isLoopback,
@@ -20,6 +22,7 @@ test("personal mode is the default and keeps to loopback", () => {
 		transport: null,
 		loraQuota: null,
 		assetQuotaBytes: null,
+		demo: null,
 	});
 	// The network settings mean nothing to a personal install.
 	expect(
@@ -73,6 +76,169 @@ test("server mode listens everywhere and needs its public address", () => {
 		server({ HATCHLIGHT_PUBLIC_URL: "http://nas.local:4096" }).transport
 			?.publicOrigin,
 	).toBe("http://nas.local:4096");
+});
+
+test("demo mode listens everywhere, at its public address, with limits", () => {
+	expect(() => serverConfig({ mode: "demo" }, {})).toThrow(
+		/HATCHLIGHT_PUBLIC_URL/,
+	);
+	const config = serverConfig(
+		{},
+		{
+			HATCHLIGHT_MODE: "demo",
+			HATCHLIGHT_PUBLIC_URL: "https://demo.example",
+		},
+	);
+	expect(config.mode).toBe("demo");
+	expect(config.host).toBe("0.0.0.0");
+	expect(config.transport).toEqual({
+		publicOrigin: "https://demo.example",
+		allowedHosts: ["demo.example"],
+		trustedProxies: [],
+	});
+	// No accounts: nobody adds LoRAs or has room of their own.
+	expect(config.loraQuota).toBeNull();
+	expect(config.demo).toEqual({
+		model: DEFAULT_DEMO_MODEL,
+		ttlHours: 24,
+		picturesPerHour: 20,
+		picturesPerHourPerIp: 60,
+		visitorsPerHourPerIp: 30,
+		totalPicturesPerHour: 1000,
+		totalVisitorsPerHour: 1000,
+		requestsPerMinutePerIp: 600,
+		maxQueue: 50,
+		minFreeBytes: 2 * 1024 ** 3,
+		maxBatch: 2,
+		maxSeconds: 4,
+		frameAncestors: [],
+	});
+	expect(
+		serverConfig(
+			{ mode: "demo" },
+			{
+				HATCHLIGHT_PUBLIC_URL: "https://demo.example",
+				HATCHLIGHT_DEMO_MODEL: "z-image",
+				HATCHLIGHT_DEMO_TTL_HOURS: "6",
+				HATCHLIGHT_DEMO_PICTURES_PER_HOUR: "5",
+				HATCHLIGHT_DEMO_PICTURES_PER_HOUR_PER_IP: "10",
+				HATCHLIGHT_DEMO_VISITORS_PER_HOUR_PER_IP: "3",
+				HATCHLIGHT_DEMO_TOTAL_PICTURES_PER_HOUR: "100",
+				HATCHLIGHT_DEMO_TOTAL_VISITORS_PER_HOUR: "50",
+				HATCHLIGHT_DEMO_REQUESTS_PER_MINUTE_PER_IP: "120",
+				HATCHLIGHT_DEMO_MAX_QUEUE: "8",
+				HATCHLIGHT_DEMO_MIN_FREE_GB: "0.5",
+				HATCHLIGHT_DEMO_MAX_BATCH: "1",
+				HATCHLIGHT_DEMO_MAX_SECONDS: "2",
+				HATCHLIGHT_FRAME_ANCESTORS: "https://embed.example",
+			},
+		).demo,
+	).toEqual({
+		model: "z-image",
+		ttlHours: 6,
+		picturesPerHour: 5,
+		picturesPerHourPerIp: 10,
+		visitorsPerHourPerIp: 3,
+		totalPicturesPerHour: 100,
+		totalVisitorsPerHour: 50,
+		requestsPerMinutePerIp: 120,
+		maxQueue: 8,
+		minFreeBytes: 0.5 * 1024 ** 3,
+		maxBatch: 1,
+		maxSeconds: 2,
+		frameAncestors: ["https://embed.example"],
+	});
+	for (const [name, value] of [
+		["HATCHLIGHT_DEMO_TTL_HOURS", "0"],
+		["HATCHLIGHT_DEMO_PICTURES_PER_HOUR", "many"],
+		["HATCHLIGHT_DEMO_MAX_BATCH", "-1"],
+		["HATCHLIGHT_FRAME_ANCESTORS", "http://embed.example"],
+		["HATCHLIGHT_FRAME_ANCESTORS", "https://embed.example/path"],
+	] as const) {
+		expect(() =>
+			serverConfig(
+				{ mode: "demo" },
+				{ HATCHLIGHT_PUBLIC_URL: "https://demo.example", [name]: value },
+			),
+		).toThrow(ConfigError);
+	}
+});
+
+test("a demo on a Hugging Face Space takes its address from SPACE_HOST", () => {
+	const config = serverConfig(
+		{ mode: "demo" },
+		{ SPACE_HOST: "someone-hatchlight.hf.space" },
+	);
+	expect(config.transport?.publicOrigin).toBe(
+		"https://someone-hatchlight.hf.space",
+	);
+	expect(config.transport?.allowedHosts).toEqual([
+		"someone-hatchlight.hf.space",
+	]);
+	// The Space's proxy, on a private network, is believed; a browser is not.
+	const proxies = config.transport?.trustedProxies ?? [];
+	expect(inBlocks("10.16.3.4", proxies)).toBe(true);
+	expect(inBlocks("172.20.0.9", proxies)).toBe(true);
+	expect(inBlocks("203.0.113.7", proxies)).toBe(false);
+	// Shown on huggingface.co, in a frame.
+	expect(config.demo?.frameAncestors).toEqual(["https://huggingface.co"]);
+	// What is set by hand wins.
+	const set = serverConfig(
+		{ mode: "demo" },
+		{
+			SPACE_HOST: "someone-hatchlight.hf.space",
+			HATCHLIGHT_PUBLIC_URL: "https://demo.example",
+			HATCHLIGHT_TRUSTED_PROXIES: "10.1.0.0/16",
+		},
+	);
+	expect(set.transport?.publicOrigin).toBe("https://demo.example");
+	expect(inBlocks("10.16.3.4", set.transport?.trustedProxies ?? [])).toBe(
+		false,
+	);
+	// SPACE_HOST means nothing to a server, which says its address itself.
+	expect(() =>
+		serverConfig(
+			{ mode: "server" },
+			{ SPACE_HOST: "someone-hatchlight.hf.space" },
+		),
+	).toThrow(/HATCHLIGHT_PUBLIC_URL/);
+});
+
+test("limits per address count IPv4 as itself and IPv6 by its /64", () => {
+	expect(addressKey("192.0.2.7")).toBe("192.0.2.7");
+	// IPv4 in IPv6 clothing, however written, is the IPv4.
+	expect(addressKey("::ffff:192.0.2.7")).toBe("192.0.2.7");
+	expect(addressKey("::ffff:c000:207")).toBe("192.0.2.7");
+	expect(addressKey("[::ffff:192.0.2.7]")).toBe("192.0.2.7");
+	// One /64, written long, short, or in capitals.
+	const block = "2001:db8:0:1::/64";
+	for (const address of [
+		"2001:db8:0:1::1",
+		"2001:0DB8:0000:0001:ffff:ffff:ffff:ffff",
+		"2001:db8::1:0:0:0:5",
+		"2001:db8:0:1:1234::%eth0",
+	]) {
+		expect(addressKey(address)).toBe(block);
+	}
+	expect(addressKey("2001:db8:0:2::1")).not.toBe(block);
+	// Not an address: as given.
+	expect(addressKey("unknown")).toBe("unknown");
+});
+
+test("forwarded scheme and host are the ones the nearest proxy added", () => {
+	const proxies = [{ bytes: parseIp("10.0.0.1") as Uint8Array, prefix: 104 }];
+	const seen = requestOrigin(
+		new URL("http://10.0.0.5/api/health"),
+		new Headers({
+			// The browser wrote the first of each; the proxy added the last.
+			"x-forwarded-proto": "http, https",
+			"x-forwarded-host": "evil.example, demo.example",
+		}),
+		"10.0.0.1",
+		proxies,
+	);
+	expect(seen.scheme).toBe("https");
+	expect(seen.host).toBe("demo.example");
 });
 
 test("a public address with more than a scheme and host is refused", () => {

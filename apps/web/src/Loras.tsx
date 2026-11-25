@@ -24,7 +24,7 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { useCan } from "./Accounts";
-import { api } from "./api";
+import { api, useDemo } from "./api";
 import { type I18n, useI18n } from "./i18n";
 import { LinkedLabel } from "./ModelFolders";
 import { ConfirmButton, LABEL, SECTION, TrainPanel } from "./Training";
@@ -51,7 +51,9 @@ export function baseText(t: I18n["t"], base: LoraBase): string {
 }
 
 export function useLoras() {
-	return useQuery({ queryKey: ["loras"], queryFn: api.loras });
+	// A public demo has none, and does not let visitors ask.
+	const demo = useDemo() !== null;
+	return useQuery({ queryKey: ["loras"], queryFn: api.loras, enabled: !demo });
 }
 
 /** One LoRA on the shelf: what it is for, and a way to delete it. */

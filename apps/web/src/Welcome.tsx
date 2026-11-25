@@ -1,8 +1,10 @@
 import type { Media } from "@hatchlight/core/types";
+import { useQuery } from "@tanstack/react-query";
 import { type CSSProperties, useState } from "react";
 import { Mark } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { api, useDemo } from "./api";
 import { type Draft, rememberModels } from "./Composer";
 import { useI18n } from "./i18n";
 import { Picker } from "./Picker";
@@ -104,6 +106,9 @@ export function Welcome(props: {
 }) {
 	const { t } = useI18n();
 	const [media, setMedia] = useState<Media>("image");
+	// A visitor of a public demo has its one model, on the demo's server:
+	// nothing of this computer to show, and nothing else to choose.
+	if (useDemo()) return <DemoWelcome {...props} />;
 
 	return (
 		<div className="relative flex flex-col gap-10 py-6 md:py-12">
@@ -142,6 +147,62 @@ export function Welcome(props: {
 			>
 				{t("welcome.skip")}
 			</Button>
+		</div>
+	);
+}
+
+/** The first screen of a public demo: straight to a prompt for its model. */
+function DemoWelcome(props: {
+	busy: boolean;
+	error: string | null;
+	onSubmit(draft: Draft): void;
+	onSkip(): void;
+}) {
+	const { t } = useI18n();
+	const models = useQuery({ queryKey: ["models"], queryFn: api.models });
+	const model = models.data?.[0];
+
+	return (
+		<div className="relative flex flex-col gap-10 py-6 md:py-12">
+			<div className="sky" aria-hidden="true" />
+			<header className="rise-in relative flex flex-col items-start gap-5">
+				<Mark className="h-14 md:h-16" />
+				<h1 className="max-w-[16ch] font-display text-[44px] leading-[0.95] font-extrabold tracking-[-0.03em] text-balance sm:text-7xl">
+					{t("demo.welcomeTitle")}{" "}
+					<span className="text-soft">{t("demo.welcomeTitleAccent")}</span>
+				</h1>
+				{!models.isPending && (
+					<p className="max-w-[58ch] text-[17px] leading-relaxed text-soft">
+						{model
+							? t("demo.welcomeLede", { model: model.name })
+							: t("demo.modelNotReady")}
+					</p>
+				)}
+			</header>
+
+			{model && (
+				<div className="rise-in relative flex flex-col gap-3 rounded-2xl border border-line-strong bg-panel/90 p-4">
+					<p className="font-display text-lg font-bold tracking-tight">
+						{t("picker.readyWith", { model: model.name })}
+					</p>
+					<FirstPrompt
+						modelId={model.id}
+						busy={props.busy}
+						error={props.error}
+						onSubmit={props.onSubmit}
+					/>
+				</div>
+			)}
+
+			{model && (
+				<Button
+					variant="link"
+					onClick={props.onSkip}
+					className="rise-in relative h-10 self-start px-0 text-dim decoration-line-strong underline-offset-4 hover:text-ink"
+				>
+					{t("welcome.skip")}
+				</Button>
+			)}
 		</div>
 	);
 }

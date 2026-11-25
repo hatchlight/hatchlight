@@ -10,6 +10,7 @@ with requirements, first run, backups and troubleshooting, is
 | [`compose.tailscale.yaml`](compose.tailscale.yaml) | On your tailnet with HTTPS, nothing published (recommended) |
 | [`compose.caddy.yaml`](compose.caddy.yaml)         | Under your domain, with HTTPS from Caddy                    |
 | [`unraid/hatchlight.xml`](unraid/hatchlight.xml)   | An Unraid template                                          |
+| [`huggingface/`](huggingface/README.md)            | A public demo as a Hugging Face Space, no accounts          |
 
 A Cloudflare Tunnel and TrueNAS SCALE are covered in the guide.
 

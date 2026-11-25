@@ -38,6 +38,10 @@
 	},
 	"overrides": [
 		{
+			"includes": ["deploy/huggingface/README.md"],
+			"formatter": { "enabled": false }
+		},
+		{
 			"includes": ["apps/site/src/page.html", "apps/site/src/compare.html"],
 			"linter": {
 				"rules": {
