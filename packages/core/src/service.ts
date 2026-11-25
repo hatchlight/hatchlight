@@ -61,7 +61,10 @@ export function adaptParams(
 					{ model: model.name, count: caps.maxReferenceImages },
 				);
 	}
-	if (caps.upscale != null && params.referenceAssetIds.length === 0) {
+	if (
+		(caps.upscale != null || caps.needsReference) &&
+		params.referenceAssetIds.length === 0
+	) {
 		throw new ValidationError(
 			`${model.name} needs a picture to work on`,
 			"needsPicture",
@@ -84,6 +87,32 @@ export function adaptParams(
 			);
 		}
 	}
+	const guide = params.guide;
+	if (guide) {
+		if (caps.guide == null) {
+			throw new ValidationError(
+				`${model.name} cannot follow a guide picture`,
+				"noGuide",
+				{ model: model.name },
+			);
+		}
+		if (!caps.guide.kinds.includes(guide.kind)) {
+			throw new ValidationError(
+				`${model.name} cannot follow a guide of this kind`,
+				"guideKindUnsupported",
+				{ model: model.name },
+			);
+		}
+		// Outlines can be found in any picture; a pose or depth map, only by
+		// models that make one.
+		if (!guide.ready && !caps.guide.makesMaps.includes(guide.kind)) {
+			throw new ValidationError(
+				`${model.name} cannot make this map itself: give a picture that already is one`,
+				"guideNeedsMap",
+				{ model: model.name },
+			);
+		}
+	}
 	const durations = caps.durations ?? [];
 	// Always explicit, so the stored parameters say what was actually asked for.
 	// Unasked, the shortest: providers bill video by the second.
@@ -97,11 +126,13 @@ export function adaptParams(
 				: durations.reduce((best, d) =>
 						Math.abs(d - wanted) < Math.abs(best - wanted) ? d : best,
 					),
-		// A redrawn picture keeps its reference's shape, whatever was asked.
+		// A redrawn picture keeps its reference's shape, and a guided one its
+		// guide's, whatever was asked.
 		aspectRatio:
 			params.aspectRatio &&
 			caps.aspectRatios.includes(params.aspectRatio) &&
-			!(caps.strength != null && params.referenceAssetIds.length > 0)
+			!(caps.strength != null && params.referenceAssetIds.length > 0) &&
+			!guide
 				? params.aspectRatio
 				: undefined,
 		seed: caps.seed ? params.seed : undefined,
@@ -116,6 +147,11 @@ export function adaptParams(
 		// Only for models that take LoRAs, so one prompt can still go to
 		// models that do not; the provider checks each is of their family.
 		loras: caps.loraBase && params.loras?.length ? params.loras : undefined,
+		// Always said, like the strength: unasked, it is the model's own.
+		guide:
+			guide && caps.guide
+				? { ...guide, strength: guide.strength ?? caps.guide.strength }
+				: undefined,
 	};
 }
 
@@ -249,6 +285,7 @@ export class ReelService {
 		const marked = [
 			...params.referenceAssetIds,
 			...(params.maskAssetId != null ? [params.maskAssetId] : []),
+			...(params.guide ? [params.guide.assetId] : []),
 		];
 		const references = await this.deps.repo.getAssets(ctx, marked);
 		if (references.length !== new Set(marked).size) {

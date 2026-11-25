@@ -103,6 +103,21 @@ const REDRAW: LocalModelSpec = {
 	defaults: { ...FLUX.defaults, references: { as: "init", max: 1 } },
 };
 
+/** A picture model that follows a guide picture, as Z-Image Turbo guided does. */
+const GUIDED: LocalModelSpec = {
+	...FLUX,
+	id: "guided",
+	defaults: {
+		...FLUX.defaults,
+		steps: 8,
+		guide: {
+			kinds: ["outlines", "pose", "depth"],
+			makesMaps: ["outlines"],
+			strength: 0.75,
+		},
+	},
+};
+
 const runtime = (
 	model: LocalModelSpec,
 	scratch = "/scratch",
@@ -404,6 +419,78 @@ describe("engine arguments", () => {
 		const started = performance.now();
 		expect(loraPrompt(prompt, [])).toBe(prompt);
 		expect(performance.now() - started).toBeLessThan(500);
+	});
+
+	test("a guide picture is followed only when one is given, its outlines found by the engine", async () => {
+		const guided = {
+			...runtime(GUIDED),
+			files: { diffusion_model: "/m/z", control_net: "/m/control" },
+		};
+		const argsFor = (guide: object | undefined, file?: string) =>
+			engineArguments(
+				guided,
+				GUIDED.defaults,
+				params(guide && { guide }),
+				"/o.png",
+				windows,
+				[],
+				{ width: 1024, height: 576 },
+				undefined,
+				[],
+				file,
+			);
+		const outlines = await argsFor(
+			{ assetId: "g", kind: "outlines", ready: false },
+			"/s/guide.png",
+		);
+		const after = (args: string[], flag: string) =>
+			args[args.indexOf(flag) + 1];
+		expect(after(outlines, "--control-net")).toBe("C:\\m\\control");
+		expect(after(outlines, "--control-image")).toBe("C:\\s\\guide.png");
+		expect(after(outlines, "--control-strength")).toBe("0.75");
+		expect(after(outlines, "--image-preprocess")).toBe(
+			"target=control,canny=true",
+		);
+		expect([after(outlines, "-W"), after(outlines, "-H")]).toEqual([
+			"1024",
+			"576",
+		]);
+		// A ready map goes as it is, as closely as asked.
+		const pose = await argsFor(
+			{ assetId: "g", kind: "pose", ready: true, strength: 0.5 },
+			"/s/guide.png",
+		);
+		expect(after(pose, "--control-strength")).toBe("0.5");
+		expect(pose).not.toContain("--image-preprocess");
+		const map = await argsFor(
+			{ assetId: "g", kind: "outlines", ready: true },
+			"/s/guide.png",
+		);
+		expect(map).not.toContain("--image-preprocess");
+		// Without a guide, the model runs as the plain one does.
+		for (const args of [
+			await argsFor(undefined),
+			await argsFor({ assetId: "g", kind: "outlines", ready: false }),
+		]) {
+			expect(args).not.toContain("--control-image");
+			expect(args).not.toContain("--control-strength");
+			expect(args).not.toContain("--image-preprocess");
+		}
+		// Nor does a model that follows none, given one.
+		const plain = await engineArguments(
+			runtime(FLUX),
+			FLUX.defaults,
+			params({ guide: { assetId: "g", kind: "outlines", ready: false } }),
+			"/o.png",
+			windows,
+			[],
+			undefined,
+			undefined,
+			[],
+			"/s/guide.png",
+		);
+		expect(plain).not.toContain("--control-image");
+		expect(roleOption("control_net")).toBe("--control-net");
 	});
 
 	test("a file with an unknown role is refused rather than guessed", async () => {
@@ -1003,6 +1090,154 @@ describe("running", () => {
 			"/s/mask.png",
 		);
 		expect(words).not.toContain("--mask");
+	});
+
+	test("a guide picture reaches the engine at the size to make, then is removed", async () => {
+		const { provider, fake, calls, dir } = await setup(GUIDED);
+		let given: Uint8Array = new Uint8Array();
+		const spawn: Spawn = (argv) => {
+			given = new Uint8Array(
+				readFileSync(argv[argv.indexOf("--control-image") + 1] as string),
+			);
+			return fake([])(argv);
+		};
+		const local = provider(spawn);
+		await local.load();
+		const [model] = local.listModels();
+		expect(model?.capabilities.guide).toEqual({
+			kinds: ["outlines", "pose", "depth"],
+			makesMaps: ["outlines"],
+			strength: 0.75,
+		});
+		expect(model?.capabilities.maxReferenceImages).toBe(0);
+		const handle = await local.submit({
+			model: model as never,
+			params: params({
+				guide: { assetId: "g", kind: "outlines", ready: false },
+			}),
+			references: [],
+			guide: { data: picture(900, 1600), mime: "image/png" },
+		});
+		const events: ProviderEvent[] = [];
+		for await (const event of local.events(handle, {
+			apiKey: undefined,
+			signal: new AbortController().signal,
+		})) {
+			events.push(event);
+		}
+		expect(events.at(-1)?.type).toBe("completed");
+		const argv = calls[0] ?? [];
+		const after = (flag: string) => argv[argv.indexOf(flag) + 1];
+		// The model's ratio nearest the guide's (1:1 of 1:1 and 16:9), at its
+		// size, as three channels with nothing transparent: a JPEG.
+		expect([after("-W"), after("-H")]).toEqual(["1024", "1024"]);
+		expect(await new Bun.Image(given).metadata()).toMatchObject({
+			width: 1024,
+			height: 1024,
+			format: "jpeg",
+		});
+		expect(after("--image-preprocess")).toBe("target=control,canny=true");
+		expect(await readdir(dir)).toEqual([]);
+	});
+
+	test("a guide of an odd shape takes the nearest ratio the model makes", async () => {
+		const { provider } = await setup(GUIDED);
+		const local = provider(() => {
+			throw new Error("not run");
+		});
+		await local.load();
+		const [model] = local.listModels();
+		const handle = await local.submit({
+			model: model as never,
+			params: params({
+				guide: { assetId: "g", kind: "outlines", ready: false },
+			}),
+			references: [],
+			guide: { data: picture(2000, 100), mime: "image/png" },
+		});
+		// 20:1 is nearest 16:9 here, not a 1024x64 sliver.
+		expect(handle.size).toEqual({ width: 1024, height: 576 });
+	});
+
+	test("a guide picture goes to the model kept loaded", async () => {
+		const { store, dir } = await setup(GUIDED);
+		const executable = join(dir, "sd-cli");
+		await Bun.write(join(dir, "sd-server"), "");
+		const budgeted = {
+			...GUIDED,
+			defaults: { ...GUIDED.defaults, vramBudget: true },
+		};
+		store.runtime = async () => ({
+			...runtime(budgeted, dir),
+			files: { diffusion_model: "/m/z", control_net: "/m/control" },
+			executable,
+			throughWindows: false,
+			gpuMemoryBytes: 12_282 * 2 ** 20,
+		});
+		const asked: { argv: string[]; request: WarmRequest }[] = [];
+		const warm = {
+			loaded: null,
+			unused: true,
+			stop() {},
+			async stopAndWait() {},
+			async *run(_key: string, argv: string[], request: WarmRequest) {
+				asked.push({ argv, request });
+				yield {
+					type: "completed" as const,
+					outputs: [{ data: PNG, mime: "image/png" }],
+					costUsd: 0,
+				};
+			},
+		};
+		const local = new LocalProvider({
+			store: store as never,
+			catalog: [GUIDED],
+			spawn: () => {
+				throw new Error("the engine is not run once");
+			},
+			warm: warm as never,
+			freeMemory: async () => null,
+		});
+		await local.load();
+		const [model] = local.listModels();
+		const runJob = async (over: object) => {
+			const handle = await local.submit({
+				model: model as never,
+				params: params(over),
+				references: [],
+				...("guide" in over && {
+					guide: { data: picture(1600, 900), mime: "image/png" },
+				}),
+			});
+			for await (const _ of local.events(handle, {
+				apiKey: undefined,
+				signal: new AbortController().signal,
+			})) {
+				// Run to the end.
+			}
+		};
+		await runJob({
+			guide: { assetId: "g", kind: "depth", ready: true, strength: 0.6 },
+		});
+		await runJob({});
+		const [guided, plain] = asked;
+		expect(guided?.argv).toContain("--control-net");
+		// The server keeps the model within the same memory budget.
+		expect(guided?.argv[(guided?.argv.indexOf("--max-vram") ?? 0) + 1]).toBe(
+			"8",
+		);
+		expect(guided?.request.controlImage?.length).toBeGreaterThan(0);
+		const sent = Buffer.from(guided?.request.controlImage ?? "", "base64");
+		expect(await new Bun.Image(sent).metadata()).toMatchObject({
+			format: "jpeg",
+		});
+		expect(guided?.request.controlStrength).toBe(0.6);
+		expect(guided?.request.imagePreprocess).toBeUndefined();
+		expect([guided?.request.width, guided?.request.height]).toEqual([
+			1024, 576,
+		]);
+		expect(plain?.request.controlImage).toBeUndefined();
+		expect(plain?.request.controlStrength).toBeUndefined();
 	});
 
 	test("a picture to redraw that cannot be read is refused, saying so", async () => {

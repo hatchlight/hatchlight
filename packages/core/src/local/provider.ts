@@ -45,6 +45,8 @@ export interface LocalHandle {
 	size?: { width: number; height: number };
 	/** What of the picture to redraw, made ready for the engine. */
 	mask?: Uint8Array;
+	/** The guide picture, at the size to make. */
+	guide?: Uint8Array;
 	/**
 	 * LoRAs checked against the model. Found by id when the job runs: the
 	 * models folder may have moved since.
@@ -196,6 +198,7 @@ const ROLE_OPTIONS: Record<string, string> = {
 	tokenizer: "--tokenizer",
 	upscale_model: "--upscale-model",
 	"embeddings-connectors": "--embeddings-connectors",
+	control_net: "--control-net",
 };
 
 /** The engine option for a file's role; an unknown role is refused, not guessed. */
@@ -242,6 +245,25 @@ export function dimensions(
 	return w >= h
 		? { width: round(size), height: round((size * h) / w) }
 		: { width: round((size * w) / h), height: round(size) };
+}
+
+/** The ratio a model offers nearest the size asked for. */
+export function nearestRatio(
+	ratios: string[],
+	width: number | undefined,
+	height: number | undefined,
+): string | undefined {
+	if (!width || !height || width <= 0 || height <= 0) return undefined;
+	const wanted = Math.log(width / height);
+	const off = (ratio: string) => {
+		const [w = 1, h = 1] = ratio.split(":").map(Number);
+		return Math.abs(Math.log(w / h) - wanted);
+	};
+	return ratios.reduce<string | undefined>(
+		(best, ratio) =>
+			best === undefined || off(ratio) < off(best) ? ratio : best,
+		undefined,
+	);
 }
 
 /** A picture model that starts from a picture: image-to-image. */
@@ -299,6 +321,24 @@ export function shape(
 	return { width, height, redrawing, masked, strength, steps };
 }
 
+/**
+ * How the engine follows a job's guide picture, the same whether it runs
+ * once or is kept loaded; null when there is none to follow.
+ */
+export function guideOptions(
+	defaults: LocalModelDefaults,
+	params: GenerationParams,
+): { strength: number; preprocess?: string } | null {
+	const guide = params.guide;
+	if (!guide || !defaults.guide) return null;
+	return {
+		strength: guide.strength ?? defaults.guide.strength,
+		// The engine finds the outlines of any picture; other maps come made.
+		...(guide.kind === "outlines" &&
+			!guide.ready && { preprocess: "target=control,canny=true" }),
+	};
+}
+
 /** The engine's arguments for one job, with paths as the engine sees them. */
 export async function engineArguments(
 	runtime: LocalRuntime,
@@ -313,6 +353,8 @@ export async function engineArguments(
 	mask?: string,
 	/** LoRAs to add; all in one folder. */
 	loras: EngineLora[] = [],
+	/** The guide picture, at the size to make. */
+	guide?: string,
 ): Promise<string[]> {
 	if (defaults.upscale != null) {
 		const [picture] = references;
@@ -366,6 +408,16 @@ export async function engineArguments(
 	}
 	if (redrawing) args.push("--strength", String(strength));
 	if (masked && mask) args.push("--mask", await path(mask));
+	const guided = guide != null ? guideOptions(defaults, params) : null;
+	if (guide != null && guided) {
+		args.push(
+			"--control-image",
+			await path(guide),
+			"--control-strength",
+			String(guided.strength),
+		);
+		if (guided.preprocess) args.push("--image-preprocess", guided.preprocess);
+	}
 	const [lora] = loras;
 	if (lora) args.push("--lora-model-dir", await path(dirname(lora.path)));
 	args.push(...modelOptions(runtime));
@@ -689,6 +741,7 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 					}),
 					...(model.englishPrompts && { englishPrompts: true }),
 					...(model.loraBase && { loraBase: model.loraBase }),
+					...(model.defaults.guide && { guide: model.defaults.guide }),
 				},
 				pricing: { usdPerOutput: 0 },
 				...(model.profile && { profile: model.profile }),
@@ -705,9 +758,6 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 		const loras = request.params.loras ?? [];
 		if (spec && loras.length > 0)
 			handle.loras = await this.checkLoras(spec, loras);
-		const max = spec?.defaults.references?.max ?? 0;
-		if (!spec || request.references.length === 0 || max === 0) return handle;
-		const [first] = request.references;
 		const readable = (data: Uint8Array) => {
 			const picture = new Bun.Image(data);
 			return picture
@@ -720,6 +770,25 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 					);
 				});
 		};
+		if (spec?.defaults.guide && request.guide && request.params.guide) {
+			// The new picture takes the model's ratio nearest the guide's, at
+			// the model's size: a guide of an odd shape makes no sliver.
+			const { picture, width, height } = await readable(request.guide.data);
+			const size = dimensions(
+				spec.defaults.size,
+				nearestRatio(spec.defaults.aspectRatios, width, height),
+			);
+			handle.size = size;
+			// As JPEG at full quality: three channels, as the engine reads a
+			// guide, with no transparency to read one way or another.
+			handle.guide = await picture
+				.resize(size.width, size.height, { fit: "fill" })
+				.jpeg({ quality: 100 })
+				.bytes();
+		}
+		const max = spec?.defaults.references?.max ?? 0;
+		if (!spec || request.references.length === 0 || max === 0) return handle;
+		const [first] = request.references;
 		if (spec.defaults.upscale != null && first) {
 			// As a PNG the engine surely reads, no larger than it can take.
 			const { picture, width, height } = await readable(first.data);
@@ -865,6 +934,7 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 				? pictures.slice(0, defaults.references.max)
 				: [];
 			const asInit = defaults.references?.as === "init";
+			const guided = guideOptions(defaults, handle.params);
 			const argv = [server];
 			for (const [role, file] of Object.entries(runtime.files)) {
 				argv.push(roleOption(role), file);
@@ -890,6 +960,14 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 								maskImage: Buffer.from(handle.mask).toString("base64"),
 							}),
 						...(redrawing && { strength }),
+						...(guided &&
+							handle.guide && {
+								controlImage: Buffer.from(handle.guide).toString("base64"),
+								controlStrength: guided.strength,
+								...(guided.preprocess && {
+									imagePreprocess: guided.preprocess,
+								}),
+							}),
 						cfgScale: defaults.cfgScale,
 						sampler: defaults.sampler,
 						flowShift: defaults.flowShift,
@@ -922,6 +1000,7 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 				references.push(await write(picture.data, `.${picture.extension}`));
 			}
 			const mask = handle.mask && (await write(handle.mask, "-mask.png"));
+			const guide = handle.guide && (await write(handle.guide, "-guide.jpg"));
 			const hold = yield* this.store.gpu.acquire(
 				runtime.variant.memoryBytes,
 				ctx.signal,
@@ -934,7 +1013,16 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 				yield* this.warnIfSlow(runtime, ctx.signal, () =>
 					warm ? warm.unloadedBytes : 0,
 				);
-				yield* this.once(runtime, handle, ctx, output, path, references, mask);
+				yield* this.once(
+					runtime,
+					handle,
+					ctx,
+					output,
+					path,
+					references,
+					mask,
+					guide,
+				);
 			} finally {
 				hold.release();
 			}
@@ -997,6 +1085,7 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 		path: PathMapper,
 		references: string[],
 		mask: string | undefined,
+		guide: string | undefined,
 	): AsyncIterable<ProviderEvent> {
 		const loras = await this.engineLoras(handle, runtime);
 		try {
@@ -1009,6 +1098,7 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 				references,
 				mask,
 				loras.loras,
+				guide,
 			);
 		} finally {
 			await loras.done();
@@ -1024,6 +1114,7 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 		references: string[],
 		mask: string | undefined,
 		loras: EngineLora[],
+		guide: string | undefined,
 	): AsyncIterable<ProviderEvent> {
 		const video = runtime.model.media === "video";
 		const argv = [
@@ -1038,6 +1129,7 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 				handle.size,
 				mask,
 				loras,
+				guide,
 			)),
 		];
 		// The engine writes the picture as it forms, numbered from 000.

@@ -94,6 +94,101 @@ test("editing uses the edit endpoint and sends the references", async () => {
 	});
 });
 
+test("a guide picture switches Z-Image Turbo to its ControlNet, which makes the map", async () => {
+	const { fetch, calls } = scripted([
+		[200, SUBMITTED],
+		[200, SUBMITTED],
+		[200, SUBMITTED],
+	]);
+	const fal = new FalProvider(fetch, 0);
+	const zImage = model(fal, "fal/fal-ai/z-image/turbo");
+	// Priced by endpoint: plain, and following a guide.
+	expect(zImage.pricing).toEqual({
+		usdPerOutput: 0.005,
+		usdPerGuidedOutput: 0.0065,
+	});
+	expect(zImage.capabilities.guide).toEqual({
+		kinds: ["outlines", "pose", "depth"],
+		makesMaps: ["outlines", "pose", "depth"],
+		strength: 0.75,
+	});
+	const guide = { data: new Uint8Array([1, 2, 3]), mime: "image/png" };
+	await fal.submit(
+		{
+			model: zImage,
+			params: params({
+				guide: { assetId: "g", kind: "pose", ready: false, strength: 0.6 },
+			}),
+			references: [],
+			guide,
+		},
+		ctx(),
+	);
+	await fal.submit(
+		{
+			model: zImage,
+			params: params({
+				guide: { assetId: "g", kind: "depth", ready: true, strength: 0.75 },
+			}),
+			references: [],
+			guide,
+		},
+		ctx(),
+	);
+	await fal.submit(
+		{ model: zImage, params: params({ aspectRatio: "16:9" }), references: [] },
+		ctx(),
+	);
+	expect(calls[0]?.url).toBe(
+		"https://queue.fal.run/fal-ai/z-image/turbo/controlnet",
+	);
+	expect(calls[0]?.body).toEqual({
+		prompt: "a red fox",
+		num_images: 1,
+		output_format: "png",
+		image_url: "data:image/png;base64,AQID",
+		preprocess: "pose",
+		control_scale: 0.6,
+	});
+	// A ready map is used as it is.
+	expect(calls[1]?.body).toMatchObject({
+		preprocess: "none",
+		control_scale: 0.75,
+	});
+	// Without a guide, the plain model, at the ratio asked.
+	expect(calls[2]?.url).toBe("https://queue.fal.run/fal-ai/z-image/turbo");
+	expect(calls[2]?.body).toMatchObject({ image_size: "landscape_16_9" });
+	expect(Object.keys(calls[2]?.body as object)).not.toContain("image_url");
+});
+
+test("Ideogram Character keeps the person in its one reference", async () => {
+	const { fetch, calls } = scripted([[200, SUBMITTED]]);
+	const fal = new FalProvider(fetch, 0);
+	const character = model(fal, "fal/fal-ai/ideogram/character");
+	expect(character.capabilities.maxReferenceImages).toBe(1);
+	// Never from words alone, so it is never chosen without a picture.
+	expect(character.operations).toEqual(["edit"]);
+	expect(character.capabilities.needsReference).toBe(true);
+	await fal.submit(
+		{
+			model: character,
+			params: params({ aspectRatio: "3:4" }),
+			references: [{ data: new Uint8Array([1, 2, 3]), mime: "image/jpeg" }],
+		},
+		ctx(),
+	);
+	expect(calls[0]?.url).toBe("https://queue.fal.run/fal-ai/ideogram/character");
+	expect(calls[0]?.body).toMatchObject({
+		reference_image_urls: ["data:image/jpeg;base64,AQID"],
+		image_size: "portrait_4_3",
+	});
+	// Without one there is nobody to keep: refused before anything is sent.
+	await expect(
+		fal.submit({ model: character, params: params(), references: [] }, ctx()),
+	).rejects.toMatchObject({ code: "needsPicture" });
+	expect(calls).toHaveLength(1);
+});
+
 test("a rejected submission surfaces fal's message", async () => {
 	const { fetch } = scripted([[401, { detail: "Invalid key" }]]);
 	const fal = new FalProvider(fetch, 0);

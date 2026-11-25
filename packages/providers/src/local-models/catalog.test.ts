@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chooseVariant, roleOption } from "@hatchlight/core";
+import { chooseVariant, engineArguments, roleOption } from "@hatchlight/core";
 import en from "../../../../apps/web/src/locales/en.json";
 import ptBR from "../../../../apps/web/src/locales/pt-BR.json";
 import { builtinLocalModels } from "./index";
@@ -103,6 +103,156 @@ describe("the local models catalog", () => {
 			expect((en as Record<string, unknown>)[key], key).toBe(model.summary);
 			for (const catalog of catalogs) expect(catalog[key], key).toBeString();
 		}
+	});
+});
+
+describe("Z-Image Turbo, guided", () => {
+	const plain = models.find((m) => m.id === "z-image-turbo");
+	const guided = models.find((m) => m.id === "z-image-turbo-guided");
+
+	test("adds only the control file to Z-Image Turbo's, pinned and hashed", () => {
+		expect(guided?.variants.map((v) => v.id)).toEqual(["q8", "q4"]);
+		for (const variant of guided?.variants ?? []) {
+			const same = plain?.variants.find((v) => v.id === variant.id);
+			// Files with the same hash are stored once: only one is new.
+			const shared = variant.files.filter((f) =>
+				same?.files.some((o) => o.sha256 === f.sha256 && o.size === f.size),
+			);
+			expect(shared).toEqual(same?.files ?? []);
+			const added = variant.files.filter((f) => !shared.includes(f));
+			expect(added).toEqual([
+				{
+					name: "Z-Image-Turbo-Fun-Controlnet-Union-2.1-lite-2602-8steps.safetensors",
+					url: "https://huggingface.co/alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1/resolve/5155fc56d17821007d6f62ac192c09e0f0e72016/Z-Image-Turbo-Fun-Controlnet-Union-2.1-lite-2602-8steps.safetensors",
+					size: 2_016_627_488,
+					sha256:
+						"3ea098db9bd145be525c7e2366920b6d76c5ffd46b3d7aa8169bbc943fdaee35",
+					role: "control_net",
+				},
+			]);
+			expect(roleOption("control_net")).toBe("--control-net");
+			expect(variant.memoryBytes).toBeGreaterThan(same?.memoryBytes ?? 0);
+		}
+	});
+
+	test("runs within a memory budget: on a 12 GB card it fits only so", async () => {
+		expect(guided?.defaults.vramBudget).toBe(true);
+		const variant = guided?.variants.find((v) => v.id === "q8");
+		if (!guided || !variant) throw new Error("no guided model");
+		const card = {
+			model: guided,
+			variant,
+			build: {} as never,
+			executable: "/engines/sd-cli",
+			throughWindows: false,
+			fit: "gpu" as const,
+			files: Object.fromEntries(
+				variant.files.map((f) => [f.role, `/m/${f.name}`]),
+			),
+			scratch: "/scratch",
+			gpuMemoryBytes: 12_282 * 2 ** 20,
+		};
+		const args = await engineArguments(
+			card,
+			guided.defaults,
+			{
+				prompt: "a fox",
+				count: 1,
+				referenceAssetIds: [],
+				extras: {},
+				guide: { assetId: "g", kind: "outlines", ready: false },
+			},
+			"/o.png",
+			async (p) => p,
+			[],
+			{ width: 1024, height: 1024 },
+			undefined,
+			[],
+			"/s/guide.png",
+		);
+		expect(args[args.indexOf("--max-vram") + 1]).toBe("8");
+		expect(args).toContain("--control-net");
+		expect(args).toContain("--control-image");
+	});
+
+	test("is 8-bit on a 12 GB card, where it runs within its budget", () => {
+		const gpu = {
+			vendor: "nvidia" as const,
+			name: "RTX 4070 SUPER",
+			memoryBytes: 12_282 * 2 ** 20,
+		};
+		const choice = chooseVariant(
+			guided?.variants ?? [],
+			{
+				os: "win32",
+				arch: "x64",
+				wsl: false,
+				memoryBytes: 32 * 2 ** 30,
+				gpus: [gpu],
+			},
+			() => ({ build: {} as never, gpu, throughWindows: false }),
+		);
+		expect(choice?.variant.id).toBe("q8");
+		expect(choice?.fit).toBe("gpu");
+	});
+
+	test("follows outlines it finds, and pose or depth from a map", () => {
+		expect(guided?.defaults.guide).toEqual({
+			kinds: ["outlines", "pose", "depth"],
+			makesMaps: ["outlines"],
+			strength: 0.75,
+		});
+		// Its weights are Apache 2.0, like Z-Image Turbo's.
+		expect(guided?.license).toBe("Apache 2.0");
+		expect(guided?.commercial).toEqual({ kind: "allowed" });
+		expect(plain?.defaults.guide).toBeUndefined();
+	});
+});
+
+describe("models that follow pictures on a 12 GB card", () => {
+	test("run within a memory budget, which the engine is given", async () => {
+		for (const id of [
+			"flux-2-klein-4b",
+			"flux-2-klein-base-4b",
+			"qwen-image-edit-2511",
+			"longcat-image-edit",
+			"longcat-image-edit-turbo",
+			"z-image-turbo-guided",
+		]) {
+			expect(models.find((m) => m.id === id)?.defaults.vramBudget, id).toBe(
+				true,
+			);
+		}
+		const klein = models.find((m) => m.id === "flux-2-klein-4b");
+		const variant = klein?.variants.find((v) => v.id === "q8");
+		if (!klein || !variant) throw new Error("no FLUX.2 klein");
+		const args = await engineArguments(
+			{
+				model: klein,
+				variant,
+				build: {} as never,
+				executable: "/engines/sd-cli",
+				throughWindows: false,
+				fit: "gpu",
+				files: Object.fromEntries(
+					variant.files.map((f) => [f.role, `/m/${f.name}`]),
+				),
+				scratch: "/scratch",
+				gpuMemoryBytes: 12_282 * 2 ** 20,
+			},
+			klein.defaults,
+			{
+				prompt: "the same woman, now sitting",
+				count: 1,
+				referenceAssetIds: ["a"],
+				extras: {},
+			},
+			"/o.png",
+			async (p) => p,
+			["/s/person.png"],
+		);
+		expect(args[args.indexOf("--max-vram") + 1]).toBe("8");
+		expect(args[args.indexOf("-r") + 1]).toBe("/s/person.png");
 	});
 });
 

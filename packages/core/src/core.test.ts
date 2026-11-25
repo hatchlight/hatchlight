@@ -223,6 +223,146 @@ describe("turns", () => {
 		).rejects.toMatchObject({ code: "referenceNotFound" });
 	});
 
+	test("a guide picture goes to a model that follows one, checked first", async () => {
+		const app = boot(await tempDir());
+		const guide = await app.service.uploadAsset(LOCAL_USER, PNG);
+		const turn = (modelIds: string[], over: object = {}) =>
+			app.service.createTurn(LOCAL_USER, {
+				prompt: "x",
+				modelIds,
+				aspectRatio: "16:9",
+				guide: { assetId: guide.id, kind: "outlines" },
+				...over,
+			});
+		const { turn: made } = await turn(["fake/alpha"]);
+		await app.engine.idle();
+		expect(app.provider.submitted[0]?.guide).toEqual(PNG);
+		// Said in full, and the guide's shape kept instead of the ratio asked.
+		expect(made.jobs[0]?.params.guide).toEqual({
+			assetId: guide.id,
+			kind: "outlines",
+			ready: false,
+			strength: 0.75,
+		});
+		expect(made.jobs[0]?.params.aspectRatio).toBeUndefined();
+
+		await expect(turn(["fake/alpha", "fake/beta"])).rejects.toMatchObject({
+			code: "noGuide",
+			params: { model: "Fake beta" },
+		});
+		// A pose is found only by models that make the map.
+		await expect(
+			turn(["fake/alpha"], { guide: { assetId: guide.id, kind: "pose" } }),
+		).rejects.toMatchObject({ code: "guideNeedsMap" });
+		await turn(["fake/alpha"], {
+			guide: { assetId: guide.id, kind: "pose", ready: true, strength: 0.5 },
+		});
+		await expect(
+			turn(["fake/alpha"], {
+				guide: { assetId: guide.id, kind: "outlines", strength: 1.5 },
+			}),
+		).rejects.toBeInstanceOf(ValidationError);
+		await expect(
+			turn(["fake/alpha"], { guide: { assetId: guide.id, kind: "edges" } }),
+		).rejects.toBeInstanceOf(ValidationError);
+		await expect(
+			turn(["fake/alpha"], {
+				guide: { assetId: "ast_missing", kind: "outlines" },
+			}),
+		).rejects.toMatchObject({ code: "referenceNotFound" });
+		// Someone else's picture is not found either.
+		const other = { ...LOCAL_USER, userId: "usr_other" };
+		await expect(
+			app.service.createTurn(other, {
+				prompt: "x",
+				modelIds: ["fake/alpha"],
+				guide: { assetId: guide.id, kind: "outlines" },
+			}),
+		).rejects.toMatchObject({ code: "referenceNotFound" });
+	});
+
+	test("a guided picture costs the guided price, and a deleted guide fails a retry clearly", async () => {
+		const app = boot(await tempDir());
+		const guide = await app.service.uploadAsset(LOCAL_USER, PNG);
+		const turn = (over: object = {}) =>
+			app.service.createTurn(LOCAL_USER, {
+				prompt: "x",
+				modelIds: ["fake/alpha"],
+				...over,
+			});
+		const jobOf = async (sessionId: string) =>
+			(await app.service.getSession(LOCAL_USER, sessionId)).turns[0]?.jobs[0];
+		const guided = await turn({
+			guide: { assetId: guide.id, kind: "outlines" },
+		});
+		const plain = await turn();
+		await app.engine.idle();
+		expect((await jobOf(guided.session.id))?.costUsd).toBe(0.02);
+		expect((await jobOf(plain.session.id))?.costUsd).toBe(0.01);
+
+		app.provider.failWith = "down";
+		const again = await turn({
+			guide: { assetId: guide.id, kind: "outlines" },
+		});
+		await app.engine.idle();
+		const failed = await jobOf(again.session.id);
+		expect(failed?.status).toBe("failed");
+		app.provider.failWith = null;
+		await app.service.deleteAsset(LOCAL_USER, guide.id);
+		await app.service.retryJob(LOCAL_USER, failed?.id as string);
+		await app.engine.idle();
+		expect(await jobOf(again.session.id)).toMatchObject({
+			status: "failed",
+			errorCode: "referenceNotFound",
+		});
+	});
+
+	test("a model that needs a reference is refused without one", () => {
+		const model = {
+			...CLIP,
+			capabilities: {
+				...CLIP.capabilities,
+				maxReferenceImages: 1,
+				needsReference: true,
+			},
+		};
+		const params = { prompt: "x", count: 1, extras: {} };
+		expect(() =>
+			adaptParams(model, { ...params, referenceAssetIds: [] }),
+		).toThrow(expect.objectContaining({ code: "needsPicture" }));
+		expect(
+			adaptParams(model, { ...params, referenceAssetIds: ["a"] })
+				.referenceAssetIds,
+		).toEqual(["a"]);
+	});
+
+	test("a model follows only the guide kinds it knows", () => {
+		const params = {
+			prompt: "x",
+			count: 1,
+			referenceAssetIds: [],
+			extras: {},
+			guide: { assetId: "g", kind: "depth" as const, ready: true },
+		};
+		const model = {
+			...CLIP,
+			capabilities: {
+				...CLIP.capabilities,
+				guide: {
+					kinds: ["outlines" as const],
+					makesMaps: ["outlines" as const],
+					strength: 0.75,
+				},
+			},
+		};
+		expect(() => adaptParams(model, params)).toThrow(
+			expect.objectContaining({ code: "guideKindUnsupported" }),
+		);
+		expect(() => adaptParams(CLIP, params)).toThrow(
+			expect.objectContaining({ code: "noGuide" }),
+		);
+	});
+
 	test("an upscaler is refused without a picture to enlarge", () => {
 		const upscaler = {
 			...CLIP,

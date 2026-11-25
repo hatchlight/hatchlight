@@ -3,9 +3,8 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { crc32, deflateSync } from "node:zlib";
-import { FakeProvider, type ModelSpec } from "@hatchlight/core";
+import { FakeProvider, type ModelSpec, nearestRatio } from "@hatchlight/core";
 import { picture, safetensors } from "@hatchlight/core/testing";
-import { nearestRatio } from "./image-api";
 import { createApp, createRuntime } from "./index";
 import { maskPixels } from "./masks";
 

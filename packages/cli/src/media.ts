@@ -3,6 +3,8 @@ import { extname, join, resolve } from "node:path";
 import type { ParseArgsOptionsConfig } from "node:util";
 import {
 	type EngineEvent,
+	GUIDE_KINDS,
+	type GuideKind,
 	type JobView,
 	type ModelSpec,
 	PROMPT_KINDS,
@@ -217,6 +219,46 @@ interface GenerateInput {
 	seed?: number;
 	durationSeconds?: number;
 	strength?: number;
+	/** A picture to follow the outlines, pose or depth of. */
+	guide?: { image: string; kind: GuideKind; ready: boolean; strength?: number };
+}
+
+/** The guide asked for with --guide and its options, checked. */
+function guideOf(values: Values): GenerateInput["guide"] {
+	const kind = values["guide-kind"] as string | undefined;
+	const given = values["guide-strength"] as string | undefined;
+	// An empty value is no number, not 0.
+	const strength =
+		given == null
+			? undefined
+			: given.trim() === ""
+				? Number.NaN
+				: Number(given);
+	if (values.guide == null) {
+		if (kind != null || strength != null || values["guide-map"] === true) {
+			throw new UsageError(
+				"--guide-kind, --guide-map and --guide-strength need --guide.",
+			);
+		}
+		return undefined;
+	}
+	if (kind != null && !(GUIDE_KINDS as readonly string[]).includes(kind)) {
+		throw new UsageError(
+			`--guide-kind takes ${GUIDE_KINDS.join(", ")}, not ${kind}.`,
+		);
+	}
+	if (
+		strength != null &&
+		!(Number.isFinite(strength) && strength >= 0 && strength <= 1)
+	) {
+		throw new UsageError("--guide-strength takes a number from 0 to 1.");
+	}
+	return {
+		image: values.guide as string,
+		kind: (kind as GuideKind | undefined) ?? "outlines",
+		ready: values["guide-map"] === true,
+		...(strength != null && { strength }),
+	};
 }
 
 /** Makes a turn and, unless told not to, follows it to the end. */
@@ -254,6 +296,9 @@ async function make(
 	if (paid > 0) io.err(`This may cost about ${money(paid)}.`);
 
 	const referenceIds = await references(api, io, input.references);
+	const [guideId] = input.guide
+		? await references(api, io, [input.guide.image])
+		: [];
 	// Listened to before the turn starts, so no progress is missed.
 	const listening = new AbortController();
 	const progress = new Map<string, Progress>();
@@ -284,6 +329,17 @@ async function make(
 				durationSeconds: input.durationSeconds,
 			}),
 			...(input.strength != null && { strength: input.strength }),
+			...(input.guide &&
+				guideId && {
+					guide: {
+						assetId: guideId,
+						kind: input.guide.kind,
+						ready: input.guide.ready,
+						...(input.guide.strength != null && {
+							strength: input.guide.strength,
+						}),
+					},
+				}),
 		});
 
 		let jobs = turn.jobs;
@@ -483,6 +539,13 @@ Makes pictures or videos, waits for them, and prints their ids. Without
   --ratio <r>       Aspect ratio, such as 16:9
   --seed <n>        A seed, to make the same again
   --strength <s>    How much a given picture changes, 0.05 to 1
+  --guide <p>       A picture whose outlines, pose or depth to follow: an id
+                    (ast_…) or a file, for models that follow a guide
+  --guide-kind <k>  outlines (default), pose or depth
+  --guide-map       The guide already is the map: edges, a pose skeleton or
+                    depth. Local models find only outlines themselves
+  --guide-strength <s>
+                    How closely the guide is followed, 0 to 1
   --duration <s>    Video length in seconds
 ${WAIT_HELP}
 ${PAID_HELP}
@@ -494,6 +557,10 @@ ${COMMON_HELP}`,
 			ratio: { type: "string" },
 			seed: { type: "string" },
 			strength: { type: "string" },
+			guide: { type: "string" },
+			"guide-kind": { type: "string" },
+			"guide-map": { type: "boolean" },
+			"guide-strength": { type: "string" },
 			duration: { type: "string" },
 			batch: { type: "string" },
 			...WAIT_OPTIONS,
@@ -513,6 +580,7 @@ ${COMMON_HELP}`,
 			) {
 				throw new UsageError("--strength takes a number from 0.05 to 1.");
 			}
+			const guide = guideOf(values);
 			const sessionId =
 				values.session == null
 					? undefined
@@ -522,12 +590,14 @@ ${COMMON_HELP}`,
 			const models = await usableModels(context.api, allowPaid);
 			let ids = (values.model as string[] | undefined) ?? [];
 			if (ids.length === 0) {
-				const fit = bestLocalModel(models, given.length);
+				const fit = bestLocalModel(models, given.length, guide);
 				if (!fit) {
 					throw new UsageError(
-						given.length > 0
-							? "No installed local model can start from a picture. Name one with --model, or install one with `hatchlight install`."
-							: "No local model is installed. See `hatchlight catalog`, then `hatchlight install <id>`.",
+						guide
+							? `No installed local model can follow this ${guide.kind} guide. Install z-image-turbo-guided with \`hatchlight install\`, pass --guide-map for a ready map, or name a cloud model with --model.`
+							: given.length > 0
+								? "No installed local model can start from a picture. Name one with --model, or install one with `hatchlight install`."
+								: "No local model is installed. See `hatchlight catalog`, then `hatchlight install <id>`.",
 					);
 				}
 				ids = [fit.id];
@@ -552,6 +622,7 @@ ${COMMON_HELP}`,
 				seed,
 				durationSeconds: duration,
 				strength,
+				guide,
 			};
 			if (values.batch == null) {
 				return make(

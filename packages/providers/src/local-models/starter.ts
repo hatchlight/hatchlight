@@ -39,7 +39,41 @@ const REPO = {
 		"f332072aa78be7aecdf3ee76d5c247082da564a6",
 	],
 	comfyWan: ["Comfy-Org/Wan-2.1", "123acf1cc74bccbb9bfff8ac1ee72edc08c2341d"],
+	zImageControl: [
+		"alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1",
+		"5155fc56d17821007d6f62ac192c09e0f0e72016",
+	],
 } as const satisfies Record<string, Repo>;
+
+/** Z-Image Turbo's own weights, shared by its guided entry. */
+const Z_IMAGE_TURBO = {
+	q8: file(
+		REPO.zImageGguf,
+		"z_image_turbo-Q8_0.gguf",
+		6_577_440_704,
+		"df1c5baa86d1398c979495a6072dbcee79444fdb884a2445582ba0769c44e9a1",
+		"diffusion_model",
+	),
+	q4: file(
+		REPO.zImageGguf,
+		"z_image_turbo-Q4_K.gguf",
+		3_864_250_304,
+		"14b375ab4f226bc5378f68f37e899ef3c2242b8541e61e2bc1aff40976086fbd",
+		"diffusion_model",
+	),
+	/**
+	 * The Fun ControlNet Union 2.1, lite: outlines, pose and depth in one
+	 * file. The engine loads only this 2.1 layout (33 control channels), not
+	 * the first Union's.
+	 */
+	control: file(
+		REPO.zImageControl,
+		"Z-Image-Turbo-Fun-Controlnet-Union-2.1-lite-2602-8steps.safetensors",
+		2_016_627_488,
+		"3ea098db9bd145be525c7e2366920b6d76c5ffd46b3d7aa8169bbc943fdaee35",
+		"control_net",
+	),
+};
 
 /**
  * The first models Hatchlight offered, the ones verified on real hardware.
@@ -244,34 +278,14 @@ export function starterModels(): LocalModelSpec[] {
 					label: "8-bit",
 					engine: "sd-cpp",
 					memoryBytes: 9 * GB,
-					files: [
-						file(
-							REPO.zImageGguf,
-							"z_image_turbo-Q8_0.gguf",
-							6_577_440_704,
-							"df1c5baa86d1398c979495a6072dbcee79444fdb884a2445582ba0769c44e9a1",
-							"diffusion_model",
-						),
-						SHARED.qwen3InstructQ8,
-						SHARED.fluxVae,
-					],
+					files: [Z_IMAGE_TURBO.q8, SHARED.qwen3InstructQ8, SHARED.fluxVae],
 				},
 				{
 					id: "q4",
 					label: "4-bit",
 					engine: "sd-cpp",
 					memoryBytes: 6 * GB,
-					files: [
-						file(
-							REPO.zImageGguf,
-							"z_image_turbo-Q4_K.gguf",
-							3_864_250_304,
-							"14b375ab4f226bc5378f68f37e899ef3c2242b8541e61e2bc1aff40976086fbd",
-							"diffusion_model",
-						),
-						SHARED.qwen3InstructQ4,
-						SHARED.fluxVae,
-					],
+					files: [Z_IMAGE_TURBO.q4, SHARED.qwen3InstructQ4, SHARED.fluxVae],
 				},
 			],
 			defaults: {
@@ -291,6 +305,78 @@ export function starterModels(): LocalModelSpec[] {
 					url: hf(...REPO.zImage, "assets/showcase_rendering.png"),
 					media: "image",
 					caption: "Text rendering samples from the model card",
+				},
+			],
+		},
+		{
+			id: "z-image-turbo-guided",
+			profile: PROFILES.zImageGuided,
+			name: "Z-Image Turbo, guided",
+			author: "Tongyi-MAI and Alibaba PAI",
+			media: "image",
+			tasks: ["text-to-image"],
+			summary:
+				"Z-Image Turbo that follows a guide picture: its outlines, or a ready pose or depth map. Adds 2 GB to Z-Image Turbo.",
+			...APACHE_2,
+			homepage:
+				"https://huggingface.co/alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1",
+			// Measured on a 12 GB card (RTX 4070 SUPER, the desktop holding
+			// about 2.2 GB): the 8-bit model and the control file take about
+			// 8.2 GB, and a 1024px picture's workspace about 2 GB more. It runs
+			// only within its memory budget (31 s), and 10.5 GB still lets a
+			// 12 GB card choose it over the 4-bit one, which is estimated.
+			variants: [
+				{
+					id: "q8",
+					label: "8-bit",
+					engine: "sd-cpp",
+					memoryBytes: 10.5 * GB,
+					files: [
+						Z_IMAGE_TURBO.q8,
+						SHARED.qwen3InstructQ8,
+						SHARED.fluxVae,
+						Z_IMAGE_TURBO.control,
+					],
+				},
+				{
+					id: "q4",
+					label: "4-bit",
+					engine: "sd-cpp",
+					memoryBytes: 8 * GB,
+					files: [
+						Z_IMAGE_TURBO.q4,
+						SHARED.qwen3InstructQ4,
+						SHARED.fluxVae,
+						Z_IMAGE_TURBO.control,
+					],
+				},
+			],
+			defaults: {
+				size: 1024,
+				aspectRatios: ALL_RATIOS,
+				steps: 8,
+				cfgScale: 1,
+				// Without one, the model and the control file fill a 12 GB card
+				// and the picture's workspace no longer fits, even at 768px or
+				// with --offload-to-cpu.
+				vramBudget: true,
+				// The engine finds outlines itself; pose and depth come as maps.
+				guide: {
+					kinds: ["outlines", "pose", "depth"],
+					makesMaps: ["outlines"],
+					strength: 0.75,
+				},
+			},
+			demos: [
+				{
+					url: hf(...REPO.zImageControl, "results/pose_lite.png"),
+					media: "image",
+					caption: "A picture following a pose, from the model card",
+				},
+				{
+					url: hf(...REPO.zImageControl, "results/canny_lite.png"),
+					media: "image",
+					caption: "A picture following outlines, from the model card",
 				},
 			],
 		},

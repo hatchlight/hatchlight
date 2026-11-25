@@ -3,6 +3,9 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import { blindLetter, blindOrder, namesHidden } from "@hatchlight/core/blind";
 import { promptKinds } from "@hatchlight/core/ranking";
 import {
+	followsGuide,
+	GUIDE_KINDS,
+	type GuideKind,
 	type JobView,
 	type ModelSpec,
 	PROMPT_KINDS,
@@ -169,6 +172,8 @@ function describe(model: ModelSpec): string {
 				: `follows up to ${caps.maxReferenceImages} given picture(s)`),
 		caps.mask != null && "redraws only a masked part",
 		caps.upscale != null && `upscales a picture ${caps.upscale}x`,
+		caps.guide && guideText(caps.guide),
+		caps.needsReference && "needs a given picture",
 	].filter(Boolean);
 	const cost = isLocal(model)
 		? "free, runs on this computer"
@@ -186,6 +191,24 @@ function describe(model: ModelSpec): string {
 	return `- ${model.id} — ${model.name} (${model.media}): ${can.join(", ")}; ${cost}${shapes}${lengths}`;
 }
 
+/** How a model follows a guide picture, for an agent to choose by. */
+function guideText(guide: NonNullable<ModelSpec["capabilities"]["guide"]>) {
+	const fromMap = guide.kinds.filter((k) => !guide.makesMaps.includes(k));
+	return `follows a guide picture (${[
+		guide.makesMaps.length > 0 &&
+			`${guide.makesMaps.join(", ")} from any picture`,
+		fromMap.length > 0 && `${fromMap.join(", ")} only from a ready map`,
+	]
+		.filter(Boolean)
+		.join("; ")})`;
+}
+
+/** A guide as asked for: its kind, and whether the picture is the map. */
+export interface GuideAsk {
+	kind: GuideKind;
+	ready: boolean;
+}
+
 /**
  * The model used when the agent names none: the best free picture model on
  * this computer that can take `references` pictures, the faster of equals.
@@ -194,9 +217,11 @@ function describe(model: ModelSpec): string {
 export function bestLocalModel(
 	models: ModelSpec[],
 	references: number,
+	/** A guide picture it must follow. */
+	guide?: GuideAsk,
 ): ModelSpec | undefined {
 	return models
-		.filter((m) => fitsByDefault(m, references))
+		.filter((m) => fitsByDefault(m, references, guide))
 		.toSorted(
 			(a, b) =>
 				(b.profile?.quality ?? 0) - (a.profile?.quality ?? 0) ||
@@ -205,14 +230,20 @@ export function bestLocalModel(
 }
 
 /** A free picture model on this computer that can take `references` pictures. */
-function fitsByDefault(model: ModelSpec, references: number): boolean {
+function fitsByDefault(
+	model: ModelSpec,
+	references: number,
+	/** A guide picture it must follow. */
+	guide?: GuideAsk,
+): boolean {
 	return (
 		isLocal(model) &&
 		model.media === "image" &&
 		model.capabilities.upscale == null &&
 		(references > 0
 			? model.capabilities.maxReferenceImages >= references
-			: model.operations.includes("generate"))
+			: model.operations.includes("generate")) &&
+		(!guide || followsGuide(model.capabilities.guide, guide))
 	);
 }
 
@@ -386,12 +417,16 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 			seed?: number;
 			durationSeconds?: number;
 			strength?: number;
+			guide?: GuideAsk & { image: string; strength?: number };
 			wait: boolean;
 		},
 		models: ModelSpec[],
 		context: ToolContext,
 	): Promise<ToolResult> {
-		const named = notIds(input.references);
+		const named = notIds([
+			...input.references,
+			...(input.guide ? [input.guide.image] : []),
+		]);
 		if (named) return named;
 		const chosen = input.modelIds.map(
 			(id) => models.find((m) => m.id === id) as ModelSpec,
@@ -414,6 +449,9 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 		let turn: Awaited<ReturnType<Reel["createTurn"]>>["turn"];
 		try {
 			const ids = await references(input.references);
+			const [guideId] = input.guide
+				? await references([input.guide.image])
+				: [];
 			({ session, turn } = await reel.createTurn({
 				prompt: input.prompt,
 				modelIds: input.modelIds,
@@ -426,6 +464,17 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 					durationSeconds: input.durationSeconds,
 				}),
 				...(input.strength != null && { strength: input.strength }),
+				...(input.guide &&
+					guideId && {
+						guide: {
+							assetId: guideId,
+							kind: input.guide.kind,
+							ready: input.guide.ready,
+							...(input.guide.strength != null && {
+								strength: input.guide.strength,
+							}),
+						},
+					}),
 			}));
 		} catch (error) {
 			spend.release(pending);
@@ -493,7 +542,7 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 			name: "list_models",
 			title: "List models",
 			description:
-				"Lists the models that can be used now, with what each can do (make from words, redraw or follow given pictures, redraw a masked part, upscale), its cost, and the ratios and video lengths it accepts. Local models are free and run on the user's computer. Only installed models are listed; the user installs more in the Hatchlight app.",
+				"Lists the models that can be used now, with what each can do (make from words, redraw or follow given pictures, redraw a masked part, follow a guide picture, upscale), its cost, and the ratios and video lengths it accepts. Local models are free and run on the user's computer. Only installed models are listed; the user installs more in the Hatchlight app.",
 			input: {
 				media: z
 					.enum(["image", "video"])
@@ -524,7 +573,7 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 		tool({
 			name: "generate",
 			title: "Make pictures or videos",
-			description: `Makes pictures or videos from a prompt, waits for them, and returns small previews with their ids. Give several models to compare them on the same prompt. Give reference_images to redraw, edit or animate a picture: ${options.files ? "ids from earlier results (ast_…) or paths of image files" : "ids from earlier results (ast_…)"}. Pass session_id to keep iterating in the same session. Without models, the best free local model that fits is used.`,
+			description: `Makes pictures or videos from a prompt, waits for them, and returns small previews with their ids. Give several models to compare them on the same prompt. Give reference_images to redraw, edit or animate a picture: ${options.files ? "ids from earlier results (ast_…) or paths of image files" : "ids from earlier results (ast_…)"}. Give guide_image to make a new picture follow another's outlines, pose or depth, with a model that follows a guide picture. Pass session_id to keep iterating in the same session. Without models, the best free local model that fits is used.`,
 			input: {
 				prompt: z.string().min(1).describe("What to make, or what to change."),
 				models: z
@@ -543,6 +592,30 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 					.describe(
 						"For models that redraw a picture: how much it changes, 0.05 to 1.",
 					),
+				guide_image: z
+					.string()
+					.optional()
+					.describe(
+						`${options.files ? "A picture id (ast_…) or image file path" : "A picture id (ast_…)"} whose layout the new picture follows, for models that follow a guide picture.`,
+					),
+				guide_kind: z
+					.enum(GUIDE_KINDS)
+					.optional()
+					.describe(
+						"What of guide_image to follow: outlines (default), pose (a person's pose) or depth.",
+					),
+				guide_is_map: z
+					.boolean()
+					.optional()
+					.describe(
+						"True when guide_image already is the map (an edge drawing, a pose skeleton, a depth map). Some models make pose and depth maps only in the cloud.",
+					),
+				guide_strength: z
+					.number()
+					.min(0)
+					.max(1)
+					.optional()
+					.describe("How closely the guide is followed, 0 to 1."),
 				aspect_ratio: z.string().optional().describe('Such as "16:9".'),
 				count: z
 					.number()
@@ -581,21 +654,31 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 				const given = args.reference_images ?? [];
 				const named = notIds(given);
 				if (named) return named;
+				const guide = args.guide_image
+					? {
+							image: args.guide_image,
+							kind: args.guide_kind ?? "outlines",
+							ready: args.guide_is_map ?? false,
+							strength: args.guide_strength,
+						}
+					: undefined;
 				let ids = args.models ?? [];
 				if (ids.length === 0) {
 					// What the person picked most in comparisons, else the best on paper.
 					const fit =
 						(await preferredModel(
 							reel,
-							models.filter((m) => fitsByDefault(m, given.length)),
+							models.filter((m) => fitsByDefault(m, given.length, guide)),
 							args.prompt,
 							given.length,
-						)) ?? bestLocalModel(models, given.length);
+						)) ?? bestLocalModel(models, given.length, guide);
 					if (!fit) {
 						return failure(
-							given.length > 0
-								? "No installed local model can start from a picture. Name one with models, or the user can install one in the Hatchlight app."
-								: "No local model is installed. The user can install one from Local models in the Hatchlight app.",
+							guide
+								? `No installed local model can follow a ${guide.kind} guide${guide.ready ? "" : " made from this picture"}. Name one with models (a cloud model may make the map), or the user can install Z-Image Turbo, guided in the Hatchlight app.`
+								: given.length > 0
+									? "No installed local model can start from a picture. Name one with models, or the user can install one in the Hatchlight app."
+									: "No local model is installed. The user can install one from Local models in the Hatchlight app.",
 						);
 					}
 					ids = [fit.id];
@@ -618,6 +701,7 @@ export function createTools(reel: Reel, options: ToolsOptions): Tool[] {
 						seed: args.seed,
 						durationSeconds: args.duration_seconds,
 						strength: args.strength,
+						guide,
 						wait: args.wait ?? true,
 					},
 					models,

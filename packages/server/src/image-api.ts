@@ -9,6 +9,7 @@ import {
 	MAX_LORAS,
 	type ModelSpec,
 	mayUsePaid,
+	nearestRatio,
 	type PaidRefusal,
 	type ProviderStatus,
 	paidError,
@@ -127,25 +128,6 @@ function named(entries: Entry[], name: string): Entry | undefined {
 			e.model.name.toLowerCase() === wanted,
 	);
 	return loose.length === 1 ? loose[0] : undefined;
-}
-
-/** The ratio a model offers nearest the size asked for. */
-export function nearestRatio(
-	ratios: string[],
-	width: number | undefined,
-	height: number | undefined,
-): string | undefined {
-	if (!width || !height || width <= 0 || height <= 0) return undefined;
-	const wanted = Math.log(width / height);
-	const off = (ratio: string) => {
-		const [w = 1, h = 1] = ratio.split(":").map(Number);
-		return Math.abs(Math.log(w / h) - wanted);
-	};
-	return ratios.reduce<string | undefined>(
-		(best, ratio) =>
-			best === undefined || off(ratio) < off(best) ? ratio : best,
-		undefined,
-	);
 }
 
 /** A `<lora:name:weight>` tag, as AUTOMATIC1111 prompts carry them. */
