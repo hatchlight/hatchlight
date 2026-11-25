@@ -622,7 +622,9 @@ export function Chat({
 											addReference(id);
 										}}
 										upscale={upscale}
-										talkHref={sessionId ? href.talk(sessionId) : undefined}
+										talkHref={
+											sessionId && !demo ? href.talk(sessionId) : undefined
+										}
 										onDeleted={() => {
 											setInspecting(false);
 											setSelected(null);
