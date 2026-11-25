@@ -123,8 +123,10 @@ AI agents that speak the [Model Context Protocol](https://modelcontextprotocol.i
 such as Claude Code and Claude Desktop, can make pictures and videos on the
 server as a person, with an **API token** that person makes in **Settings >
 Use with AI agents**. An agent can list the models, generate and compare,
-redraw and upscale, and search the person's gallery. It cannot install
-models, manage people or change the server's settings, whatever the token.
+redraw and upscale, search the person's gallery, use their saved characters
+and styles, check that a character stays the same, and read which models
+they prefer. It cannot install models, manage people or change the
+server's settings, whatever the token.
 
 Each token has:
 
@@ -295,6 +297,13 @@ Everything is set through the environment. The image sets the first group.
 Cloud keys can also come from the environment: `FAL_KEY`, `OPENAI_API_KEY`,
 `GEMINI_API_KEY`, `REPLICATE_API_TOKEN`, `OPENROUTER_API_KEY`. They are the
 server's: only people allowed to use paid models spend on them.
+
+To use the models of ComfyUI, AUTOMATIC1111, Forge or Stability Matrix
+already on the server, mount their folder into the container (for example
+`-v /srv/ComfyUI:/comfyui`, or a `volumes:` line in the compose file), then
+add `/comfyui` in **Models > Models from other apps**. The folder must be
+readable by `PUID`; Hatchlight only reads it. Only admins add or
+remove these folders; members use their models without seeing the paths.
 
 ## Backups and updates
 

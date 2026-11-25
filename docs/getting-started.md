@@ -11,9 +11,13 @@ to run Hatchlight for a household or a team, see
 - [Which model to start with](#which-model-to-start-with)
 - [Cloud models, with your key](#cloud-models-with-your-key)
 - [Chat and Advanced](#chat-and-advanced)
+- [Which model you prefer](#which-model-you-prefer)
+- [Keep a character the same](#keep-a-character-the-same)
 - [Change a picture](#change-a-picture)
+- [Follow a guide picture](#follow-a-guide-picture)
 - [The gallery](#the-gallery)
 - [Your own styles: LoRAs and models](#your-own-styles)
+- [Characters and styles](#characters-and-styles)
 - [When something goes wrong](#when-something-goes-wrong)
 - [Words used here](#words-used-here)
 
@@ -151,8 +155,8 @@ You can write in your own language. Some models (SDXL, FLUX.1, Chroma) read
 prompts well only in English. **Settings > Prompt translation** puts your
 prompt into English for them, and you see what was sent: choose **Translate
 with**, and install the translator if it asks. **Improve prompt** turns a
-short idea into a detailed prompt. Both run on your computer on Windows; on
-macOS and Linux they need a cloud key.
+short idea into a detailed prompt. Both run on your computer on Windows (and
+under WSL); elsewhere they need a cloud key.
 
 ## Which model you prefer
 
@@ -203,6 +207,13 @@ picture as a reference, at most twice, then tells you the score and what
 still differs. In the terminal, `hatchlight check ast_… --like ast_…` does the
 same, and agents have the `check_consistency` tool.
 
+To keep a person in new scenes, give their picture as a reference to a model
+that follows given pictures, such as FLUX.2 klein: the composer lists those
+pictures under **Characters and pictures to follow**, and the prompt can say
+"the person in picture 1, now on a beach". To use the same person again
+later without finding the picture, save them as a
+[character](#characters-and-styles).
+
 ## Change a picture
 
 Any picture can be the start of the next one. Click it, then:
@@ -232,6 +243,26 @@ describe how it should move: the picture becomes the video's first frame.
 This needs a video model that starts from a picture, such as Wan 2.2 5B or a
 cloud video model.
 
+## Follow a guide picture
+
+A guide picture gives a new picture its layout without its look: the
+outlines of a drawing, the pose of a person, or the depth of a scene. In the
+**Advanced** view, choose **Add a guide picture** (or **Use the last
+reference**), then under **What to follow** choose **Outlines**, **Pose** or
+**Depth**, and how closely to **Follow** it.
+
+It needs a model that follows a guide picture:
+
+- **Z-Image Turbo, guided**, on your computer, from **Models**. It adds about
+  2 GB to Z-Image Turbo, whose files it shares. It finds the outlines of any
+  picture itself. For pose or depth, the guide must already be a map (a pose
+  skeleton or a depth picture): switch on **This picture already is a map**.
+- **Z-Image Turbo on fal**, in the cloud with your key, which also makes the
+  pose or depth map from any photo.
+
+The guide takes the model's nearest shape. In the terminal, `--guide` does the
+same: see [Command line](command-line.md#make-pictures-from-the-terminal).
+
 ## The gallery
 
 Every picture and video is saved on your computer, with the prompt and
@@ -254,6 +285,11 @@ A LoRA is a small file that teaches a model a style or a subject. On the
   Only SDXL and SD 1.5 checkpoints, and LoRAs for a family Hatchlight runs,
   are used; other files are counted as skipped. Hatchlight looks again each
   time it starts, or when you choose **Look again**.
+- **From Hugging Face**: `hatchlight install hf:owner/repo` in the terminal,
+  or a `hatchlight://hf/owner/repo` link, opens a model from Hugging Face. A
+  model the catalog has is installed as usual; a single SDXL or SD 1.5
+  checkpoint or a LoRA is added after Hatchlight shows its size and license
+  and you agree. Models made of many files are not supported yet.
 - **Train a LoRA**: teach Stable Diffusion XL a subject or style from your
   own pictures. It needs Windows (or WSL), an NVIDIA card with 12 GB of
   memory, and Stable Diffusion XL installed. It downloads about 6 GB of tools
@@ -367,6 +403,8 @@ what you did, what happened, and your system and graphics card.
   cards with less memory, at a small cost in quality.
 - **Prompt**: the words that describe what you want.
 - **Reference**: a picture the next one starts from.
+- **Guide picture**: a picture whose outlines, pose or depth the next one
+  follows, without its colours or details.
 - **Mark area**: painting over the part of a picture to redraw (a mask).
 - **LoRA**: a small add-on that teaches a model a style or a subject.
 - **Checkpoint**: a whole model file, such as a community version of Stable

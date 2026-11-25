@@ -33,6 +33,8 @@ Every command has `--help`, and `hatchlight --help` lists them all.
 hatchlight models                         # what can be used now
 hatchlight generate "a lighthouse at dusk" -m local/sdxl-turbo -o out/
 hatchlight generate "the same, at night" -r out/first.png --seed 7
+hatchlight generate "a dancer on a rooftop" -m local/z-image-turbo-guided \
+  --guide pose.png --guide-kind pose --guide-map   # follow a ready pose map
 hatchlight upscale ast_… -o big.png
 hatchlight gallery lighthouse             # find what was made before
 hatchlight get ast_… -o lighthouse.png
@@ -53,6 +55,17 @@ Ctrl+C stops waiting while the job goes on, to follow with
 starts one for the command, and only models on your computer unless you pass
 `--allow-paid`.
 
+`--guide` takes a picture (an id or a file) whose outlines, pose or depth to
+follow, with a model that follows a guide picture; `--guide-kind` is
+`outlines` (the default), `pose` or `depth`, `--guide-map` says the picture
+already is the map, and `--guide-strength` (0 to 1) how closely to follow it.
+See [Follow a guide picture](getting-started.md#follow-a-guide-picture).
+`--character` and `--style` use what you saved in
+[Characters and styles](getting-started.md#characters-and-styles).
+
+`status`, `cancel` and `retry` follow, stop and redo a job, and `open` opens
+the app, or a session in it.
+
 ## Set up from the terminal
 
 ```sh
@@ -61,6 +74,7 @@ hatchlight catalog                # models to download, and how they fit
 hatchlight install sdxl-turbo     # download one and wait until it is ready
 hatchlight install hf:owner/repo  # a model, checkpoint or LoRA from Hugging Face
 hatchlight keys set fal           # asks for the key without showing it
+hatchlight uninstall sdxl-turbo   # delete a model from this computer
 hatchlight loras add style.safetensors
 hatchlight folders add ~/ComfyUI  # use the models of another app where they are
 hatchlight trainer install        # then train a LoRA from your pictures:
@@ -84,8 +98,10 @@ Keys can also come from the environment: `FAL_KEY`, `OPENAI_API_KEY`,
 `hatchlight mcp` lets an agent that speaks the
 [Model Context Protocol](https://modelcontextprotocol.io), such as Claude Code
 or Claude Desktop, make pictures and videos with your models: list them,
-generate and compare, redraw a picture, upscale it, and search and save from
-your gallery.
+generate and compare, redraw a picture, follow a guide picture, upscale it,
+search and save from your gallery, use your saved characters and styles
+(`list_library`), check that a character stays the same
+(`check_consistency`), and read which models you prefer (`model_ranking`).
 
 **With the desktop app:** **Settings > Use with AI agents** connects Claude
 Desktop for you (restart Claude Desktop afterwards), and shows the command to

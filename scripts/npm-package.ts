@@ -36,7 +36,7 @@ const manifest = {
 	name: "hatchlight",
 	version: APP_VERSION,
 	description:
-		"Make pictures and videos with many AI models, side by side, on your own graphics card or with your own cloud keys. Includes an MCP server for AI agents.",
+		"Make pictures and videos with many AI models, side by side, on your own graphics card or with your own cloud keys. Includes an MCP server for AI agents and OpenAI- and AUTOMATIC1111-style image APIs for other apps.",
 	keywords: [
 		"mcp",
 		"mcp-server",
@@ -45,6 +45,9 @@ const manifest = {
 		"image-generation",
 		"text-to-image",
 		"local-ai",
+		"lora",
+		"automatic1111",
+		"openai-compatible",
 	],
 	homepage: "https://hatchlight.app",
 	repository: {
@@ -91,6 +94,12 @@ It uses the Hatchlight already running, or starts one that stops with the
 agent. By default only models on your computer are used, so it costs nothing;
 \`--allow-paid --spend-limit 5\` also lets it use your cloud keys, up to $5 per
 connection. Agents cannot install models: you do, in the app.
+
+## Use it from other apps
+
+Hatchlight also answers OpenAI's image API and AUTOMATIC1111's, so apps such
+as Open WebUI, SillyTavern and LibreChat can make pictures with your models.
+See [Use it from other apps](https://github.com/hatchlight/hatchlight/blob/main/docs/other-apps.md).
 
 ## Run the app
 

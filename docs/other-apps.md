@@ -137,8 +137,15 @@ Sizes such as `1792x1024` become the nearest shape the model makes, here
 16:9: models make pictures at the sizes they were trained for.
 
 AUTOMATIC1111's `<lora:name:weight>` tags in a prompt use your LoRAs when
-the name matches one in **Models > LoRAs** that fits the model. Other tags
-are left in the prompt as they are.
+the name matches one in **Models > LoRAs** that fits the model.
+
+`<character:name>` and `<style:name>` tags, in either API, use a character
+or a style you saved in
+[Characters and styles](getting-started.md#characters-and-styles), such as
+`a heron <style:Watercolor>`. Names are matched ignoring case and accents,
+and part of a name is enough when it fits only one. A name that fits none,
+or more than one, refuses the request rather than making the picture
+without it. Other tags are left in the prompt as they are.
 
 ## Paid models
 

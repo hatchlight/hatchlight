@@ -73,12 +73,20 @@ Seedream, Runway and more. Each result shows what it cost.
 **Edit what you made.** Any picture can be the reference for the next prompt or
 the first frame of a video. Change it a little or a lot, paint a mask and redraw
 only that part, make room around it, crop, turn or flip it, or upscale it.
+A guide picture sets the outlines, pose or depth of a new one, with Z-Image
+Turbo, guided: on your card it finds outlines itself and takes a ready pose
+or depth map, and through fal it makes the map from any photo. Models that
+follow given pictures, such as FLUX.2 klein, keep the person from a
+reference in new scenes.
 
 **Your own styles.** Load LoRAs and your own SDXL or SD 1.5 checkpoints, or
 train an SDXL LoRA from your pictures: Hatchlight writes the captions, shows
 sample pictures while it learns, and lets you keep an earlier step. Already
 have models in ComfyUI, AUTOMATIC1111, Forge or Stability Matrix? Point
 Hatchlight at that folder and it uses them where they are, without copying.
+From Hugging Face, `hatchlight install hf:owner/repo` (or a
+`hatchlight://hf/owner/repo` link) adds a catalog model, an SDXL or SD 1.5
+checkpoint, or a LoRA, once it has shown you the size and license.
 
 **An assistant.** Talk to it in the Chat view: "make the fox bigger", "now in
 16:9, with FLUX". It picks models, writes the prompts and makes the pictures.
@@ -115,7 +123,9 @@ reader. More languages are welcome: see [Translate](CONTRIBUTING.md#translate).
 | Linux                | Yes     | NVIDIA (CUDA), CPU                                   |
 | macOS, Intel         | Yes     | Not yet: cloud models only for now                   |
 
-Under WSL on Windows, the Windows engines run.
+Under WSL on Windows, the Windows engines run. On Linux itself, local models
+are new and still being tested on real machines
+([#36](https://github.com/hatchlight/hatchlight/issues/36)).
 
 About 8 GB of graphics card memory runs the quick models, such as SDXL Turbo;
 4 to 6 GB runs Stable Diffusion 1.5 and the smallest version of Z-Image
