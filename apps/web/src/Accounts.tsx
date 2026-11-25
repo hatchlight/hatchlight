@@ -31,9 +31,11 @@ import {
 	ApiError,
 	api,
 	type InviteTerms,
+	useDemo,
 	whenRoomFull,
 	whenSignedOut,
 } from "./api";
+import { DemoGate } from "./Demo";
 import { type I18n, useI18n } from "./i18n";
 import { Bar, ConfirmButton, LABEL, SECTION } from "./Training";
 import { TokenFacts } from "./tokens";
@@ -56,9 +58,22 @@ const AccountContext = createContext<AccountView | null>(null);
 
 export const useAccount = () => useContext(AccountContext);
 
-/** What the person may do. On a personal install, everything. */
+/**
+ * What the person may do. On a personal install, everything; in a public
+ * demo, only make pictures with what is installed.
+ */
 export function useCan() {
 	const account = useAccount();
+	const demo = useDemo();
+	if (demo) {
+		return {
+			server: true,
+			owner: false,
+			admin: false,
+			train: false,
+			paid: false,
+		};
+	}
 	if (!account) {
 		return { server: false, owner: true, admin: true, train: true, paid: true };
 	}
@@ -106,6 +121,10 @@ export function Gate({ children }: { children: ReactNode }) {
 		staleTime: Number.POSITIVE_INFINITY,
 	});
 	if (server.isPending) return null;
+	// A public demo has no accounts: each tab starts a visit, and goes in.
+	if (server.data?.mode === "demo") {
+		return <DemoGate demo={server.data.demo}>{children}</DemoGate>;
+	}
 	if (server.data?.mode !== "server") return children;
 	return <ServerGate secure={server.data.secure}>{children}</ServerGate>;
 }

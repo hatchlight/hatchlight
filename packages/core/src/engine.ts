@@ -196,8 +196,11 @@ export class JobEngine {
 	 */
 	private lastStart = new Map<string, Map<string, number>>();
 	private starts = 0;
-	/** Jobs queued or running here, so that none is ever run twice at once. */
-	private owned = new Set<string>();
+	/**
+	 * Jobs queued or running here, with whose they are, so that none is ever
+	 * run twice at once.
+	 */
+	private owned = new Map<string, string>();
 	/**
 	 * Translations in progress or just made, by translator and prompt: the
 	 * jobs of one turn share their prompt, and it is translated once for all
@@ -246,7 +249,7 @@ export class JobEngine {
 
 	enqueue(job: Queued): void {
 		if (this.owned.has(job.id)) return;
-		this.owned.add(job.id);
+		this.owned.set(job.id, job.userId);
 		this.schedule(job);
 	}
 
@@ -323,7 +326,16 @@ export class JobEngine {
 	 * Runs a failed or canceled job again, held to the limits of who asks
 	 * now: `tokenId` is the API token they ask with, if any.
 	 */
-	async retry(job: Job, tokenId: string | null = null): Promise<void> {
+	/** Jobs queued or running, in all and for one person. */
+	unfinished(userId?: string): number {
+		if (userId === undefined) return this.owned.size;
+		let count = 0;
+		for (const owner of this.owned.values()) if (owner === userId) count++;
+		return count;
+	}
+
+	/** Runs a job again; says whether it was queued, not already under way. */
+	async retry(job: Job, tokenId: string | null = null): Promise<boolean> {
 		if (job.status !== "failed" && job.status !== "canceled") {
 			throw new ValidationError(
 				"Only a job that failed or was canceled can be tried again",
@@ -331,8 +343,8 @@ export class JobEngine {
 			);
 		}
 		// A second click, or a second tab, must not run it twice.
-		if (this.owned.has(job.id)) return;
-		this.owned.add(job.id);
+		if (this.owned.has(job.id)) return false;
+		this.owned.set(job.id, job.userId);
 		try {
 			await this.update(job.id, {
 				status: "queued",
@@ -349,6 +361,7 @@ export class JobEngine {
 			throw error;
 		}
 		this.schedule(job);
+		return true;
 	}
 
 	/** Resolves once no job is queued or running. */

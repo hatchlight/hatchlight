@@ -18,6 +18,7 @@ import {
 } from "../types";
 import { SqliteAccounts } from "./accounts";
 import * as schema from "./schema";
+import { SqliteVisitors } from "./visitors";
 
 export type JobPatch = Partial<
 	Pick<
@@ -103,6 +104,11 @@ export class SqliteRepository implements Repository {
 	/** The accounts of a server, kept in the same database. */
 	accounts(): SqliteAccounts {
 		return new SqliteAccounts(this.sqlite);
+	}
+
+	/** The visitors of a public demo, kept in the same database. */
+	visitors(): SqliteVisitors {
+		return new SqliteVisitors(this.sqlite);
 	}
 
 	async createSession(session: Session) {

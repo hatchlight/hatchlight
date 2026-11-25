@@ -21,6 +21,8 @@ export const ERROR_CODES = [
 	"claudeConfigUnreadable",
 	"claudeNotFound",
 	"confirmNotWaiting",
+	"demoBusy",
+	"demoLimitReached",
 	"connectionLost",
 	"downloadCutShort",
 	"downloadFailed",
@@ -81,6 +83,7 @@ export const ERROR_CODES = [
 	"noReferences",
 	"noResult",
 	"notEnoughDisk",
+	"notInDemo",
 	"notInstalled",
 	"notOnServer",
 	"paidNotAllowed",
@@ -128,6 +131,7 @@ export const ERROR_CODES = [
 	"usernameInvalid",
 	"usernameTaken",
 	"variantDoesNotRun",
+	"visitorRequired",
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 

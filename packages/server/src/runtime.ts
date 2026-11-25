@@ -5,7 +5,7 @@ import {
 	statSync,
 	writeFileSync,
 } from "node:fs";
-import { chmod, mkdir, open } from "node:fs/promises";
+import { chmod, mkdir, open, rm } from "node:fs/promises";
 import { hostname as osHostname, uptime as osUptime } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -39,6 +39,7 @@ import {
 	LocalTranslator,
 	legacyName,
 	mayUsePaid,
+	NotFoundError,
 	newId,
 	type PaidRefusal,
 	type PasswordHasher,
@@ -51,6 +52,7 @@ import {
 	type SettingsStore,
 	SharedKeyStore,
 	SqliteRepository,
+	type SqliteVisitors,
 	Trainer,
 	type TrainerOptions,
 	type Translator,
@@ -111,9 +113,23 @@ export interface Runtime {
 	): Promise<string>;
 	/** Starts moving the local models to another folder. */
 	moveModels(path: string): Promise<void>;
+	/** The anonymous visitors of a public demo. */
+	visitors: SqliteVisitors;
+	/**
+	 * Deletes visitors' sessions and pictures from before `before`, and
+	 * forgets visitors not seen since: a public demo keeps nothing for long.
+	 */
+	sweepVisitors(before: number): Promise<VisitorSweep>;
 	/** Resumes jobs left unfinished by a previous process. */
 	start(): Promise<void>;
 	close(): void;
+}
+
+/** What one sweep of a demo deleted. */
+export interface VisitorSweep {
+	sessions: number;
+	assets: number;
+	visitors: number;
 }
 
 export interface ImproveRequest {
@@ -514,6 +530,11 @@ export interface RuntimeOptions {
 	server?: boolean;
 	/** The most a member's pictures and videos may take on a server; unset, no limit. */
 	assetQuotaBytes?: number | null;
+	/**
+	 * A public demo: only models that need no key are offered, whatever
+	 * keys the environment holds.
+	 */
+	demo?: boolean;
 	/** How passwords are hashed; argon2id with its default cost unless a test says. */
 	passwordHasher?: PasswordHasher;
 	/** Stand-ins for the trainer's downloads and programs, in tests. */
@@ -568,8 +589,8 @@ export async function privateDatabase(
 
 /** Wires the core on a data directory. Call `start()` once ready to run jobs. */
 export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
-	const providers = options.providers ?? builtinProviders();
 	const fake = appEnv(process.env, "FAKE") === "1";
+	const offered = [...(options.providers ?? builtinProviders())];
 	if (fake) {
 		const fakeProvider = new FakeProvider();
 		fakeProvider.delayMs = 1500;
@@ -578,8 +599,12 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		const fakePaid = new FakeProvider("fake-paid", ["gamma"]);
 		fakePaid.requiresKey = true;
 		fakePaid.delayMs = 1500;
-		providers.push(fakeProvider, fakePaid);
+		offered.push(fakeProvider, fakePaid);
 	}
+	// A demo spends nobody's money: cloud models are not even registered.
+	const providers = options.demo
+		? offered.filter((provider) => !provider.requiresKey)
+		: offered;
 	const catalog = options.localModels ?? builtinLocalModels();
 	const models = new LocalModelStore({
 		root: options.modelsDir ?? join(options.dataDir, "models"),
@@ -641,6 +666,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 		options.migrationsDir,
 	);
 	const accountsRepo = repo.accounts();
+	const visitors = repo.visitors();
 	// Each new file is counted as it is written, for storage quotas.
 	const assets = new FsAssetStore(
 		join(options.dataDir, "assets"),
@@ -966,6 +992,46 @@ export async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
 			);
 		},
 		moveModels: (path) => models.relocate(path),
+		visitors,
+		sweepVisitors: async (before) => {
+			const gone = (error: unknown) => {
+				// Deleted meanwhile, as by its visitor: nothing left to do.
+				if (!(error instanceof NotFoundError)) throw error;
+			};
+			const sessions = visitors.staleSessions(before);
+			for (const { id, userId } of sessions) {
+				assistant.forget({ userId }, id);
+				await service.deleteSession({ userId }, id).catch(gone);
+			}
+			const stale = visitors.staleAssets(before);
+			for (const { id, userId } of stale) {
+				await service.deleteAsset({ userId }, id).catch(gone);
+			}
+			const forgotten = visitors.forgetIdle(before);
+			// The folders of visitors with nothing left, so none pile up.
+			const owners = new Set([
+				...forgotten,
+				...stale.map((asset) => asset.userId),
+			]);
+			for (const userId of owners) {
+				if (
+					!/^vis_[\w-]+$/.test(userId) ||
+					visitors.known(userId) ||
+					visitors.hasAssets(userId)
+				) {
+					continue;
+				}
+				await rm(join(options.dataDir, "assets", userId), {
+					recursive: true,
+					force: true,
+				});
+			}
+			return {
+				sessions: sessions.length,
+				assets: stale.length,
+				visitors: forgotten.length,
+			};
+		},
 		start: async () => {
 			// What changed in other apps' folders while Hatchlight was closed.
 			void models.folders.rescan().catch((error) => {

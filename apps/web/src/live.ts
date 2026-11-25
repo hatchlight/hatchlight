@@ -6,7 +6,7 @@ import type {
 } from "@hatchlight/core/types";
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useSyncExternalStore } from "react";
-import type { SessionDetail } from "./api";
+import { type SessionDetail, visitorHeaders, withVisitor } from "./api";
 
 // Latest progress message per running job. Kept outside the query cache
 // because it changes often and is never fetched.
@@ -103,11 +103,127 @@ async function applyJob(client: QueryClient, job: JobView): Promise<void> {
 	}
 }
 
+/** A stream of the server's events, as useLiveJobs reads it. */
+interface EventStream {
+	addEventListener(
+		type: string,
+		listener: (message: { data: string }) => void,
+	): void;
+	close(): void;
+}
+
+/**
+ * The browser's EventSource; for a demo's visitor, the same stream read
+ * with fetch, which can name the visitor in a header where the browser
+ * keeps no cookie (a frame on another site).
+ */
+function openEvents(path: string): EventStream {
+	if (Object.keys(visitorHeaders()).length > 0) return new FetchEvents(path);
+	const source = new EventSource(path);
+	return {
+		addEventListener: (type, listener) =>
+			source.addEventListener(type, (event) =>
+				listener(event as MessageEvent<string>),
+			),
+		close: () => source.close(),
+	};
+}
+
+/** How long a dropped stream waits before it is opened again. */
+const RECONNECT_MS = 3000;
+
+/** Server-sent events over fetch, opened again when they drop. */
+class FetchEvents implements EventStream {
+	private listeners = new Map<
+		string,
+		Set<(message: { data: string }) => void>
+	>();
+	private controller = new AbortController();
+
+	constructor(private path: string) {
+		void this.run();
+	}
+
+	addEventListener(
+		type: string,
+		listener: (message: { data: string }) => void,
+	) {
+		const set = this.listeners.get(type) ?? new Set();
+		set.add(listener);
+		this.listeners.set(type, set);
+	}
+
+	close() {
+		this.controller.abort();
+	}
+
+	private async run() {
+		const { signal } = this.controller;
+		while (!signal.aborted) {
+			try {
+				const response = await withVisitor(this.path, {
+					signal,
+					headers: { accept: "text/event-stream" },
+				});
+				if (response.ok && response.body) await this.read(response.body);
+			} catch {
+				// Dropped or refused: tried again below, unless closed.
+			}
+			if (signal.aborted) return;
+			await new Promise((resolve) => setTimeout(resolve, RECONNECT_MS));
+		}
+	}
+
+	private async read(body: ReadableStream<Uint8Array>) {
+		const reader = body.getReader();
+		const decoder = new TextDecoder();
+		let buffer = "";
+		for (;;) {
+			const { value, done } = await reader.read();
+			if (done) return;
+			const { events, rest } = parseEvents(
+				buffer + decoder.decode(value, { stream: true }),
+			);
+			buffer = rest;
+			for (const event of events) {
+				for (const listener of this.listeners.get(event.type) ?? []) {
+					listener({ data: event.data });
+				}
+			}
+		}
+	}
+}
+
+/**
+ * The whole events in `text`, server-sent as `event:` and `data:` lines
+ * with a blank line after each, and what is left of one still arriving.
+ */
+export function parseEvents(text: string): {
+	events: { type: string; data: string }[];
+	rest: string;
+} {
+	const blocks = text.replace(/\r\n?/g, "\n").split("\n\n");
+	const rest = blocks.pop() ?? "";
+	const events: { type: string; data: string }[] = [];
+	for (const block of blocks) {
+		let type = "message";
+		const data: string[] = [];
+		for (const line of block.split("\n")) {
+			if (line.startsWith("event:")) type = line.slice(6).trim();
+			else if (line.startsWith("data:")) {
+				data.push(line.slice(5).replace(/^ /, ""));
+			}
+		}
+		if (data.length > 0) events.push({ type, data: data.join("\n") });
+	}
+	return { events, rest };
+}
+
 /** Keeps cached sessions in step with the server's job events. */
 export function useLiveJobs(): void {
 	const client = useQueryClient();
 	useEffect(() => {
-		const source = new EventSource("/api/events");
+		const source = openEvents("/api/events");
 		let order: Promise<void> = Promise.resolve();
 		let connectedBefore = false;
 		source.addEventListener("ready", () => {

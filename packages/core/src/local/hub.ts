@@ -89,6 +89,13 @@ interface HubInfo {
 	license: string | null;
 }
 
+/** A URL without the slashes it ends with, lowercased; no regex, so no backtracking. */
+function withoutTrailingSlashes(url: string): string {
+	let end = url.length;
+	while (end > 0 && url[end - 1] === "/") end--;
+	return url.slice(0, end).toLowerCase();
+}
+
 /**
  * Text from Hugging Face, made safe to print: no control characters, and no
  * invisible format characters (such as bidi overrides) that could reorder
@@ -238,9 +245,7 @@ export function catalogModelFor(
 			file;
 	const found =
 		(file && models.find((model) => urls(model).some(usesFile))) ||
-		models.find(
-			(model) => model.homepage.toLowerCase().replace(/\/+$/, "") === repo,
-		) ||
+		models.find((model) => withoutTrailingSlashes(model.homepage) === repo) ||
 		models.find((model) => urls(model).some(fromRepo));
 	return found?.id ?? null;
 }

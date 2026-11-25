@@ -261,4 +261,6 @@ test("the page's script writes the repository only as text", async () => {
 		/innerHTML|outerHTML|insertAdjacentHTML|document\.write/,
 	);
 	expect(code).toContain("hubTarget(");
+	// The only place it sends the browser is Hatchlight's own scheme.
+	expect(code).toContain("const link = `hatchlight://hf/${target.repo}");
 });

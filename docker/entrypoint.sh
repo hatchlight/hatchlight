@@ -39,6 +39,17 @@ if [ "$(id -u)" = 0 ]; then
 	# installs made before this too.
 	chmod 700 "$HATCHLIGHT_DATA_DIR" "$HATCHLIGHT_TRAINER_DIR" ||
 		echo "Could not make $HATCHLIGHT_DATA_DIR private (a network share?)." >&2
+else
+	# Started as a user already (docker run --user, a hosted container such
+	# as a Hugging Face Space): nothing can be handed over, so the folders
+	# must be that user's to write. Said plainly, before the app fails.
+	for dir in "${HATCHLIGHT_DATA_DIR:-}" "${HATCHLIGHT_MODELS_DIR:-}"; do
+		[ -n "$dir" ] || continue
+		if ! mkdir -p "$dir" 2>/dev/null || [ ! -w "$dir" ]; then
+			echo "Hatchlight runs as user $(id -u), who cannot write to $dir. Make it writable by that user, or start the container as root with PUID and PGID set." >&2
+			exit 73
+		fi
+	done
 fi
 
 # Said here with an example for Docker, before the app says it its own way.

@@ -48,7 +48,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { AccountMenu } from "./Accounts";
-import { api } from "./api";
+import { api, useDemo } from "./api";
 import { Chat } from "./Chat";
 import { onLinks } from "./desktop";
 import { useI18n } from "./i18n";
@@ -86,7 +86,7 @@ function sidebarStartsOpen(): boolean {
 
 export function App() {
 	useLiveJobs();
-	const route = useRoute();
+	const shown = useRoute();
 	// The desktop app was opened with a link, such as from Hugging Face.
 	useEffect(
 		() =>
@@ -96,6 +96,16 @@ export function App() {
 			}),
 		[],
 	);
+	// A public demo has neither the assistant, nor models or settings to
+	// change: it opens the advanced view of a session instead.
+	const demo = useDemo() !== null;
+	const route: Route = !demo
+		? shown
+		: shown.view === "chat"
+			? { ...shown, talk: false }
+			: shown.view === "gallery"
+				? shown
+				: { view: "chat", talk: false };
 	// Reference images for the next prompt. Lives here so the gallery can add to it.
 	const [references, setReferences] = useState<string[]>([]);
 
@@ -128,11 +138,11 @@ export function App() {
 			className="relative h-full min-h-0"
 		>
 			<UpdateToast />
-			<KeysLostToast />
-			<AppSidebar route={route} />
+			{!demo && <KeysLostToast />}
+			<AppSidebar route={route} demo={demo} />
 			<SidebarInset className="min-h-0 overflow-hidden bg-bg">
 				{route.view === "chat" ? (
-					<SessionHeader route={route} />
+					<SessionHeader route={route} demo={demo} />
 				) : (
 					<MobileBar />
 				)}
@@ -170,14 +180,14 @@ export function App() {
 						{route.view === "settings" && <Settings />}
 					</Suspense>
 				</div>
-				<BottomNav route={route} />
+				<BottomNav route={route} demo={demo} />
 			</SidebarInset>
 		</SidebarProvider>
 	);
 }
 
 /** Sessions and the places of the app: a column on wide screens, a drawer on phones. */
-function AppSidebar({ route }: { route: Route }) {
+function AppSidebar({ route, demo }: { route: Route; demo: boolean }) {
 	const { t } = useI18n();
 	const client = useQueryClient();
 	const { isMobile, setOpenMobile } = useSidebar();
@@ -211,7 +221,7 @@ function AppSidebar({ route }: { route: Route }) {
 			icon: Cpu,
 			current: route.view === "models" || route.view === "hub",
 		},
-	];
+	].filter((place) => !demo || place.to !== href.models);
 
 	return (
 		<>
@@ -337,20 +347,22 @@ function AppSidebar({ route }: { route: Route }) {
 					</SidebarGroup>
 				</SidebarContent>
 				<SidebarFooter className="p-4 group-data-[collapsible=icon]:px-2">
-					<SidebarMenu>
-						<SidebarMenuItem>
-							<SidebarMenuButton
-								tooltip={t("nav.settings")}
-								isActive={route.view === "settings"}
-								onClick={close}
-								render={<a href={href.settings} />}
-								className="h-10 rounded-lg"
-							>
-								<SettingsIcon />
-								<span>{t("nav.settings")}</span>
-							</SidebarMenuButton>
-						</SidebarMenuItem>
-					</SidebarMenu>
+					{!demo && (
+						<SidebarMenu>
+							<SidebarMenuItem>
+								<SidebarMenuButton
+									tooltip={t("nav.settings")}
+									isActive={route.view === "settings"}
+									onClick={close}
+									render={<a href={href.settings} />}
+									className="h-10 rounded-lg"
+								>
+									<SettingsIcon />
+									<span>{t("nav.settings")}</span>
+								</SidebarMenuButton>
+							</SidebarMenuItem>
+						</SidebarMenu>
+					)}
 					{/* Who is signed in, on a server shared by several people. */}
 					<div className="group-data-[collapsible=icon]:hidden">
 						<AccountMenu className="shrink-0 rounded-md px-2 py-1 text-xs text-dim hover:text-ink" />
@@ -393,7 +405,13 @@ function AppSidebar({ route }: { route: Route }) {
 }
 
 /** A session's name and the switch between talking and the advanced view. */
-function SessionHeader({ route }: { route: Extract<Route, { view: "chat" }> }) {
+function SessionHeader({
+	route,
+	demo,
+}: {
+	route: Extract<Route, { view: "chat" }>;
+	demo: boolean;
+}) {
 	const { t } = useI18n();
 	const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessions });
 	const title = sessions.data?.find((s) => s.id === route.sessionId)?.title;
@@ -414,16 +432,18 @@ function SessionHeader({ route }: { route: Extract<Route, { view: "chat" }> }) {
 			<h1 className="min-w-0 flex-1 truncate font-display text-[22px] font-bold tracking-[-0.02em] md:text-[26px]">
 				{title ?? t("nav.newSession")}
 			</h1>
-			<Tabs
-				value={route.talk ? "talk" : "advanced"}
-				onValueChange={(value) => go(value === "talk")}
-				className="max-md:w-full"
-			>
-				<TabsList aria-label={t("session.mode")} className="max-md:w-full">
-					<TabsTrigger value="talk">{t("session.chat")}</TabsTrigger>
-					<TabsTrigger value="advanced">{t("session.advanced")}</TabsTrigger>
-				</TabsList>
-			</Tabs>
+			{!demo && (
+				<Tabs
+					value={route.talk ? "talk" : "advanced"}
+					onValueChange={(value) => go(value === "talk")}
+					className="max-md:w-full"
+				>
+					<TabsList aria-label={t("session.mode")} className="max-md:w-full">
+						<TabsTrigger value="talk">{t("session.chat")}</TabsTrigger>
+						<TabsTrigger value="advanced">{t("session.advanced")}</TabsTrigger>
+					</TabsList>
+				</Tabs>
+			)}
 		</header>
 	);
 }
@@ -439,7 +459,7 @@ function MobileBar() {
 }
 
 /** The places of the app, under the thumb on phones. */
-function BottomNav({ route }: { route: Route }) {
+function BottomNav({ route, demo }: { route: Route; demo: boolean }) {
 	const { t } = useI18n();
 	const items = [
 		{
@@ -466,11 +486,16 @@ function BottomNav({ route }: { route: Route }) {
 			icon: SettingsIcon,
 			current: route.view === "settings",
 		},
-	];
+	].filter(
+		(item) => !demo || (item.to !== href.models && item.to !== href.settings),
+	);
 	return (
 		<nav
 			aria-label={t("nav.main")}
-			className="fixed inset-x-0 bottom-0 z-30 grid h-[4.25rem] grid-cols-4 border-t border-sidebar-border bg-rail/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
+			className={cn(
+				"fixed inset-x-0 bottom-0 z-30 grid h-[4.25rem] border-t border-sidebar-border bg-rail/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden",
+				demo ? "grid-cols-2" : "grid-cols-4",
+			)}
 		>
 			{items.map((item) => (
 				<a

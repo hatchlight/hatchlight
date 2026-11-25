@@ -3,6 +3,7 @@ export * from "./assets";
 export * from "./chat";
 export * from "./db/accounts";
 export * from "./db/repository";
+export * from "./db/visitors";
 export * from "./engine";
 export * from "./errors";
 export * from "./hugging-face";

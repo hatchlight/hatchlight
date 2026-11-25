@@ -1,4 +1,4 @@
-import { hubLink, hubRepoUrl, hubTarget } from "@hatchlight/core/hugging-face";
+import { hubRepoUrl, hubTarget } from "@hatchlight/core/hugging-face";
 
 /**
  * hatchlight.app/hf?repo=<owner>/<repo>&file=<path>, the page Hugging Face's
@@ -12,7 +12,9 @@ const query = new URLSearchParams(location.search);
 const target = hubTarget(query.get("repo"), query.get("file"));
 
 if (target) {
-	const link = hubLink(target);
+	// Built here with its fixed scheme, so the page can only ever send the
+	// browser to Hatchlight itself. Same form as hubLink in core.
+	const link = `hatchlight://hf/${target.repo}${target.file ? `?${new URLSearchParams({ file: target.file })}` : ""}`;
 	for (const element of document.querySelectorAll<HTMLElement>(
 		"[data-found]",
 	)) {

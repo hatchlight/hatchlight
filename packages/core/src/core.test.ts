@@ -603,11 +603,17 @@ describe("job engine", () => {
 			.turns[0]?.jobs[0];
 		app.provider.failWith = null;
 		const id = failed?.id as string;
-		await Promise.all([
+		// Only one says it queued the job; the other found it under way.
+		const queued = await Promise.all([
 			app.service.retryJob(LOCAL_USER, id),
 			app.service.retryJob(LOCAL_USER, id),
 		]);
+		expect(queued.sort()).toEqual([false, true]);
+		expect(app.engine.unfinished()).toBe(1);
+		expect(app.engine.unfinished(LOCAL_USER.userId)).toBe(1);
+		expect(app.engine.unfinished("someone else")).toBe(0);
 		await app.engine.idle();
+		expect(app.engine.unfinished()).toBe(0);
 		// One submit for the first run, one for the retry.
 		expect(app.provider.submitted).toHaveLength(2);
 	});

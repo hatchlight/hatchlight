@@ -23,7 +23,7 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { api, assetUrl, previewUrl, type SessionDetail } from "./api";
+import { api, assetUrl, previewUrl, type SessionDetail, useDemo } from "./api";
 import { Composer, type Draft } from "./Composer";
 import { DevelopedImage, LatentFrame } from "./Develop";
 import { duration, usd } from "./format";
@@ -556,10 +556,12 @@ export function Chat({
 				}
 			: undefined;
 	const loadError = session.error ?? models.error ?? providers.error;
+	const demo = useDemo() !== null;
 	const assistant = useQuery({
 		queryKey: ["assistant", sessionId],
 		queryFn: () => api.assistantView(sessionId as string),
-		enabled: sessionId != null,
+		// A public demo has no assistant.
+		enabled: sessionId != null && !demo,
 	});
 	// Turns the assistant made, to say they were asked for in the chat.
 	const fromChat = new Set(
@@ -620,7 +622,9 @@ export function Chat({
 											addReference(id);
 										}}
 										upscale={upscale}
-										talkHref={sessionId ? href.talk(sessionId) : undefined}
+										talkHref={
+											sessionId && !demo ? href.talk(sessionId) : undefined
+										}
 										onDeleted={() => {
 											setInspecting(false);
 											setSelected(null);

@@ -111,7 +111,7 @@ export function allows(access: Access, user: UserRow): boolean {
 }
 
 /** The route a request reached, as the access registry names it. */
-function routeOf(c: Context): { method: string; path: string } | null {
+export function routeOf(c: Context): { method: string; path: string } | null {
 	const route = matchedRoutes(c).find(
 		(r) => r.method !== "ALL" && r.path.startsWith("/api/"),
 	);
