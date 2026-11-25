@@ -159,6 +159,6 @@
 	"vs.us.install": "One installer, no Python; the installers are not signed yet. Also a command line, the npm package (bunx hatchlight) and a Docker image for a home server.",
 	"vs.us.license": "MIT. No account and no telemetry.",
 	"vs.us.local": "Windows (NVIDIA, AMD, other cards through Vulkan, CPU), Macs with Apple Silicon, and Linux (NVIDIA and CPU, still early). Intel Macs use cloud models only. Works offline once a model is downloaded.",
-	"vs.us.models": "A catalog of 33 picture and video models, among them SDXL, FLUX.1 schnell, FLUX.2 klein, Z-Image, Qwen-Image and Wan 2.2, each in versions sized for your memory. A new model arrives only once it is added to the catalog.",
+	"vs.us.models": "A catalog of picture and video models, among them SDXL, FLUX.1 schnell, FLUX.2 klein, Z-Image, Qwen-Image and Wan 2.2, each in versions sized for your memory. A new model arrives only once it is added to the catalog.",
 	"vs.us.what": "A desktop app for pictures and videos: one prompt goes to several models, and the results appear side by side with their time and cost. No graph to build."
 }
