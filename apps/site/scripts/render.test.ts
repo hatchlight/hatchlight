@@ -107,7 +107,9 @@ test("the structured data cannot close its script", () => {
 	const page = renderPage(template, LANGUAGES[0] as never, en, {
 		"meta.description": "</script><script>alert(1)</script>",
 	});
-	const json = page.match(/<script type="application\/ld\+json">(.*?)<\/script>/)?.[1];
+	const json = page.match(
+		/<script type="application\/ld\+json">(.*?)<\/script>/,
+	)?.[1];
 	expect(json).toContain("\\u003c/script>");
 	expect(JSON.parse(json ?? "null").description).toBe(
 		"</script><script>alert(1)</script>",
