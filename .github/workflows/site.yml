@@ -4,7 +4,13 @@ name: Site
 on:
   push:
     branches: [main]
-    paths: ["apps/site/**", "packages/i18n/**", "packages/motion/**", ".github/workflows/site.yml"]
+    paths:
+      [
+        "apps/site/**",
+        "packages/i18n/**",
+        "packages/motion/**",
+        ".github/workflows/site.yml",
+      ]
   workflow_dispatch:
 
 permissions:
