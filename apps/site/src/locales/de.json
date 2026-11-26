@@ -55,7 +55,7 @@
 	"more.character.title": "Dieselbe Figur behalten",
 	"more.chat.body": "Sag dem Assistenten in deiner eigenen Sprache, was du willst. Er wählt Modelle, schreibt die Prompts und fragt nach, bevor etwas Kostenpflichtiges passiert.",
 	"more.chat.title": "Oder einfach fragen",
-	"more.folders.body": "Zeige Hatchlight deinen ComfyUI-, AUTOMATIC1111-, Forge- oder Stability-Matrix-Ordner: Es nutzt die SDXL- und SD-1.5-Checkpoints und LoRAs dort, ohne sie zu kopieren.",
+	"more.folders.body": "Zeige Hatchlight deinen ComfyUI-, AUTOMATIC1111-, Forge-, Forge-Neo-, SwarmUI- oder Stability-Matrix-Ordner: Es nutzt die SDXL- und SD-1.5-Checkpoints und LoRAs dort, ohne sie zu kopieren.",
 	"more.folders.title": "Die Modelle nutzen, die du hast",
 	"more.guide.body": "Behalte Umrisse, Pose oder Tiefe eines anderen Bildes mit Z-Image Turbo. Auf deiner Karte findet es Umrisse selbst; für Pose oder Tiefe gib eine fertige Karte an oder lass fal aus einem beliebigen Foto eine erstellen.",
 	"more.guide.title": "Einem Leitbild folgen",
