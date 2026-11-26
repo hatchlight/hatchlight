@@ -20,6 +20,8 @@ export function appText(t: I18n["t"], app: ModelFolderApp | null): string {
 			return t("folders.app.comfyui");
 		case "a1111":
 			return t("folders.app.a1111");
+		case "swarmui":
+			return t("folders.app.swarmui");
 		case "stabilityMatrix":
 			return t("folders.app.stabilityMatrix");
 		case null:
@@ -116,7 +118,7 @@ function FolderRow({ folder }: { folder: ModelFolder }) {
 }
 
 /**
- * Folders of other apps (ComfyUI, AUTOMATIC1111, Forge, Stability Matrix)
+ * Folders of other apps (ComfyUI, AUTOMATIC1111, Forge, Forge Neo, SwarmUI, Stability Matrix)
  * whose models are used where they are, and installs found to add.
  */
 export function ModelFolders() {

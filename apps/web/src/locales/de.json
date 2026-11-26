@@ -399,20 +399,21 @@
 	"fit.none": "Zu groß für diesen Computer",
 	"fit.slow": "Kann langsam sein",
 	"folders.add": "Ordner hinzufügen",
-	"folders.app.a1111": "AUTOMATIC1111 oder Forge",
+	"folders.app.a1111": "AUTOMATIC1111, Forge oder Forge Neo",
 	"folders.app.comfyui": "ComfyUI",
 	"folders.app.none": "Ein Ordner",
+	"folders.app.swarmui": "SwarmUI",
 	"folders.app.stabilityMatrix": "Stability Matrix",
 	"folders.checkpoints": {
 		"one": "{count} Checkpoint",
 		"other": "{count} Checkpoints"
 	},
-	"folders.empty": "Noch keine. Füge den Ordner von ComfyUI, AUTOMATIC1111, Forge oder Stability Matrix hinzu, oder deren Modellordner.",
+	"folders.empty": "Noch keine. Füge den Ordner von ComfyUI, AUTOMATIC1111, Forge, Forge Neo, SwarmUI oder Stability Matrix hinzu, oder deren Modellordner.",
 	"folders.found": "{app} gefunden unter {path}",
 	"folders.from": "Aus {app}",
 	"folders.fromFolder": "Aus einem verknüpften Ordner",
 	"folders.holds": "{app}: {checkpoints} und {loras} werden hier verwendet.",
-	"folders.intro": "Du hast schon Modelle in ComfyUI, AUTOMATIC1111, Forge oder Stability Matrix? Füge diesen Ordner hinzu, und Hatchlight verwendet seine Checkpoints und LoRAs dort, wo sie liegen, ohne sie zu kopieren. Verwendet werden nur SDXL- und SD-1.5-Checkpoints sowie LoRAs für eine Familie, die Hatchlight ausführt.",
+	"folders.intro": "Du hast schon Modelle in ComfyUI, AUTOMATIC1111, Forge, Forge Neo, SwarmUI oder Stability Matrix? Füge diesen Ordner hinzu, und Hatchlight verwendet seine Checkpoints und LoRAs dort, wo sie liegen, ohne sie zu kopieren. Verwendet werden nur SDXL- und SD-1.5-Checkpoints sowie LoRAs für eine Familie, die Hatchlight ausführt.",
 	"folders.loras": {
 		"one": "{count} LoRA",
 		"other": "{count} LoRAs"

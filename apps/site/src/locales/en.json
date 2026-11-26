@@ -55,7 +55,7 @@
 	"more.character.title": "Keep the same character",
 	"more.chat.body": "Tell the assistant what you want, in your own language. It picks models, writes the prompts, and asks before anything paid.",
 	"more.chat.title": "Or just ask",
-	"more.folders.body": "Point Hatchlight at your ComfyUI, AUTOMATIC1111, Forge or Stability Matrix folder: it uses the SDXL and SD 1.5 checkpoints and LoRAs there, without copying them.",
+	"more.folders.body": "Point Hatchlight at your ComfyUI, AUTOMATIC1111, Forge, Forge Neo, SwarmUI or Stability Matrix folder: it uses the SDXL and SD 1.5 checkpoints and LoRAs there, without copying them.",
 	"more.folders.title": "Use the models you have",
 	"more.guide.body": "Keep another picture's outlines, pose or depth with Z-Image Turbo. On your card it finds outlines itself; for pose or depth, give a ready map, or let fal make one from any photo.",
 	"more.guide.title": "Follow a guide picture",

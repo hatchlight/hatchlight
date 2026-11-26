@@ -264,9 +264,10 @@ export interface CheckpointInfo {
 export const MODEL_FOLDER_APPS = [
 	"comfyui",
 	"a1111",
+	"swarmui",
 	"stabilityMatrix",
 ] as const;
-/** `a1111` stands for AUTOMATIC1111 and Forge, which share a layout. */
+/** `a1111` stands for AUTOMATIC1111, Forge and Forge Neo, which share a layout. */
 export type ModelFolderApp = (typeof MODEL_FOLDER_APPS)[number];
 
 /** Where a model found in another app's folder comes from. */
