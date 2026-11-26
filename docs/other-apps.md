@@ -140,7 +140,15 @@ AUTOMATIC1111's. Choosing a paid model through `POST /sdapi/v1/options` is
 refused, since requests that name no model never spend.
 
 Sizes such as `1792x1024` become the nearest shape the model makes, here
-16:9: models make pictures at the sizes they were trained for.
+16:9, at the size the model was trained for: the shape asked is kept, the
+number of pixels is the model's own. Most models make 1024 pixels on the
+longer side; SDXL Turbo and Stable Diffusion 1.5 (and checkpoints made from
+it) make 512, so `1024x768` comes back as 512×384 from them, and
+`1024x1024` as 512×512. Asked for more, they repeat things and lose detail
+rather than add it. The size made is told back: as `size` in OpenAI's
+answer, and as `width` and `height` in AUTOMATIC1111's `info`. Choose a
+1024 model, such as Stable Diffusion XL, FLUX or Z-Image, for larger
+pictures.
 
 AUTOMATIC1111's `<lora:name:weight>` tags in a prompt use your LoRAs when
 the name matches one in **Models > LoRAs** that fits the model.
@@ -187,7 +195,7 @@ OpenAI's API:
 - `POST /v1/images/generations`: `prompt`, `model`, `n` (1 to 8), `size`,
   `response_format` (`b64_json`, the default, or `url`, a link to the picture
   on this Hatchlight), and `seed`, which OpenAI does not have. `quality` and
-  `style` are ignored.
+  `style` are ignored. The answer gives the size made as `size`.
 - `POST /v1/images/edits`: the same, as a form with one or more `image` files
   and an optional `mask` (transparent where to change). A mask needs one
   picture and a model that redraws only part of one; otherwise the request

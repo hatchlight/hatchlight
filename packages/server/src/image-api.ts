@@ -695,6 +695,18 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 		};
 	}
 
+	/**
+	 * The size of the first picture made. Each model makes pictures at the
+	 * size it was trained for, in the shape asked: SDXL Turbo makes 512
+	 * pixels when asked for 1024, and both APIs say so.
+	 */
+	async function sizeMade(ctx: UserContext, made: Made) {
+		const first = made.assets[0];
+		if (!first) return null;
+		const { blob } = await service.getAssetFile(ctx, first.asset.id);
+		return new Bun.Image(await blob.arrayBuffer()).metadata().catch(() => null);
+	}
+
 	/** A picture made, as PNG: what both APIs' clients expect. */
 	async function png(ctx: UserContext, asset: Asset): Promise<string> {
 		const { blob } = await service.getAssetFile(ctx, asset.id);
@@ -774,7 +786,13 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 				...(revisedPrompt && { revised_prompt: revisedPrompt }),
 			});
 		}
-		return c.json({ created: Math.floor(Date.now() / 1000), data });
+		const size = await sizeMade(ctx, made);
+		return c.json({
+			created: Math.floor(Date.now() / 1000),
+			data,
+			// As OpenAI's newer models answer: the size made, not the one asked.
+			...(size && { size: `${size.width}x${size.height}` }),
+		});
 	};
 
 	app.get("/v1/models", async (c) =>
@@ -875,14 +893,7 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 		const used = made.model.capabilities.seed ? (seed ?? -1) : -1;
 		const seeds = images.map((_, i) => (used >= 0 ? (used + i) % SEEDS : -1));
 		// The size made, which is the model's nearest to the one asked.
-		const size = await (async () => {
-			const first = made.assets[0];
-			if (!first) return null;
-			const { blob } = await service.getAssetFile(ctx, first.asset.id);
-			return new Bun.Image(await blob.arrayBuffer())
-				.metadata()
-				.catch(() => null);
-		})();
+		const size = await sizeMade(ctx, made);
 		const prompt = typeof body.prompt === "string" ? body.prompt : "";
 		return c.json({
 			images,

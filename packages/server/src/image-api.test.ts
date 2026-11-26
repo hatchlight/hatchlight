@@ -697,6 +697,21 @@ test("seeds wrap at 32 bits, and A1111's info says only what was used", async ()
 	expect(info.width).toBeLessThan(1024);
 });
 
+test("OpenAI's answer tells the size made, not the size asked", async () => {
+	const { post } = await setup();
+	for (const format of ["b64_json", "url"]) {
+		const made = await post("/v1/images/generations", {
+			prompt: "a harbour",
+			size: "1792x1024",
+			response_format: format,
+		});
+		const { size } = (await made.json()) as { size: string };
+		const [width = 0, height = 0] = size.split("x").map(Number);
+		expect(width / height).toBeCloseTo(16 / 9, 1);
+		expect(width).toBeLessThan(1792);
+	}
+});
+
 test("apps share one session past twenty, and a deleted one is made again", async () => {
 	const { call, post } = await setup();
 	for (let i = 0; i < 21; i++) {
