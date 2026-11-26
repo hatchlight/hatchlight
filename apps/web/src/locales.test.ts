@@ -6,6 +6,7 @@ import { checkCatalog } from "@hatchlight/i18n";
 import de from "./locales/de.json";
 import en from "./locales/en.json";
 import es from "./locales/es.json";
+import fr from "./locales/fr.json";
 import ptBR from "./locales/pt-BR.json";
 
 const sourceDir = import.meta.dir;
@@ -35,6 +36,10 @@ describe("catalogs", () => {
 
 	test("the German catalog matches the English one", () => {
 		expect(checkCatalog(en, de)).toEqual([]);
+	});
+
+	test("the French catalog matches the English one", () => {
+		expect(checkCatalog(en, fr)).toEqual([]);
 	});
 
 	test("every key the app uses exists in English", () => {

@@ -8,6 +8,7 @@ import "./index.css";
 import de from "./locales/de.json";
 import en from "./locales/en.json";
 import es from "./locales/es.json";
+import fr from "./locales/fr.json";
 import ptBR from "./locales/pt-BR.json";
 
 /**
@@ -20,10 +21,11 @@ const catalogs: Record<string, Partial<Record<keyof typeof en, Message>>> = {
 	"pt-BR": ptBR,
 	es,
 	de,
+	fr,
 };
 const language = matchLanguage(
 	navigator.languages ?? [],
-	["en", "pt-BR", "es", "de"],
+	["en", "pt-BR", "es", "de", "fr"],
 	"en",
 );
 const { t } = createTranslator(language, en, catalogs[language]);

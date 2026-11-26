@@ -17,6 +17,7 @@ import {
 import de from "./locales/de.json";
 import en from "./locales/en.json";
 import es from "./locales/es.json";
+import fr from "./locales/fr.json";
 import ptBR from "./locales/pt-BR.json";
 
 export type MessageKey = Extract<keyof typeof en, string>;
@@ -29,6 +30,7 @@ const translations: Record<string, Partial<Record<MessageKey, Message>>> = {
 	"pt-BR": ptBR,
 	es,
 	de,
+	fr,
 };
 
 export const languages: Language[] = [
@@ -36,6 +38,7 @@ export const languages: Language[] = [
 	{ code: "pt-BR", name: "Português (Brasil)" },
 	{ code: "es", name: "Español" },
 	{ code: "de", name: "Deutsch" },
+	{ code: "fr", name: "Français" },
 ];
 
 const STORAGE_KEY = "hatchlight.language";
