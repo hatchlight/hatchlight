@@ -16,4 +16,5 @@ export const LANGUAGES: SiteLanguage[] = [
 		path: "pt-BR/",
 		ogLocale: "pt_BR",
 	},
+	{ code: "es", name: "Español", path: "es/", ogLocale: "es_ES" },
 ];
