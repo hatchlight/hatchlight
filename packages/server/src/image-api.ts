@@ -18,6 +18,7 @@ import {
 	type ProviderStatus,
 	paidError,
 	type ReelService,
+	type Sampler,
 	type Settings,
 	type SettingsStore,
 	TERMINAL_STATUSES,
@@ -42,6 +43,8 @@ const MAX_PICTURES_BYTES = 80 * 1024 * 1024;
 const MAX_ASK_BYTES = 1024 * 1024;
 /** More than any prompt a model reads. */
 const MAX_PROMPT_LENGTH = 32_000;
+/** As long as a turn's negative prompt may be. */
+const MAX_NEGATIVE_LENGTH = 8000;
 /** As many as a turn makes in the app. */
 const MAX_COUNT = 8;
 /** OpenAI takes up to 16 pictures to edit. */
@@ -93,7 +96,53 @@ interface Ask {
 	/** White is redrawn, already in Hatchlight's convention. */
 	mask?: Uint8Array;
 	strength?: number;
+	/** Used by models that read one; others leave it out. */
+	negativePrompt?: string;
+	/** Used only when the person lets other apps set them. */
+	steps?: number;
+	cfgScale?: number;
+	sampler?: Sampler;
 }
+
+/**
+ * AUTOMATIC1111's samplers the engine has, by their names and aliases.
+ * Others, such as the SDE ones, are not in the engine: they are ignored.
+ */
+const A1111_SAMPLERS: { name: string; aliases: string[]; sampler: Sampler }[] =
+	[
+		{ name: "Euler a", aliases: ["k_euler_a"], sampler: "euler_a" },
+		{ name: "Euler", aliases: ["k_euler"], sampler: "euler" },
+		{ name: "Heun", aliases: ["k_heun"], sampler: "heun" },
+		{ name: "DPM2", aliases: ["k_dpm_2"], sampler: "dpm2" },
+		{ name: "DPM++ 2S a", aliases: ["k_dpmpp_2s_a"], sampler: "dpm++2s_a" },
+		{ name: "DPM++ 2M", aliases: ["k_dpmpp_2m"], sampler: "dpm++2m" },
+		{ name: "LCM", aliases: ["k_lcm"], sampler: "lcm" },
+	];
+
+/**
+ * The engine's sampler for an AUTOMATIC1111 name. Older clients name the
+ * schedule too ("DPM++ 2M Karras"): the sampler is kept, the schedule is
+ * the engine's own.
+ */
+export function samplerOf(name: string): Sampler | undefined {
+	const bare = name
+		.trim()
+		.replace(
+			/\s+(karras|exponential|polyexponential|sgm uniform|uniform|simple|normal|beta|automatic)$/i,
+			"",
+		)
+		.toLowerCase();
+	return A1111_SAMPLERS.find(
+		(s) =>
+			s.name.toLowerCase() === bare ||
+			s.aliases.includes(bare) ||
+			s.sampler === bare,
+	)?.sampler;
+}
+
+/** The AUTOMATIC1111 name of an engine sampler. */
+const a1111Sampler = (sampler: Sampler | undefined) =>
+	A1111_SAMPLERS.find((s) => s.sampler === sampler)?.name ?? null;
 
 interface Made {
 	model: ModelSpec;
@@ -619,6 +668,15 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 		);
 		// A model makes so many at once; more come in more turns.
 		const per = Math.max(1, model.capabilities.maxCount);
+		// Each model runs with its own settings, unless the person lets apps
+		// set them; the service keeps them within the model's limits.
+		const sampling = (await settingsOf(ctx)).otherAppsSampling
+			? {
+					...(ask.steps != null && { steps: ask.steps }),
+					...(ask.cfgScale != null && { cfgScale: ask.cfgScale }),
+					...(ask.sampler && { sampler: ask.sampler }),
+				}
+			: {};
 		try {
 			const references: string[] = [];
 			for (const picture of ask.pictures) {
@@ -640,6 +698,8 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 					...(loras.length > 0 && { loras }),
 					...(character && { characterId: character }),
 					...(style && { styleId: style }),
+					...(ask.negativePrompt && { negativePrompt: ask.negativePrompt }),
+					...sampling,
 				});
 				for (const job of turn.jobs) {
 					jobIds.push(job.id);
@@ -749,6 +809,16 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 		}
 		return prompt;
 	};
+	/** A negative prompt, as both APIs may send one; empty is none. */
+	const negativeOf = (value: unknown) => {
+		const negative = text(value, "negative_prompt")?.trim();
+		if (negative && negative.length > MAX_NEGATIVE_LENGTH) {
+			throw new ValidationError(
+				`negative_prompt must be at most ${MAX_NEGATIVE_LENGTH} characters`,
+			);
+		}
+		return negative ? { negativePrompt: negative } : {};
+	};
 
 	// OpenAI's image API.
 
@@ -815,6 +885,8 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 			model: text(body.model, "model"),
 			count: whole(body.n, "n", 1, 1, MAX_COUNT),
 			...sizeOf(body.size),
+			// Not OpenAI's, but cheap to honour for models that read one.
+			...negativeOf(body.negative_prompt),
 			...(body.seed != null && {
 				seed: whole(body.seed, "seed", 0, 0, 2 ** 32 - 1),
 			}),
@@ -859,6 +931,7 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 			model: field("model"),
 			count: whole(field("n"), "n", 1, 1, MAX_COUNT),
 			...sizeOf(field("size")),
+			...negativeOf(field("negative_prompt")),
 			...(field("seed") && {
 				seed: whole(field("seed"), "seed", 0, 0, 2 ** 32 - 1),
 			}),
@@ -895,30 +968,62 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 		// The size made, which is the model's nearest to the one asked.
 		const size = await sizeMade(ctx, made);
 		const prompt = typeof body.prompt === "string" ? body.prompt : "";
+		// What the job was run with, as the service kept it: the negative
+		// prompt only for a model that reads one, the steps, CFG and sampler
+		// only when the person lets apps set them, within the model's limits.
+		const params = made.assets[0]?.asset.params;
+		const negative = params?.negativePrompt ?? "";
+		const steps = params?.steps ?? null;
+		const cfgScale = params?.cfgScale ?? null;
+		const sampler = a1111Sampler(params?.sampler);
+		// What was asked and not used, so an app can tell it was dropped.
+		const ignored = [
+			typeof body.negative_prompt === "string" &&
+				body.negative_prompt.trim() !== "" &&
+				!negative &&
+				"negative_prompt",
+			typeof body.steps === "number" && steps == null && "steps",
+			typeof body.cfg_scale === "number" && cfgScale == null && "cfg_scale",
+			typeof body.sampler_name === "string" &&
+				body.sampler_name !== "" &&
+				sampler == null &&
+				"sampler_name",
+		].filter((name): name is string => !!name);
+		const settings = [
+			steps != null && `Steps: ${steps}`,
+			sampler && `Sampler: ${sampler}`,
+			cfgScale != null && `CFG scale: ${cfgScale}`,
+			`Seed: ${used}`,
+			size && `Size: ${size.width}x${size.height}`,
+			`Model: ${made.model.id}`,
+		]
+			.filter(Boolean)
+			.join(", ");
+		const infotext = `${prompt}${negative ? `\nNegative prompt: ${negative}` : ""}\n${settings}`;
 		return c.json({
 			images,
 			parameters: { ...body, init_images: null, mask: null },
 			info: JSON.stringify({
 				prompt,
 				all_prompts: images.map(() => prompt),
-				negative_prompt: body.negative_prompt ?? "",
+				negative_prompt: negative,
+				all_negative_prompts: images.map(() => negative),
 				seed: used,
 				all_seeds: seeds,
 				subseed: -1,
 				all_subseeds: seeds.map(() => -1),
 				width: size?.width ?? null,
 				height: size?.height ?? null,
-				// Each model runs with its own: what was asked is not used.
-				sampler_name: null,
-				cfg_scale: null,
-				steps: null,
+				// Null when the model ran with its own.
+				sampler_name: sampler,
+				cfg_scale: cfgScale,
+				steps,
+				ignored,
 				batch_size: body.batch_size ?? 1,
 				denoising_strength: body.denoising_strength ?? null,
 				sd_model_name: made.model.id,
 				sd_model_hash: null,
-				infotexts: images.map(
-					() => `${prompt}\nSeed: ${used}, Model: ${made.model.id}`,
-				),
+				infotexts: images.map(() => infotext),
 				cost_usd: made.costUsd,
 			}),
 		});
@@ -942,9 +1047,24 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 		}
 		const size = (value: unknown, name: string) =>
 			whole(value, name, 512, 64, 16_384);
+		// Clients send these with every request, as they always have: kept
+		// only when a number, and held to what a turn takes.
+		const number = (value: unknown, min: number, max: number) =>
+			typeof value === "number" && Number.isFinite(value)
+				? Math.min(max, Math.max(min, value))
+				: undefined;
+		const steps = number(body.steps, 1, 200);
+		const cfgScale = number(body.cfg_scale, 0, 30);
+		const sampler =
+			typeof body.sampler_name === "string"
+				? samplerOf(body.sampler_name)
+				: undefined;
 		return {
-			// Hatchlight has no negative prompt: it is left out.
 			prompt: promptOf(body.prompt, false),
+			...negativeOf(body.negative_prompt),
+			...(steps != null && { steps: Math.round(steps) }),
+			...(cfgScale != null && { cfgScale }),
+			...(sampler && { sampler }),
 			model: text(checkpoint, "sd_model_checkpoint"),
 			count,
 			width: size(body.width, "width"),
@@ -1054,12 +1174,16 @@ export function mountImageApi(app: Hono, options: ImageApiOptions): void {
 		return c.json(null);
 	});
 
-	// Asked by clients before they start; Hatchlight chooses these itself.
+	// Asked by clients before they start. The samplers the engine has; used
+	// only when the person lets apps set them.
 	app.get("/sdapi/v1/samplers", (c) =>
-		c.json([
-			{ name: "Euler a", aliases: ["k_euler_a"], options: {} },
-			{ name: "Euler", aliases: ["k_euler"], options: {} },
-		]),
+		c.json(
+			A1111_SAMPLERS.map(({ name, aliases }) => ({
+				name,
+				aliases,
+				options: {},
+			})),
+		),
 	);
 	app.get("/sdapi/v1/schedulers", (c) =>
 		c.json([{ name: "automatic", label: "Automatic", aliases: null }]),

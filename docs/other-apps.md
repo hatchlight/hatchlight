@@ -194,8 +194,9 @@ OpenAI's API:
 
 - `POST /v1/images/generations`: `prompt`, `model`, `n` (1 to 8), `size`,
   `response_format` (`b64_json`, the default, or `url`, a link to the picture
-  on this Hatchlight), and `seed`, which OpenAI does not have. `quality` and
-  `style` are ignored. The answer gives the size made as `size`.
+  on this Hatchlight), and `seed` and `negative_prompt`, which OpenAI does
+  not have. `quality` and `style` are ignored. The answer gives the size
+  made as `size`.
 - `POST /v1/images/edits`: the same, as a form with one or more `image` files
   and an optional `mask` (transparent where to change). A mask needs one
   picture and a model that redraws only part of one; otherwise the request
@@ -207,8 +208,25 @@ AUTOMATIC1111's API:
 - `POST /sdapi/v1/txt2img` and `POST /sdapi/v1/img2img` (with `init_images`,
   `mask`, `inpainting_mask_invert` and `denoising_strength`), which answer
   `images`, `parameters` and `info` with the seed used and the size made.
-  `seed: -1` is a new seed each time. `steps`, `cfg_scale` and
-  `sampler_name` are ignored, and `info` gives them as `null`.
+  `seed: -1` is a new seed each time.
+- `negative_prompt` is used by models that run with guidance (CFG above 1):
+  Stable Diffusion XL and 1.5, checkpoints and LoRAs on them, and others
+  such as Qwen-Image or Chroma. Guidance-distilled models that run with a
+  CFG of 1 (SDXL Turbo, FLUX schnell, Z-Image Turbo) read none: it is left
+  out, and `info` gives `negative_prompt` as `""`. Lightning, Turbo, Hyper
+  and LCM checkpoints you add yourself run with a CFG of 2, so they do read
+  it.
+- `steps`, `cfg_scale` and `sampler_name` are the model's own, unless you
+  turn on **Let apps set steps and CFG** in **Settings > Use with other
+  apps**. Then steps go up to twice the model's own (at least 8), and CFG up
+  to twice its own; a guidance-distilled model keeps its CFG of 1 and its
+  sampler. Samplers the engine has are used, by their AUTOMATIC1111 names:
+  Euler a, Euler, Heun, DPM2, DPM++ 2S a, DPM++ 2M and LCM. A schedule in
+  the name, as in `DPM++ 2M Karras`, is left to the model; other samplers,
+  such as the SDE ones, are ignored.
+- `info` gives `steps`, `cfg_scale` and `sampler_name` as used, or `null`
+  where the model used its own, and lists what was asked but not used in
+  `ignored`, such as `["negative_prompt"]`.
 - `GET /sdapi/v1/sd-models`, `GET` and `POST /sdapi/v1/options` (only
   `sd_model_checkpoint` is kept), `GET /sdapi/v1/loras`, `/samplers`,
   `/schedulers`, `/upscalers`, `/sd-vae`, `GET /sdapi/v1/progress` and

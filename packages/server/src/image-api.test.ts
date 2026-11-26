@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { crc32, deflateSync } from "node:zlib";
 import { FakeProvider, type ModelSpec, nearestRatio } from "@hatchlight/core";
 import { picture, safetensors } from "@hatchlight/core/testing";
+import { samplerOf } from "./image-api";
 import { createApp, createRuntime } from "./index";
 import { maskPixels } from "./masks";
 
@@ -19,16 +20,40 @@ const isPng = (base64: string) => {
 	return PNG_SIGNATURE.every((byte, i) => bytes[i] === byte);
 };
 
-/** A fake whose first model takes SDXL LoRAs, like a local SDXL model. */
+/**
+ * A fake whose first model is like a local SDXL model: it takes SDXL
+ * LoRAs and a negative prompt, and its sampling can be set. The second is
+ * like FLUX schnell: distilled, with no negative prompt.
+ */
 class LoraProvider extends FakeProvider {
 	override listModels(): ModelSpec[] {
-		return super
-			.listModels()
-			.map((m, i) =>
-				i === 0
-					? { ...m, capabilities: { ...m.capabilities, loraBase: "sdxl" } }
-					: m,
-			);
+		return super.listModels().map((m, i) => ({
+			...m,
+			capabilities: {
+				...m.capabilities,
+				...(i === 0
+					? {
+							loraBase: "sdxl" as const,
+							negativePrompt: true,
+							sampling: {
+								steps: 30,
+								maxSteps: 60,
+								cfgScale: 7,
+								maxCfgScale: 14,
+								samplers: true,
+							},
+						}
+					: {
+							sampling: {
+								steps: 4,
+								maxSteps: 8,
+								cfgScale: 1,
+								maxCfgScale: 1,
+								samplers: false,
+							},
+						}),
+			},
+		}));
 	}
 }
 
@@ -710,6 +735,152 @@ test("OpenAI's answer tells the size made, not the size asked", async () => {
 		expect(width / height).toBeCloseTo(16 / 9, 1);
 		expect(width).toBeLessThan(1792);
 	}
+});
+
+test("A1111's negative prompt reaches models that read one, and info says when not", async () => {
+	const { post, runtime } = await setup();
+	const ask = (model: string) =>
+		post("/sdapi/v1/txt2img", {
+			prompt: "a portrait",
+			negative_prompt: "bad hands, extra fingers",
+			steps: 20,
+			cfg_scale: 5,
+			sampler_name: "Euler a",
+			override_settings: { sd_model_checkpoint: model },
+		});
+	type Info = {
+		negative_prompt: string;
+		steps: number | null;
+		cfg_scale: number | null;
+		sampler_name: string | null;
+		ignored: string[];
+		infotexts: string[];
+	};
+	const infoOf = async (made: Response) =>
+		JSON.parse(((await made.json()) as { info: string }).info) as Info;
+	const jobs = async () => {
+		const [session] = await runtime.service.listSessions({ userId: "local" });
+		const detail = await runtime.service.getSession(
+			{ userId: "local" },
+			session?.id ?? "",
+		);
+		return detail.turns.map((t) => t.jobs[0]?.params);
+	};
+
+	// Steps, CFG and sampler are the model's own until the person lets
+	// apps set them.
+	const sdxl = await infoOf(await ask("alpha"));
+	expect(sdxl).toMatchObject({
+		negative_prompt: "bad hands, extra fingers",
+		steps: null,
+		cfg_scale: null,
+		sampler_name: null,
+		ignored: ["steps", "cfg_scale", "sampler_name"],
+	});
+	expect(sdxl.infotexts[0]).toContain(
+		"\nNegative prompt: bad hands, extra fingers\n",
+	);
+	// A distilled model reads no negative prompt: dropped, and said.
+	const flux = await infoOf(await ask("beta"));
+	expect(flux.negative_prompt).toBe("");
+	expect(flux.ignored).toContain("negative_prompt");
+	const [first, second] = await jobs();
+	expect(first?.negativePrompt).toBe("bad hands, extra fingers");
+	expect(first?.steps).toBeUndefined();
+	expect(second?.negativePrompt).toBeUndefined();
+});
+
+test("with the person's leave, A1111 apps set steps, CFG and sampler, within limits", async () => {
+	const { call, post } = await setup();
+	const turnOn = await call("/api/settings", {
+		method: "PUT",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ otherAppsSampling: true }),
+	});
+	expect(await turnOn.json()).toMatchObject({ otherAppsSampling: true });
+	const ask = async (body: Record<string, unknown>) => {
+		const made = await post("/sdapi/v1/txt2img", { prompt: "x", ...body });
+		return JSON.parse(((await made.json()) as { info: string }).info) as {
+			steps: number | null;
+			cfg_scale: number | null;
+			sampler_name: string | null;
+			ignored: string[];
+			infotexts: string[];
+		};
+	};
+	const sdxl = await ask({
+		steps: 150,
+		cfg_scale: 9,
+		// An older client's name, with the schedule in it.
+		sampler_name: "DPM++ 2M Karras",
+		override_settings: { sd_model_checkpoint: "alpha" },
+	});
+	expect(sdxl).toMatchObject({
+		steps: 60,
+		cfg_scale: 9,
+		sampler_name: "DPM++ 2M",
+		ignored: [],
+	});
+	expect(sdxl.infotexts[0]).toContain(
+		"Steps: 60, Sampler: DPM++ 2M, CFG scale: 9, Seed: ",
+	);
+	// A distilled model takes steps only: its CFG stays 1, its sampler its own.
+	const flux = await ask({
+		steps: 6,
+		cfg_scale: 7,
+		sampler_name: "Euler a",
+		override_settings: { sd_model_checkpoint: "beta" },
+	});
+	expect(flux).toMatchObject({
+		steps: 6,
+		cfg_scale: 1,
+		sampler_name: null,
+		ignored: ["sampler_name"],
+	});
+	// A sampler the engine does not have is ignored, and said.
+	expect(
+		(
+			await ask({
+				sampler_name: "DPM++ 2M SDE",
+				override_settings: { sd_model_checkpoint: "alpha" },
+			})
+		).ignored,
+	).toEqual(["sampler_name"]);
+	const samplers = (await (await call("/sdapi/v1/samplers")).json()) as {
+		name: string;
+	}[];
+	expect(samplers.map((s) => s.name)).toContain("DPM++ 2M");
+});
+
+test("A1111's sampler names map to the engine's, schedule or not", () => {
+	expect(samplerOf("Euler a")).toBe("euler_a");
+	expect(samplerOf("k_euler_a")).toBe("euler_a");
+	expect(samplerOf("euler")).toBe("euler");
+	expect(samplerOf("DPM++ 2M Karras")).toBe("dpm++2m");
+	expect(samplerOf("DPM++ 2S a Exponential")).toBe("dpm++2s_a");
+	// Not in the engine.
+	expect(samplerOf("DPM++ 2M SDE Karras")).toBeUndefined();
+	expect(samplerOf("UniPC")).toBeUndefined();
+});
+
+test("OpenAI's API takes a negative prompt too", async () => {
+	const { post, runtime } = await setup();
+	await post("/v1/images/generations", {
+		prompt: "a fox",
+		model: "alpha",
+		negative_prompt: "  blurry ",
+	});
+	const [session] = await runtime.service.listSessions({ userId: "local" });
+	const detail = await runtime.service.getSession(
+		{ userId: "local" },
+		session?.id ?? "",
+	);
+	expect(detail.turns[0]?.jobs[0]?.params.negativePrompt).toBe("blurry");
+	const long = await post("/v1/images/generations", {
+		prompt: "a fox",
+		negative_prompt: "x".repeat(8001),
+	});
+	expect(long.status).toBe(400);
 });
 
 test("apps share one session past twenty, and a deleted one is made again", async () => {

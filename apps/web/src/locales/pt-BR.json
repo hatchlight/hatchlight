@@ -945,6 +945,7 @@
 	"settings.otherAppsOpenWebUi": "No Open WebUI: Painel de administração > Configurações > Imagens, escolha o mecanismo OpenAI e cole isto como URL base.",
 	"settings.otherAppsPaid": "Deixar que também usem modelos pagos, com as suas chaves",
 	"settings.otherAppsPaidServer": "Deixar que também usem modelos pagos, com as suas chaves ou as do servidor",
+	"settings.otherAppsSampling": "Deixar que os apps definam passos e CFG, dentro do que cada modelo aceita",
 	"settings.otherAppsSillyTavern": "No SillyTavern: Image Generation, escolha Stable Diffusion WebUI (AUTOMATIC1111) como fonte (a fonte OpenAI dele só fala com a OpenAI) e cole isto como URL.",
 	"settings.pasteKey": "Cole sua chave de API",
 	"settings.providers": "Provedores",

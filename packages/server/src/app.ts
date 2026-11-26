@@ -1247,6 +1247,12 @@ export function createApp(options: AppOptions): Hono {
 		) {
 			throw new ValidationError("otherAppsPaid must be true or false");
 		}
+		if (
+			body.otherAppsSampling !== undefined &&
+			typeof body.otherAppsSampling !== "boolean"
+		) {
+			throw new ValidationError("otherAppsSampling must be true or false");
+		}
 		const { otherAppsModel } = body;
 		if (
 			otherAppsModel !== undefined &&
@@ -1315,6 +1321,9 @@ export function createApp(options: AppOptions): Hono {
 				}),
 				...(typeof body.otherAppsPaid === "boolean" && {
 					otherAppsPaid: body.otherAppsPaid,
+				}),
+				...(typeof body.otherAppsSampling === "boolean" && {
+					otherAppsSampling: body.otherAppsSampling,
 				}),
 				...(otherAppsModel !== undefined && {
 					otherAppsModel: otherAppsModel as string | null,

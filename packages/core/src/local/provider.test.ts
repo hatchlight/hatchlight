@@ -22,6 +22,7 @@ import {
 	redrawSteps,
 	roleOption,
 	type Spawn,
+	sampling,
 	samplingProgress,
 	vramBudget,
 } from "../index";
@@ -215,6 +216,79 @@ describe("engine arguments", () => {
 		expect(after("-W")).toBe("832");
 		// Without a ratio asked, the model's own first one, not a square.
 		expect(after("-H")).toBe("464");
+	});
+
+	test("a negative prompt, steps, CFG and sampler asked replace the model's own", async () => {
+		const sdxl: LocalModelSpec = {
+			...FLUX,
+			defaults: {
+				...FLUX.defaults,
+				steps: 30,
+				cfgScale: 7,
+				sampler: undefined,
+			},
+		};
+		const args = await engineArguments(
+			runtime(sdxl),
+			sdxl.defaults,
+			params({
+				negativePrompt: "extra fingers",
+				steps: 20,
+				cfgScale: 5.5,
+				sampler: "dpm++2m",
+			}),
+			"/o.png",
+			async (p) => p,
+		);
+		const after = (flag: string) => args[args.indexOf(flag) + 1];
+		expect(after("-n")).toBe("extra fingers");
+		expect(after("--steps")).toBe("20");
+		expect(after("--cfg-scale")).toBe("5.5");
+		expect(after("--sampling-method")).toBe("dpm++2m");
+		// Unasked, the model's own, and no negative prompt at all.
+		const own = await engineArguments(
+			runtime(sdxl),
+			sdxl.defaults,
+			params(),
+			"/o.png",
+			async (p) => p,
+		);
+		expect(own).not.toContain("-n");
+		expect(own).not.toContain("--sampling-method");
+		expect(own[own.indexOf("--steps") + 1]).toBe("30");
+		expect(own[own.indexOf("--cfg-scale") + 1]).toBe("7");
+		// A model with a negative prompt of its own keeps it, after the one asked.
+		const wan = await engineArguments(
+			runtime(WAN),
+			WAN.defaults,
+			params({ negativePrompt: "blurry" }),
+			"/o.webm",
+			async (p) => p,
+		);
+		expect(wan[wan.indexOf("-n") + 1]).toBe("blurry, static");
+	});
+
+	test("a guided model reads a negative prompt and may be steered; a distilled one less", () => {
+		expect(sampling({ ...FLUX.defaults, steps: 30, cfgScale: 7 })).toEqual({
+			negativePrompt: true,
+			sampling: {
+				steps: 30,
+				maxSteps: 60,
+				cfgScale: 7,
+				maxCfgScale: 14,
+				samplers: true,
+			},
+		});
+		// SDXL Turbo: one step, no guidance.
+		expect(sampling({ ...FLUX.defaults, steps: 1, cfgScale: 1 })).toEqual({
+			sampling: {
+				steps: 1,
+				maxSteps: 8,
+				cfgScale: 1,
+				maxCfgScale: 1,
+				samplers: false,
+			},
+		});
 	});
 
 	test("an editing model is given the pictures to follow, up to its limit", async () => {
@@ -641,6 +715,15 @@ describe("running", () => {
 					seed: true,
 					maxCount: 1,
 					maxReferenceImages: 0,
+					// Distilled: its steps may change, its CFG and sampler not,
+					// and it reads no negative prompt.
+					sampling: {
+						steps: 4,
+						maxSteps: 8,
+						cfgScale: 1,
+						maxCfgScale: 1,
+						samplers: false,
+					},
 				},
 				pricing: { usdPerOutput: 0 },
 			},
@@ -965,6 +1048,12 @@ describe("running", () => {
 			throughWindows: false,
 		});
 		const asked: WarmRequest[] = [];
+		const redrawn = {
+			strength: 0.6,
+			negativePrompt: "fog",
+			steps: 3,
+			cfgScale: 1.5,
+		};
 		const warm = {
 			loaded: null,
 			unused: true,
@@ -993,7 +1082,7 @@ describe("running", () => {
 		const [model] = local.listModels();
 		const handle = await local.submit({
 			model: model as never,
-			params: params({ strength: 0.6 }),
+			params: params(redrawn),
 			references: [{ data: picture(1600, 900), mime: "image/png" }],
 			mask: { data: picture(800, 450), mime: "image/png" },
 		});
@@ -1010,11 +1099,13 @@ describe("running", () => {
 		expect(request?.initImage?.length).toBeGreaterThan(0);
 		expect(request?.maskImage?.length).toBeGreaterThan(0);
 		expect(request?.refImages).toBeUndefined();
+		expect(request?.negativePrompt).toBe("fog");
+		expect(request?.cfgScale).toBe(1.5);
 		// The same size and steps as the engine run once would use.
 		const once = await engineArguments(
 			runtime(REDRAW),
 			REDRAW.defaults,
-			params({ strength: 0.6 }),
+			params(redrawn),
 			"/o.png",
 			async (p) => p,
 			["/s/old.png"],
