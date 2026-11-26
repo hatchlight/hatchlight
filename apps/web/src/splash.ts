@@ -5,6 +5,7 @@ import {
 } from "@hatchlight/i18n";
 import { latent } from "@hatchlight/motion";
 import "./index.css";
+import de from "./locales/de.json";
 import en from "./locales/en.json";
 import es from "./locales/es.json";
 import ptBR from "./locales/pt-BR.json";
@@ -18,10 +19,11 @@ const catalogs: Record<string, Partial<Record<keyof typeof en, Message>>> = {
 	en: {},
 	"pt-BR": ptBR,
 	es,
+	de,
 };
 const language = matchLanguage(
 	navigator.languages ?? [],
-	["en", "pt-BR", "es"],
+	["en", "pt-BR", "es", "de"],
 	"en",
 );
 const { t } = createTranslator(language, en, catalogs[language]);
