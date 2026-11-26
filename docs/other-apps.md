@@ -1,9 +1,11 @@
 # Use it from other apps
 
 Many apps already know how to ask a server for pictures: Open WebUI,
-SillyTavern, LibreChat and countless scripts speak OpenAI's image API, and
-older tools speak the API of AUTOMATIC1111's Stable Diffusion WebUI.
-Hatchlight answers both, so these apps can make pictures with your models.
+LibreChat and countless scripts speak OpenAI's image API, and SillyTavern
+and other tools speak the API of AUTOMATIC1111's Stable Diffusion WebUI.
+That API is not only the old app's: Forge, Forge Neo and SD.Next answer it
+too. Hatchlight answers both, so these apps can make pictures with your
+models.
 
 What they make lands in your gallery like any other picture, in a session for
 each app (such as "Image API: OpenAI"), so you can see, keep or redo it.
@@ -57,6 +59,10 @@ own. Either:
 The same goes for any app in a container, SillyTavern included.
 
 ## SillyTavern
+
+SillyTavern's OpenAI image source talks only to OpenAI, with no address to
+change. It connects through its AUTOMATIC1111 source instead, the same API
+Forge, Forge Neo and SD.Next answer, which Hatchlight answers too.
 
 1. Open **Extensions > Image Generation**.
 2. Choose **Stable Diffusion WebUI (AUTOMATIC1111)** as the source.
