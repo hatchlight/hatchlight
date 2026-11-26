@@ -11,6 +11,6 @@
 		"typecheck": "tsc -p ."
 	},
 	"devDependencies": {
-		"@tauri-apps/cli": "2.12.5"
+		"@tauri-apps/cli": "2.12.6"
 	}
 }
