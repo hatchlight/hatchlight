@@ -750,6 +750,8 @@ export type GalleryItem = Asset & {
 	 * its model is not shown while the person hides names until a pick.
 	 */
 	unpicked?: boolean;
+	/** The session that made it, while that session is kept. */
+	sessionId?: string | null;
 };
 
 export interface CreateTurnInput extends GenerationParamsInput {
