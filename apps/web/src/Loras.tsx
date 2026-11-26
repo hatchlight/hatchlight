@@ -130,7 +130,7 @@ export function LoraShelf() {
 	const adding = add.isPending ? add.variables : null;
 	const can = useCan();
 	return (
-		<Card className={SECTION}>
+		<Card data-tour="lora-shelf" className={SECTION}>
 			<Collapsible className="flex flex-col gap-5">
 				<CardHeader className="flex flex-wrap items-start justify-between gap-4">
 					<div className="flex max-w-2xl flex-col gap-2">
@@ -141,7 +141,13 @@ export function LoraShelf() {
 					</div>
 					<div className={cn("flex flex-wrap gap-2", !can.train && "hidden")}>
 						<CollapsibleTrigger
-							render={<Button variant="outline" className="group" />}
+							render={
+								<Button
+									variant="outline"
+									data-tour="lora-train"
+									className="group"
+								/>
+							}
 						>
 							{t("training.open")}
 							<ChevronDownIcon

@@ -114,6 +114,9 @@ settings that made it, and you can search it.
   <img src=".github/assets/phone.webp" alt="Hatchlight on a phone: the chat with a bottom bar" width="28%">
 </p>
 
+A short guided tour, offered after the first picture and kept under
+**Tutorial**, shows where models, styles, cloud keys and the gallery are.
+
 The interface speaks English and Brazilian Portuguese, works on phones and
 tablets as well as desktops, and can be used with the keyboard and a screen
 reader. More languages are welcome: see [Translate](CONTRIBUTING.md#translate).

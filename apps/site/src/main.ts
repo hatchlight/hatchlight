@@ -5,7 +5,9 @@ import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { LINKS } from "./config";
 import { LANGUAGES } from "./languages";
+import de from "./locales/de.json";
 import en from "./locales/en.json";
+import es from "./locales/es.json";
 import fr from "./locales/fr.json";
 import ptBR from "./locales/pt-BR.json";
 
@@ -24,6 +26,8 @@ const $$ = <T extends Element = HTMLElement>(
 const CATALOGS: Record<string, Record<string, string>> = {
 	en,
 	"pt-BR": ptBR,
+	es,
+	de,
 	fr,
 };
 const language = matchLanguage(

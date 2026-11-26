@@ -3,7 +3,9 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ERROR_CODES } from "@hatchlight/core/errors";
 import { checkCatalog } from "@hatchlight/i18n";
+import de from "./locales/de.json";
 import en from "./locales/en.json";
+import es from "./locales/es.json";
 import fr from "./locales/fr.json";
 import ptBR from "./locales/pt-BR.json";
 
@@ -26,6 +28,14 @@ function usedKeys(): Set<string> {
 describe("catalogs", () => {
 	test("the Portuguese catalog matches the English one", () => {
 		expect(checkCatalog(en, ptBR)).toEqual([]);
+	});
+
+	test("the Spanish catalog matches the English one", () => {
+		expect(checkCatalog(en, es)).toEqual([]);
+	});
+
+	test("the German catalog matches the English one", () => {
+		expect(checkCatalog(en, de)).toEqual([]);
 	});
 
 	test("the French catalog matches the English one", () => {

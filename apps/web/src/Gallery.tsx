@@ -1,13 +1,27 @@
 import type { GalleryItem } from "@hatchlight/core/types";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { PlayIcon, SearchIcon } from "lucide-react";
+import {
+	useInfiniteQuery,
+	useMutation,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
+import { DicesIcon, PlayIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { Mark } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { api, assetUrl, GALLERY_PAGE } from "./api";
 import { useI18n } from "./i18n";
 import { Lightbox, type LightboxItem } from "./Lightbox";
+import { rerunInput } from "./rerun";
+import { href, navigate } from "./route";
 
 export function Gallery({
 	addReference,
@@ -41,6 +55,24 @@ export function Gallery({
 			? null
 			: (models.data?.find((m) => m.id === item.modelId)?.name ?? item.modelId);
 
+	// Made again as it was, in the session that made it: the gallery shows
+	// the new result once it is done.
+	const client = useQueryClient();
+	const rerun = useMutation({
+		mutationFn: api.createTurn,
+		onSuccess: ({ session }) => {
+			void client.invalidateQueries({ queryKey: ["session", session.id] });
+			void client.invalidateQueries({ queryKey: ["sessions"] });
+			toast.success(t("gallery.rerunStarted"), {
+				action: {
+					label: t("gallery.openSession"),
+					onClick: () => navigate(href.session(session.id)),
+				},
+			});
+		},
+		onError: (problem) => toast.error(explain(problem)),
+	});
+
 	// The next page loads as the end of the grid comes near; the button
 	// below stays for keyboards and for browsers that never report it.
 	const {
@@ -67,7 +99,10 @@ export function Gallery({
 	return (
 		<div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-8 sm:py-10">
 			<div className="mx-auto max-w-[96rem]">
-				<header className="flex flex-wrap items-end justify-between gap-4">
+				<header
+					data-tour="gallery-header"
+					className="flex flex-wrap items-end justify-between gap-4"
+				>
 					<h1 className="font-display text-4xl leading-none font-extrabold tracking-tight sm:text-5xl">
 						{t("gallery.title")}
 					</h1>
@@ -110,8 +145,15 @@ export function Gallery({
 					{items.map((item) => {
 						const video = item.mime.startsWith("video/");
 						const model = modelName(item);
+						// A blind comparison's result would name its model by
+						// being made again alone.
+						const blind = item.unpicked && settings.data?.blindPicks;
+						const again = (sameSeed: boolean) => {
+							const input = rerunInput(item, sameSeed);
+							if (input) rerun.mutate(input);
+						};
 						return (
-							<li key={item.id}>
+							<li key={item.id} className="group/tile relative">
 								<button
 									type="button"
 									title={item.prompt ?? undefined}
@@ -156,6 +198,38 @@ export function Gallery({
 										</span>
 									)}
 								</button>
+								{!blind && item.modelId && item.params && (
+									<DropdownMenu>
+										<DropdownMenuTrigger
+											render={
+												<Button
+													variant="secondary"
+													size="icon-sm"
+													disabled={rerun.isPending}
+													aria-label={t("gallery.rerunActions")}
+													title={t("gallery.rerunActions")}
+													className="absolute top-2 right-2 shadow-sm focus-visible:opacity-100 aria-expanded:opacity-100 md:opacity-0 md:group-hover/tile:opacity-100"
+												/>
+											}
+										>
+											<RefreshCwIcon aria-hidden="true" />
+										</DropdownMenuTrigger>
+										<DropdownMenuContent align="end">
+											<DropdownMenuItem onClick={() => again(false)}>
+												<DicesIcon aria-hidden="true" />
+												{t("gallery.rerun")}
+											</DropdownMenuItem>
+											{item.params?.seed != null && (
+												<DropdownMenuItem onClick={() => again(true)}>
+													<RefreshCwIcon aria-hidden="true" />
+													{t("gallery.rerunSameSeed", {
+														seed: item.params.seed,
+													})}
+												</DropdownMenuItem>
+											)}
+										</DropdownMenuContent>
+									</DropdownMenu>
+								)}
 							</li>
 						);
 					})}

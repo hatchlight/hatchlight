@@ -1268,6 +1268,10 @@ describe("storage", () => {
 
 		const all = await app.service.listGallery(LOCAL_USER, { limit: 10 });
 		expect(all).toHaveLength(2);
+		// Each says the session that made it, to make more there.
+		expect(all.find((i) => i.prompt === "a red fox")?.sessionId).toBe(
+			fox.session.id,
+		);
 		const found = await app.service.listGallery(LOCAL_USER, {
 			limit: 10,
 			query: "fox",
@@ -1286,9 +1290,9 @@ describe("storage", () => {
 			limit: 10,
 			query: "fox",
 		});
-		expect(kept.map((i) => [i.prompt, i.modelId, i.jobId])).toEqual([
-			["a red fox", "fake/alpha", null],
-		]);
+		expect(
+			kept.map((i) => [i.prompt, i.modelId, i.jobId, i.sessionId]),
+		).toEqual([["a red fox", "fake/alpha", null, null]]);
 		expect(
 			await app.service.listGallery(LOCAL_USER, { limit: 10 }),
 		).toHaveLength(2);

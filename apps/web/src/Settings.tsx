@@ -32,6 +32,7 @@ import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { AccountSettings, UsersSettings, useAccount, useCan } from "./Accounts";
 import { type AgentPolicy, api, useServerMode } from "./api";
+import { useTour } from "./GuidedTour";
 import { type I18n, useI18n } from "./i18n";
 import { ModelCard, PageHeader } from "./Models";
 import { ConfirmButton, LABEL, SECTION } from "./Training";
@@ -289,7 +290,7 @@ function Translation() {
 	];
 	return (
 		<>
-			<Card className={SECTION}>
+			<Card data-tour="settings-helpers" className={SECTION}>
 				<SectionHeader
 					title={t("settings.translation")}
 					intro={t("settings.translationIntro")}
@@ -586,7 +587,7 @@ function Agents() {
 	const error = connect.error ?? disconnect.error ?? status.error;
 
 	return (
-		<Card className={SECTION}>
+		<Card data-tour="settings-agents" className={SECTION}>
 			<SectionHeader
 				title={t("settings.agents")}
 				intro={t("settings.agentsIntro")}
@@ -828,6 +829,7 @@ export function Settings() {
 	// Agents are set up on the machine that runs Hatchlight.
 	const server = useServerMode();
 	const can = useCan();
+	const tour = useTour();
 	const providers = useQuery({
 		queryKey: ["providers"],
 		queryFn: api.providers,
@@ -876,13 +878,32 @@ export function Settings() {
 						</Select>
 					</CardHeader>
 				</Card>
+				<Card className={SECTION}>
+					<CardHeader className="flex flex-wrap items-center justify-between gap-4">
+						<div className="flex max-w-2xl flex-col gap-2">
+							<h2 className={LABEL}>{t("tour.settingsTitle")}</h2>
+							<p className="text-sm leading-relaxed text-dim">
+								{t("tour.settingsIntro")}
+							</p>
+						</div>
+						<Button
+							variant="outline"
+							onClick={() => {
+								tour.reset();
+								tour.start("basics");
+							}}
+						>
+							{t("tour.restart")}
+						</Button>
+					</CardHeader>
+				</Card>
 				<AccountSettings />
 				<Translation />
 				<Comparisons />
 				{server ? (
 					<>
 						{can.paid && (
-							<Card className={SECTION}>
+							<Card data-tour="settings-keys" className={SECTION}>
 								<SectionHeader
 									title={t("settings.yourKeys")}
 									intro={t("settings.yourKeysIntro")}
@@ -908,7 +929,7 @@ export function Settings() {
 								</CardContent>
 							</Card>
 						)}
-						<Card className={SECTION}>
+						<Card data-tour="settings-keys" className={SECTION}>
 							<SectionHeader
 								title={t("settings.serverKeys")}
 								intro={
@@ -939,7 +960,7 @@ export function Settings() {
 						</Card>
 					</>
 				) : (
-					<Card className={SECTION}>
+					<Card data-tour="settings-keys" className={SECTION}>
 						<SectionHeader
 							title={t("settings.providers")}
 							intro={t("settings.providersIntro")}
@@ -1095,7 +1116,7 @@ export function AgentTokens() {
 	}));
 
 	return (
-		<Card className={SECTION}>
+		<Card data-tour="settings-agents" className={SECTION}>
 			<SectionHeader title={t("settings.agents")} intro={t("tokens.intro")} />
 			<CardContent className="flex flex-col gap-5">
 				{made ? (

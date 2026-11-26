@@ -487,7 +487,7 @@ function Section({
 	const id = useId();
 	const mine = entries.filter((e) => e.kind === kind);
 	return (
-		<Card className={SECTION}>
+		<Card data-tour={`library-${kind}s`} className={SECTION}>
 			<CardContent className="flex flex-col gap-4">
 				<div className="flex flex-wrap items-center justify-between gap-3">
 					<h2 id={id} className="font-display text-xl font-bold">

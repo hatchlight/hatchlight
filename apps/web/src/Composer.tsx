@@ -568,7 +568,10 @@ export function Composer(props: Props) {
 					</TabsList>
 				</Tabs>
 			)}
-			<fieldset className="flex min-w-0 flex-col gap-1.5">
+			<fieldset
+				data-tour="composer-models"
+				className="flex min-w-0 flex-col gap-1.5"
+			>
 				<legend className={cn(LABEL, "mb-2.5")}>{t("composer.models")}</legend>
 				{offered
 					.filter((m) => ready.has(m.providerId) || chosen.includes(m.id))
@@ -1099,7 +1102,7 @@ export function Composer(props: Props) {
 			)}
 
 			{hasLoras && (
-				<div className="flex flex-col gap-2.5">
+				<div data-tour="composer-styles" className="flex flex-col gap-2.5">
 					<span className={LABEL}>{t("composer.styles")}</span>
 					<LoraPicker bases={loraBases} value={loras} onChange={setLoras} />
 				</div>
@@ -1129,6 +1132,7 @@ export function Composer(props: Props) {
 								<Button
 									variant="outline"
 									onClick={() => setSetting(true)}
+									data-tour="composer-settings"
 									className="h-10 shrink-0 gap-2 rounded-full border-[#2c2c32] bg-panel px-3.5 dark:bg-panel"
 								>
 									<SlidersHorizontal />
@@ -1196,6 +1200,7 @@ export function Composer(props: Props) {
 							setImproveError(null);
 						}}
 						onSubmit={submit}
+						data-tour="composer-prompt"
 						className="flex flex-col gap-1.5 rounded-[20px] bg-panel pl-4 lg:pl-[18px]"
 					>
 						<label htmlFor={ids.prompt} className="sr-only">
@@ -1252,6 +1257,7 @@ export function Composer(props: Props) {
 									submit();
 								}}
 								disabled={!canSend}
+								data-tour="composer-generate"
 								className="h-11 px-5 text-[15px]"
 							>
 								{total > 0
