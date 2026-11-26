@@ -14,6 +14,7 @@ import {
 	useMemo,
 	useState,
 } from "react";
+import de from "./locales/de.json";
 import en from "./locales/en.json";
 import es from "./locales/es.json";
 import ptBR from "./locales/pt-BR.json";
@@ -27,12 +28,14 @@ const translations: Record<string, Partial<Record<MessageKey, Message>>> = {
 	en: {},
 	"pt-BR": ptBR,
 	es,
+	de,
 };
 
 export const languages: Language[] = [
 	{ code: "en", name: "English" },
 	{ code: "pt-BR", name: "Português (Brasil)" },
 	{ code: "es", name: "Español" },
+	{ code: "de", name: "Deutsch" },
 ];
 
 const STORAGE_KEY = "hatchlight.language";
