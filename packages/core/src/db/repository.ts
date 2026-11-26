@@ -430,6 +430,11 @@ export class SqliteRepository implements Repository {
 						and (select count(*) from ${schema.jobs} k where k.turn_id = j.turn_id) > 1
 						and not exists (select 1 from ${schema.picks} p where p.turn_id = j.turn_id)
 				)`,
+				sessionId: sql<string | null>`(
+					select t.session_id from ${schema.jobs} j
+					join ${schema.turns} t on t.id = j.turn_id
+					where j.id = ${assets.jobId}
+				)`,
 			})
 			.from(assets)
 			.where(
@@ -453,7 +458,11 @@ export class SqliteRepository implements Repository {
 			.orderBy(desc(assets.createdAt), desc(assets.id))
 			.limit(q.limit)
 			.all();
-		return rows.map((row) => ({ ...row.asset, unpicked: row.unpicked === 1 }));
+		return rows.map((row) => ({
+			...row.asset,
+			unpicked: row.unpicked === 1,
+			sessionId: row.sessionId,
+		}));
 	}
 
 	async findJob(id: string) {
