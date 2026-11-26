@@ -211,9 +211,11 @@ AUTOMATIC1111's API:
   `seed: -1` is a new seed each time.
 - `negative_prompt` is used by models that run with guidance (CFG above 1):
   Stable Diffusion XL and 1.5, checkpoints and LoRAs on them, and others
-  such as Qwen-Image or Chroma. Guidance-distilled models (SDXL Turbo, FLUX
-  schnell, Z-Image Turbo and the other few-step ones) read none: it is
-  left out, and `info` gives `negative_prompt` as `""`.
+  such as Qwen-Image or Chroma. Guidance-distilled models that run with a
+  CFG of 1 (SDXL Turbo, FLUX schnell, Z-Image Turbo) read none: it is left
+  out, and `info` gives `negative_prompt` as `""`. Lightning, Turbo, Hyper
+  and LCM checkpoints you add yourself run with a CFG of 2, so they do read
+  it.
 - `steps`, `cfg_scale` and `sampler_name` are the model's own, unless you
   turn on **Let apps set steps and CFG** in **Settings > Use with other
   apps**. Then steps go up to twice the model's own (at least 8), and CFG up
