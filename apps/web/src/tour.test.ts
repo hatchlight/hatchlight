@@ -13,8 +13,10 @@ import {
 } from "./tour";
 
 const count = (chapter: ChapterId) => stepsFor(chapter, { demo: false }).length;
-const at = (chapter: ChapterId, index: number, direction: 1 | -1 = 1) =>
-	({ chapter, index, direction }) as TourState;
+const at = (chapter: ChapterId, index: number): TourState => ({
+	chapter,
+	index,
+});
 
 function memory(initial: Record<string, string> = {}) {
 	const values = new Map(Object.entries(initial));
@@ -68,7 +70,7 @@ describe("moving through a chapter", () => {
 			at("basics", 1),
 		);
 		expect(tourReducer(at("basics", 2), { type: "back" }, count)).toEqual(
-			at("basics", 1, -1),
+			at("basics", 1),
 		);
 		expect(tourReducer(at("basics", 0), { type: "back" }, count)).toEqual(
 			at("basics", 0),
@@ -78,19 +80,6 @@ describe("moving through a chapter", () => {
 	test("going past the last step ends the tour", () => {
 		const last = count("cloud") - 1;
 		expect(tourReducer(at("cloud", last), { type: "next" }, count)).toBeNull();
-	});
-
-	test("a step with nothing on screen is passed the way the reader went", () => {
-		expect(tourReducer(at("basics", 3), { type: "missing" }, count)).toEqual(
-			at("basics", 4),
-		);
-		expect(
-			tourReducer(at("basics", 3, -1), { type: "missing" }, count),
-		).toEqual(at("basics", 2, -1));
-		// Nothing before the first step: carry on forward.
-		expect(
-			tourReducer(at("basics", 0, -1), { type: "missing" }, count),
-		).toEqual(at("basics", 1));
 	});
 
 	test("stop ends the tour, and nothing moves once it has ended", () => {

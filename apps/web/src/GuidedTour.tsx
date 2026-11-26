@@ -29,8 +29,12 @@ import {
 	tourReducer,
 } from "./tour";
 
-/** How long a step waits for what it points at to appear. */
-const WAIT_MS = 3000;
+/**
+ * How long a step waits for what it points at to appear. Past that, such as
+ * when a section is still loading or not shown to this person, the step's
+ * card shows in the middle instead.
+ */
+const WAIT_MS = 1500;
 /** Room around what a step points at, and between it and the card. */
 const PAD = 6;
 const GAP = 12;
@@ -146,7 +150,6 @@ export function TourProvider({ children }: { children: ReactNode }) {
 						}
 						dispatch({ type: "next" });
 					}}
-					onMissing={() => dispatch({ type: "missing" })}
 					onStop={() => dispatch({ type: "stop" })}
 				/>
 			)}
@@ -197,7 +200,6 @@ function Overlay({
 	total,
 	onBack,
 	onNext,
-	onMissing,
 	onStop,
 }: {
 	step: Step;
@@ -205,7 +207,6 @@ function Overlay({
 	total: number;
 	onBack(): void;
 	onNext(): void;
-	onMissing(): void;
 	onStop(): void;
 }) {
 	const { t, number } = useI18n();
@@ -220,8 +221,8 @@ function Overlay({
 	const { title, body } = step.text(t);
 	const last = index === total - 1;
 	// The latest handlers, so a new render does not start the wait again.
-	const handlers = useRef({ onBack, onNext, onMissing, onStop });
-	handlers.current = { onBack, onNext, onMissing, onStop };
+	const handlers = useRef({ onBack, onNext, onStop });
+	handlers.current = { onBack, onNext, onStop };
 
 	// Go to the step's view, then wait for what it points at.
 	useEffect(() => {
@@ -239,7 +240,7 @@ function Overlay({
 				setTarget(found);
 			} else if (Date.now() - started > WAIT_MS) {
 				window.clearInterval(timer);
-				handlers.current.onMissing();
+				setTarget(null);
 			}
 		}, 100);
 		return () => window.clearInterval(timer);

@@ -232,19 +232,12 @@ export function chaptersFor(options: { demo: boolean }): ChapterId[] {
 	);
 }
 
-export type TourState = {
-	chapter: ChapterId;
-	index: number;
-	/** Which way the reader last moved, so a step with nothing to show is passed the same way. */
-	direction: 1 | -1;
-} | null;
+export type TourState = { chapter: ChapterId; index: number } | null;
 
 export type TourAction =
 	| { type: "start"; chapter: ChapterId }
 	| { type: "next" }
 	| { type: "back" }
-	/** The step's target never appeared: pass it in the direction of travel. */
-	| { type: "missing" }
 	| { type: "stop" };
 
 /**
@@ -256,22 +249,11 @@ export function tourReducer(
 	action: TourAction,
 	count: (chapter: ChapterId) => number,
 ): TourState {
-	if (action.type === "start") {
-		return { chapter: action.chapter, index: 0, direction: 1 };
-	}
+	if (action.type === "start") return { chapter: action.chapter, index: 0 };
 	if (!state || action.type === "stop") return null;
-	const total = count(state.chapter);
-	const direction =
-		action.type === "next" ? 1 : action.type === "back" ? -1 : state.direction;
-	const index = state.index + direction;
-	if (index >= total) return null;
-	if (index < 0) {
-		// Nothing to show before the first step: go forward from there instead.
-		return action.type === "missing"
-			? { ...state, index: 1 < total ? 1 : 0, direction: 1 }
-			: state;
-	}
-	return { ...state, index, direction };
+	const index = state.index + (action.type === "next" ? 1 : -1);
+	if (index >= count(state.chapter)) return null;
+	return index < 0 ? state : { ...state, index };
 }
 
 export interface TourProgress {
