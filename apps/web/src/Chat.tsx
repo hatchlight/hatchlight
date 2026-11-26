@@ -39,6 +39,7 @@ import {
 } from "./compare";
 import { DevelopedImage, LatentFrame } from "./Develop";
 import { duration, usd } from "./format";
+import { useTour } from "./GuidedTour";
 import { Inspector } from "./Inspector";
 import { type I18n, useI18n } from "./i18n";
 import { Lightbox, type LightboxItem } from "./Lightbox";
@@ -636,6 +637,7 @@ export function Chat({
 	const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessions });
 	const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
 	const [skipped, setSkipped] = useState(welcomed);
+	const tour = useTour();
 	// A first visit: nothing made yet, so show the way to a first picture.
 	const firstRun = !sessionId && !skipped && sessions.data?.length === 0;
 	// Until the sessions arrive it is unknown whether this is a first visit.
@@ -660,6 +662,8 @@ export function Chat({
 			}),
 		onSuccess: ({ session: created, turn }, draft) => {
 			markWelcomed();
+			// The first picture is on its way: a good moment to show the rest.
+			if (firstRun) tour.offer();
 			// Drop only what was sent from the composer; more may have been
 			// added meanwhile. A turn that brought its own pictures sent none.
 			if (!draft.referenceAssetIds) {
@@ -777,6 +781,7 @@ export function Chat({
 							onSkip={() => {
 								markWelcomed();
 								setSkipped(true);
+								tour.offer();
 							}}
 						/>
 					</div>

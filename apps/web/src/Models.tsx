@@ -695,7 +695,7 @@ function Machine({ view }: { view: LocalModelsView }) {
 		(a, b) => b.memoryBytes - a.memoryBytes,
 	)[0];
 	return (
-		<Card className={SECTION}>
+		<Card data-tour="models-machine" className={SECTION}>
 			<CardContent>
 				<dl className="grid gap-x-8 gap-y-6 sm:grid-cols-2 lg:grid-cols-[2fr_2fr_1fr_1fr]">
 					<div className="flex flex-col gap-2">
@@ -859,7 +859,7 @@ function Catalog({ view, focus }: { view: LocalModelsView; focus?: string }) {
 	];
 	return (
 		<div className="flex flex-col gap-10 pt-4">
-			<fieldset className="flex flex-col gap-3">
+			<fieldset data-tour="models-catalog" className="flex flex-col gap-3">
 				<legend className="sr-only">{t("models.filter.label")}</legend>
 				<ToggleGroup
 					value={[filter.category]}

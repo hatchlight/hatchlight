@@ -1,6 +1,8 @@
 import { parseHubLink } from "@hatchlight/core/hugging-face";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+	Check,
+	CircleHelp,
 	Cpu,
 	Images,
 	Library as LibraryIcon,
@@ -53,10 +55,12 @@ import { AccountMenu } from "./Accounts";
 import { api, useDemo } from "./api";
 import { Chat } from "./Chat";
 import { onLinks } from "./desktop";
+import { TourProvider, useTour } from "./GuidedTour";
 import { useI18n } from "./i18n";
 import { KeysLostToast } from "./KeysLostToast";
 import { useLiveJobs } from "./live";
 import { href, navigate, type Route, useRoute } from "./route";
+import type { ChapterId } from "./tour";
 import { UpdateToast } from "./UpdateToast";
 
 const MAX_REFERENCES = 4;
@@ -145,53 +149,55 @@ export function App() {
 			defaultOpen={sidebarStartsOpen()}
 			className="relative h-full min-h-0"
 		>
-			<UpdateToast />
-			{!demo && <KeysLostToast />}
-			<AppSidebar route={route} demo={demo} />
-			<SidebarInset className="min-h-0 overflow-hidden bg-bg">
-				{route.view === "chat" ? (
-					<SessionHeader route={route} demo={demo} />
-				) : (
-					<MobileBar />
-				)}
-				<div
-					key={scene}
-					className="scene-in flex min-h-0 flex-1 flex-col max-md:pb-[4.25rem]"
-				>
-					<Suspense fallback={null}>
-						{route.view === "chat" && route.talk && (
-							<Assistant
-								key={route.sessionId ?? "new"}
-								sessionId={route.sessionId}
-								addReference={addReference}
-							/>
-						)}
-						{route.view === "chat" && !route.talk && (
-							<Chat
-								key={route.sessionId ?? "new"}
-								sessionId={route.sessionId}
-								references={references}
-								setReferences={setReferences}
-								addReference={addReference}
-							/>
-						)}
-						{route.view === "gallery" && (
-							<Gallery addReference={addReference} />
-						)}
-						{route.view === "models" && <Models focus={route.focus} />}
-						{route.view === "hub" && (
-							<>
-								<Models />
-								<HubOpen target={route.target} />
-							</>
-						)}
-						{route.view === "ranking" && <RankingView />}
-						{route.view === "library" && <LibraryView />}
-						{route.view === "settings" && <Settings />}
-					</Suspense>
-				</div>
-				<BottomNav route={route} demo={demo} />
-			</SidebarInset>
+			<TourProvider>
+				<UpdateToast />
+				{!demo && <KeysLostToast />}
+				<AppSidebar route={route} demo={demo} />
+				<SidebarInset className="min-h-0 overflow-hidden bg-bg">
+					{route.view === "chat" ? (
+						<SessionHeader route={route} demo={demo} />
+					) : (
+						<MobileBar />
+					)}
+					<div
+						key={scene}
+						className="scene-in flex min-h-0 flex-1 flex-col max-md:pb-[4.25rem]"
+					>
+						<Suspense fallback={null}>
+							{route.view === "chat" && route.talk && (
+								<Assistant
+									key={route.sessionId ?? "new"}
+									sessionId={route.sessionId}
+									addReference={addReference}
+								/>
+							)}
+							{route.view === "chat" && !route.talk && (
+								<Chat
+									key={route.sessionId ?? "new"}
+									sessionId={route.sessionId}
+									references={references}
+									setReferences={setReferences}
+									addReference={addReference}
+								/>
+							)}
+							{route.view === "gallery" && (
+								<Gallery addReference={addReference} />
+							)}
+							{route.view === "models" && <Models focus={route.focus} />}
+							{route.view === "hub" && (
+								<>
+									<Models />
+									<HubOpen target={route.target} />
+								</>
+							)}
+							{route.view === "ranking" && <RankingView />}
+							{route.view === "library" && <LibraryView />}
+							{route.view === "settings" && <Settings />}
+						</Suspense>
+					</div>
+					<BottomNav route={route} demo={demo} />
+				</SidebarInset>
+			</TourProvider>
 		</SidebarProvider>
 	);
 }
@@ -297,7 +303,7 @@ function AppSidebar({ route, demo }: { route: Route; demo: boolean }) {
 									tooltip={place.label}
 									isActive={place.current}
 									onClick={close}
-									render={<a href={place.to} />}
+									render={<a href={place.to} data-tour={tourName(place.to)} />}
 									className="h-10 rounded-lg"
 								>
 									<place.icon />
@@ -377,6 +383,9 @@ function AppSidebar({ route, demo }: { route: Route; demo: boolean }) {
 					</SidebarGroup>
 				</SidebarContent>
 				<SidebarFooter className="p-4 group-data-[collapsible=icon]:px-2">
+					<SidebarMenu>
+						<TourMenu onChoose={close} />
+					</SidebarMenu>
 					{!demo && (
 						<SidebarMenu>
 							<SidebarMenuItem>
@@ -434,6 +443,55 @@ function AppSidebar({ route, demo }: { route: Route; demo: boolean }) {
 	);
 }
 
+/** What the guided tour calls a place of the app, such as nav-gallery. */
+function tourName(to: string): string {
+	return `nav-${to.replace(/^#\/?/, "") || "session"}`;
+}
+
+/** The guided tour's chapters, each with a mark once it was read to the end. */
+function TourMenu({ onChoose }: { onChoose(): void }) {
+	const { t } = useI18n();
+	const tour = useTour();
+	const names: Record<ChapterId, string> = {
+		basics: t("tour.basics.name"),
+		styles: t("tour.styles.name"),
+		cloud: t("tour.cloud.name"),
+	};
+	return (
+		<SidebarMenuItem>
+			<DropdownMenu>
+				<DropdownMenuTrigger
+					render={
+						<SidebarMenuButton
+							tooltip={t("tour.menu")}
+							className="h-10 rounded-lg"
+						/>
+					}
+				>
+					<CircleHelp />
+					<span>{t("tour.menu")}</span>
+				</DropdownMenuTrigger>
+				<DropdownMenuContent side="top" align="start" className="min-w-56">
+					{tour.chapters.map((chapter) => (
+						<DropdownMenuItem
+							key={chapter}
+							onClick={() => {
+								onChoose();
+								tour.start(chapter);
+							}}
+						>
+							<span className="flex-1">{names[chapter]}</span>
+							{tour.done.includes(chapter) && (
+								<Check aria-label={t("tour.read")} className="text-good" />
+							)}
+						</DropdownMenuItem>
+					))}
+				</DropdownMenuContent>
+			</DropdownMenu>
+		</SidebarMenuItem>
+	);
+}
+
 /** A session's name and the switch between talking and the advanced view. */
 function SessionHeader({
 	route,
@@ -468,7 +526,11 @@ function SessionHeader({
 					onValueChange={(value) => go(value === "talk")}
 					className="max-md:w-full"
 				>
-					<TabsList aria-label={t("session.mode")} className="max-md:w-full">
+					<TabsList
+						aria-label={t("session.mode")}
+						data-tour="session-tabs"
+						className="max-md:w-full"
+					>
 						<TabsTrigger value="talk">{t("session.chat")}</TabsTrigger>
 						<TabsTrigger value="advanced">{t("session.advanced")}</TabsTrigger>
 					</TabsList>
@@ -531,6 +593,7 @@ function BottomNav({ route, demo }: { route: Route; demo: boolean }) {
 				<a
 					key={item.to}
 					href={item.to}
+					data-tour={tourName(item.to)}
 					aria-current={item.current ? "page" : undefined}
 					className={cn(
 						"flex flex-col items-center justify-center gap-1 text-[11px]",
