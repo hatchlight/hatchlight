@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { chooseVariant, engineArguments, roleOption } from "@hatchlight/core";
+import {
+	chooseVariant,
+	dimensions,
+	engineArguments,
+	nearestRatio,
+	roleOption,
+} from "@hatchlight/core";
 import en from "../../../../apps/web/src/locales/en.json";
 import ptBR from "../../../../apps/web/src/locales/pt-BR.json";
 import { builtinLocalModels } from "./index";
@@ -206,6 +212,30 @@ describe("Z-Image Turbo, guided", () => {
 		expect(guided?.license).toBe("Apache 2.0");
 		expect(guided?.commercial).toEqual({ kind: "allowed" });
 		expect(plain?.defaults.guide).toBeUndefined();
+	});
+});
+
+describe("the size other apps get", () => {
+	// What `docs/other-apps.md` says: the shape asked, at the model's size.
+	const made = (id: string, width: number, height: number) => {
+		const model = models.find((m) => m.id === id);
+		if (!model) throw new Error(`No ${id} in the catalog`);
+		const { size, aspectRatios } = model.defaults;
+		return dimensions(size, nearestRatio(aspectRatios, width, height));
+	};
+
+	test("SDXL Turbo keeps the shape asked, at the 512 pixels it was made for", () => {
+		expect(made("sdxl-turbo", 1024, 1024)).toEqual({ width: 512, height: 512 });
+		expect(made("sdxl-turbo", 1024, 768)).toEqual({ width: 512, height: 384 });
+		expect(made("sd-1.5", 1024, 768)).toEqual({ width: 512, height: 384 });
+	});
+
+	test("SDXL, FLUX and Z-Image make 1024 pixels on the longer side", () => {
+		for (const id of ["sdxl-base", "flux-schnell", "z-image-turbo"]) {
+			expect(made(id, 1024, 1024)).toEqual({ width: 1024, height: 1024 });
+			expect(made(id, 1024, 768)).toEqual({ width: 1024, height: 768 });
+			expect(made(id, 1792, 1024)).toEqual({ width: 1024, height: 576 });
+		}
 	});
 });
 
