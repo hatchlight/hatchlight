@@ -2,6 +2,7 @@ import { createTranslator, matchLanguage } from "@hatchlight/i18n";
 import { latent } from "@hatchlight/motion";
 import "./index.css";
 import en from "./locales/en.json";
+import fr from "./locales/fr.json";
 import ptBR from "./locales/pt-BR.json";
 
 /**
@@ -11,14 +12,11 @@ import ptBR from "./locales/pt-BR.json";
 
 const language = matchLanguage(
 	navigator.languages ?? [],
-	["en", "pt-BR"],
+	["en", "pt-BR", "fr"],
 	"en",
 );
-const { t } = createTranslator(
-	language,
-	en,
-	language === "pt-BR" ? ptBR : undefined,
-);
+const catalogs: Record<string, typeof en | undefined> = { "pt-BR": ptBR, fr };
+const { t } = createTranslator(language, en, catalogs[language]);
 document.documentElement.lang = language;
 
 const status = document.getElementById("status") as HTMLElement;

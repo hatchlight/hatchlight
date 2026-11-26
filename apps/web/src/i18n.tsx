@@ -15,6 +15,7 @@ import {
 	useState,
 } from "react";
 import en from "./locales/en.json";
+import fr from "./locales/fr.json";
 import ptBR from "./locales/pt-BR.json";
 
 export type MessageKey = Extract<keyof typeof en, string>;
@@ -25,11 +26,13 @@ export const isMessageKey = (key: string): key is MessageKey => key in en;
 const translations: Record<string, Partial<Record<MessageKey, Message>>> = {
 	en: {},
 	"pt-BR": ptBR,
+	fr,
 };
 
 export const languages: Language[] = [
 	{ code: "en", name: "English" },
 	{ code: "pt-BR", name: "Português (Brasil)" },
+	{ code: "fr", name: "Français" },
 ];
 
 const STORAGE_KEY = "hatchlight.language";
