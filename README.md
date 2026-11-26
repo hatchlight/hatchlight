@@ -82,7 +82,7 @@ reference in new scenes.
 **Your own styles.** Load LoRAs and your own SDXL or SD 1.5 checkpoints, or
 train an SDXL LoRA from your pictures: Hatchlight writes the captions, shows
 sample pictures while it learns, and lets you keep an earlier step. Already
-have models in ComfyUI, AUTOMATIC1111, Forge or Stability Matrix? Point
+have models in ComfyUI, AUTOMATIC1111, Forge, Forge Neo, SwarmUI or Stability Matrix? Point
 Hatchlight at that folder and it uses them where they are, without copying.
 From Hugging Face, `hatchlight install hf:owner/repo` (or a
 `hatchlight://hf/owner/repo` link) adds a catalog model, an SDXL or SD 1.5

@@ -134,6 +134,43 @@ describe("telling an app's folder", () => {
 		}
 	});
 
+	test("Forge Neo is read with A1111's layout", async () => {
+		const root = await temporary();
+		await tree(root, {
+			"sd-webui-forge-neo/models/Stable-diffusion/a.safetensors":
+				safetensors(SDXL),
+			"sd-webui-forge-neo/models/Lora/b.safetensors": safetensors(SDXL_LORA),
+		});
+		const neo = await detectLayout(join(root, "sd-webui-forge-neo"));
+		expect(neo.app).toBe("a1111");
+		expect(neo.dirs.map((d) => d.dir)).toEqual([
+			join(root, "sd-webui-forge-neo/models/Stable-diffusion"),
+			join(root, "sd-webui-forge-neo/models/Lora"),
+		]);
+	});
+
+	test("SwarmUI is told from A1111 by its launch script", async () => {
+		const root = await temporary();
+		await tree(root, {
+			"SwarmUI/launch-linux.sh": new Uint8Array(),
+			"SwarmUI/Models/Stable-Diffusion/a.safetensors": safetensors(SDXL),
+			"SwarmUI/Models/Lora/b.safetensors": safetensors(SDXL_LORA),
+			"Other/Models/Stable-Diffusion/a.safetensors": safetensors(SDXL),
+			"Other/Models/Lora/b.safetensors": safetensors(SDXL_LORA),
+		});
+		const swarm = await detectLayout(join(root, "SwarmUI"));
+		expect(swarm.app).toBe("swarmui");
+		expect(swarm.dirs).toEqual([
+			{
+				dir: join(root, "SwarmUI/Models/Stable-Diffusion"),
+				kind: "checkpoint",
+			},
+			{ dir: join(root, "SwarmUI/Models/Lora"), kind: "lora" },
+		]);
+		// Without its launch script the same folders are A1111's.
+		expect((await detectLayout(join(root, "Other"))).app).toBe("a1111");
+	});
+
 	test("any other folder is read whole", async () => {
 		const root = await temporary();
 		expect(await detectLayout(root)).toEqual({
@@ -149,6 +186,9 @@ describe("telling an app's folder", () => {
 		expect(places).toContain("/home/ana/ComfyUI");
 		expect(places).toContain("/home/ana/.config/StabilityMatrix");
 		expect(places).toContain("/mnt/c/ComfyUI_windows_portable/ComfyUI");
+		expect(places).toContain("/home/ana/sd-webui-forge-neo");
+		expect(places).toContain("/home/ana/SwarmUI");
+		expect(places).toContain("/mnt/c/SwarmUI");
 	});
 });
 

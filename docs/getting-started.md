@@ -286,7 +286,7 @@ A LoRA is a small file that teaches a model a style or a subject. On the
 - **Add a model**: add a whole Stable Diffusion XL or 1.5 model (a
   checkpoint), as a `.safetensors` file.
 - **Models from other apps**: already have models in ComfyUI, AUTOMATIC1111,
-  Forge or Stability Matrix? Add that app's folder (or its models folder),
+  Forge, Forge Neo, SwarmUI or Stability Matrix? Add that app's folder (or its models folder),
   or pick it when Hatchlight finds it. Its checkpoints and LoRAs show up with
   yours and are used where they are: nothing is copied, moved or deleted.
   Only SDXL and SD 1.5 checkpoints, and LoRAs for a family Hatchlight runs,

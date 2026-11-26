@@ -58,7 +58,8 @@ function commercial(use: CommercialUse): string {
 /** A catalog id from what a person may type: "sdxl-turbo" or "local/sdxl-turbo". */
 const APPS: Record<ModelFolderApp, string> = {
 	comfyui: "ComfyUI",
-	a1111: "AUTOMATIC1111 or Forge",
+	a1111: "AUTOMATIC1111, Forge or Forge Neo",
+	swarmui: "SwarmUI",
 	stabilityMatrix: "Stability Matrix",
 };
 
@@ -636,7 +637,7 @@ ${COMMON_HELP}`,
 
 	folders: {
 		summary:
-			"Use the models in ComfyUI, AUTOMATIC1111, Forge or Stability Matrix",
+			"Use the models in ComfyUI, AUTOMATIC1111, Forge, Forge Neo, SwarmUI or Stability Matrix",
 		usage: `Usage: hatchlight folders
        hatchlight folders add <folder>
        hatchlight folders remove <id|folder>

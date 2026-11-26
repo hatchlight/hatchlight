@@ -38,8 +38,8 @@ import {
 } from "./shelf";
 
 /**
- * Folders of other apps (ComfyUI, AUTOMATIC1111, Forge, Stability Matrix)
- * whose checkpoints and LoRAs Hatchlight uses where they are: nothing is
+ * Folders of other apps (ComfyUI, AUTOMATIC1111, Forge, Forge Neo, SwarmUI, Stability
+ * Matrix) whose checkpoints and LoRAs Hatchlight uses where they are: nothing is
  * copied or moved, and nothing there is ever deleted. Each file's header is
  * read once and kept with its size and time, so a look again reads only
  * what changed.
@@ -91,12 +91,23 @@ const LAYOUTS: {
 		lora: ["Lora", "LyCORIS"],
 	},
 	{
+		// Swarm's own folders, when it does not use ComfyUI's: Forge Neo
+		// and the others keep A1111's, so they are read as that.
+		app: "swarmui",
+		roots: [["Models"], ["SwarmUI", "Models"], []],
+		checkpoint: ["Stable-Diffusion"],
+		lora: ["Lora"],
+	},
+	{
 		app: "stabilityMatrix",
 		roots: [["Data", "Models"], ["Models"], []],
 		checkpoint: ["StableDiffusion"],
 		lora: ["Lora", "LyCORIS"],
 	},
 ];
+
+/** Launch scripts next to SwarmUI's `Models` folder, which A1111's lacks. */
+const SWARM_LAUNCHERS = /^launch-(windows\.bat|linux\.sh|macos\.sh)$/i;
 
 /** The subfolder `names` below `base`, whatever their case. */
 async function findDir(base: string, names: string[]): Promise<string | null> {
@@ -123,7 +134,8 @@ export interface Layout {
  * Which app's layout a folder has, and where its models are. The layout
  * with the most kinds of models found wins. On a tie, Stability Matrix
  * wins when its `Data/Models` is there (A1111's `models` matches that
- * folder too, whatever the case), else the first one.
+ * folder too, whatever the case), and so does SwarmUI when its launch
+ * script is beside `Models`; else the first one.
  */
 export async function detectLayout(folder: string): Promise<Layout> {
 	let best: Layout | null = null;
@@ -142,7 +154,12 @@ export async function detectLayout(folder: string): Promise<Layout> {
 			const kinds = new Set(dirs.map((d) => d.kind)).size;
 			const matrix =
 				layout.app === "stabilityMatrix" && /[\\/]data[\\/]models$/i.test(base);
-			const score = kinds > 0 ? kinds * 2 + (matrix ? 1 : 0) : 0;
+			const swarm =
+				layout.app === "swarmui" &&
+				(await readdir(dirname(base)).catch(() => [] as string[])).some((e) =>
+					SWARM_LAUNCHERS.test(e),
+				);
+			const score = kinds > 0 ? kinds * 2 + (matrix || swarm ? 1 : 0) : 0;
 			if (score > bestScore) {
 				best = { app: layout.app, dirs };
 				bestScore = score;
@@ -805,6 +822,9 @@ export function installPlaces(
 		["Downloads", "ComfyUI_windows_portable", "ComfyUI"],
 		["stable-diffusion-webui"],
 		["stable-diffusion-webui-forge"],
+		["sd-webui-forge-neo"],
+		["sd-webui-forge-classic"],
+		["SwarmUI"],
 		["StabilityMatrix", "Data"],
 		["AppData", "Roaming", "StabilityMatrix"],
 		[".config", "StabilityMatrix"],
@@ -814,6 +834,9 @@ export function installPlaces(
 		["ComfyUI"],
 		["stable-diffusion-webui"],
 		["stable-diffusion-webui-forge"],
+		["sd-webui-forge-neo"],
+		["sd-webui-forge-classic"],
+		["SwarmUI"],
 		["StabilityMatrix", "Data"],
 	];
 	return [

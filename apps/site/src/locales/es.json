@@ -55,7 +55,7 @@
 	"more.character.title": "Mantén el mismo personaje",
 	"more.chat.body": "Dile al asistente lo que quieres, en tu propio idioma. Elige los modelos, escribe los prompts y pregunta antes de cualquier gasto.",
 	"more.chat.title": "O simplemente pregunta",
-	"more.folders.body": "Apunta Hatchlight a tu carpeta de ComfyUI, AUTOMATIC1111, Forge o Stability Matrix: usa los checkpoints y LoRAs de SDXL y SD 1.5 que haya allí, sin copiarlos.",
+	"more.folders.body": "Apunta Hatchlight a tu carpeta de ComfyUI, AUTOMATIC1111, Forge, Forge Neo, SwarmUI o Stability Matrix: usa los checkpoints y LoRAs de SDXL y SD 1.5 que haya allí, sin copiarlos.",
 	"more.folders.title": "Usa los modelos que ya tienes",
 	"more.guide.body": "Conserva los contornos, la pose o la profundidad de otra imagen con Z-Image Turbo. En tu tarjeta encuentra los contornos por sí solo; para la pose o la profundidad, aporta un mapa ya hecho o deja que fal lo cree a partir de cualquier foto.",
 	"more.guide.title": "Sigue una imagen de guía",

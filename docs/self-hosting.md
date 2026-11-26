@@ -298,7 +298,7 @@ Cloud keys can also come from the environment: `FAL_KEY`, `OPENAI_API_KEY`,
 `GEMINI_API_KEY`, `REPLICATE_API_TOKEN`, `OPENROUTER_API_KEY`. They are the
 server's: only people allowed to use paid models spend on them.
 
-To use the models of ComfyUI, AUTOMATIC1111, Forge or Stability Matrix
+To use the models of ComfyUI, AUTOMATIC1111, Forge, Forge Neo, SwarmUI or Stability Matrix
 already on the server, mount their folder into the container (for example
 `-v /srv/ComfyUI:/comfyui`, or a `volumes:` line in the compose file), then
 add `/comfyui` in **Models > Models from other apps**. The folder must be
