@@ -99,7 +99,10 @@ export function Gallery({
 	return (
 		<div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-8 sm:py-10">
 			<div className="mx-auto max-w-[96rem]">
-				<header className="flex flex-wrap items-end justify-between gap-4">
+				<header
+					data-tour="gallery-header"
+					className="flex flex-wrap items-end justify-between gap-4"
+				>
 					<h1 className="font-display text-4xl leading-none font-extrabold tracking-tight sm:text-5xl">
 						{t("gallery.title")}
 					</h1>

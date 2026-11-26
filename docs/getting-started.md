@@ -71,6 +71,13 @@ creating**:
 The picture sharpens on screen while it forms. If you already know your way,
 **Skip, I know my way around** goes straight to an empty session.
 
+After that, Hatchlight offers a short **tour** that points at the parts of the
+app one at a time. It has three chapters: **The basics**, **Styles, LoRA and
+training** and **Cloud keys and server mode**. Open any of them again from
+**Tutorial** at the bottom of the sidebar, or start over from
+**Settings → Tutorial**. Use **←** and **→** to move between steps and **Esc**
+to leave.
+
 Models on your computer are free, and nothing you make leaves it. Cloud
 models are paid per picture or video, to the service that runs them (see
 [below](#cloud-models-with-your-key)).
