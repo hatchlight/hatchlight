@@ -6,6 +6,7 @@ import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { LINKS } from "./config";
 import { LANGUAGES } from "./languages";
 import en from "./locales/en.json";
+import es from "./locales/es.json";
 import ptBR from "./locales/pt-BR.json";
 
 gsap.registerPlugin(ScrollTrigger);
@@ -20,7 +21,11 @@ const $$ = <T extends Element = HTMLElement>(
 ) => [...root.querySelectorAll<T>(selector)];
 
 // The page was rendered in one language; the script speaks the same one.
-const CATALOGS: Record<string, Record<string, string>> = { en, "pt-BR": ptBR };
+const CATALOGS: Record<string, Record<string, string>> = {
+	en,
+	"pt-BR": ptBR,
+	es,
+};
 const language = matchLanguage(
 	[document.documentElement.lang],
 	LANGUAGES.map((l) => l.code),

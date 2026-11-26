@@ -1,7 +1,12 @@
-import { createTranslator, matchLanguage } from "@hatchlight/i18n";
+import {
+	createTranslator,
+	type Message,
+	matchLanguage,
+} from "@hatchlight/i18n";
 import { latent } from "@hatchlight/motion";
 import "./index.css";
 import en from "./locales/en.json";
+import es from "./locales/es.json";
 import ptBR from "./locales/pt-BR.json";
 
 /**
@@ -9,16 +14,17 @@ import ptBR from "./locales/pt-BR.json";
  * once the server is ready, or back here with `?failed=` if it stopped.
  */
 
+const catalogs: Record<string, Partial<Record<keyof typeof en, Message>>> = {
+	en: {},
+	"pt-BR": ptBR,
+	es,
+};
 const language = matchLanguage(
 	navigator.languages ?? [],
-	["en", "pt-BR"],
+	["en", "pt-BR", "es"],
 	"en",
 );
-const { t } = createTranslator(
-	language,
-	en,
-	language === "pt-BR" ? ptBR : undefined,
-);
+const { t } = createTranslator(language, en, catalogs[language]);
 document.documentElement.lang = language;
 
 const status = document.getElementById("status") as HTMLElement;
