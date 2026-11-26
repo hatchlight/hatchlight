@@ -199,7 +199,8 @@ tool score how much a picture shows the same character as earlier ones, and
 say what differs.
 
 Other apps can use your models too: Hatchlight answers OpenAI's image API
-and AUTOMATIC1111's, so Open WebUI, SillyTavern, LibreChat and scripts make
+and AUTOMATIC1111's, so Open WebUI, LibreChat and scripts (OpenAI) and
+SillyTavern (AUTOMATIC1111, the API Forge and SD.Next answer too) make
 pictures with it. See [Use it from other apps](docs/other-apps.md).
 
 ## Your data

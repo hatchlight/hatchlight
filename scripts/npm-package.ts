@@ -98,7 +98,8 @@ connection. Agents cannot install models: you do, in the app.
 ## Use it from other apps
 
 Hatchlight also answers OpenAI's image API and AUTOMATIC1111's, so apps such
-as Open WebUI, SillyTavern and LibreChat can make pictures with your models.
+as Open WebUI and LibreChat (OpenAI) and SillyTavern (AUTOMATIC1111) can make
+pictures with your models.
 See [Use it from other apps](https://github.com/hatchlight/hatchlight/blob/main/docs/other-apps.md).
 
 ## Run the app

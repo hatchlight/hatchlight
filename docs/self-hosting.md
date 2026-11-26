@@ -202,7 +202,7 @@ with the regular expression `hl_[A-Za-z0-9_-]{43}`.
 
 The same tokens let other apps, such as Open WebUI and SillyTavern, make
 pictures through the OpenAI and AUTOMATIC1111 image APIs the server also
-answers: see [Use it from other apps](other-apps.md#on-a-server).
+answers (SillyTavern uses the AUTOMATIC1111 one): see [Use it from other apps](other-apps.md#on-a-server).
 
 <a id="reaching-it"></a>
 
