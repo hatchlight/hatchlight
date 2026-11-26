@@ -14,6 +14,7 @@ export const DEFAULT_SETTINGS: Settings = {
 	assistantWith: "auto",
 	otherAppsPaid: false,
 	otherAppsModel: null,
+	otherAppsSampling: false,
 	blindPicks: false,
 	writerModel: null,
 	eyesModel: null,
@@ -54,6 +55,7 @@ export class FileSettingsStore implements SettingsStore {
 			otherAppsPaid: mine.otherAppsPaid === true,
 			otherAppsModel:
 				typeof mine.otherAppsModel === "string" ? mine.otherAppsModel : null,
+			otherAppsSampling: mine.otherAppsSampling === true,
 			blindPicks:
 				typeof mine.blindPicks === "boolean"
 					? mine.blindPicks

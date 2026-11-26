@@ -561,6 +561,7 @@ test("a turn is held to the demo's batch, video length and prompt length", async
 				count: 8,
 				durationSeconds: 60,
 				extras: { steps: 500, width: 4096 },
+				steps: 200,
 				loras: [{ id: "big", weight: 1 }],
 			},
 			demo,

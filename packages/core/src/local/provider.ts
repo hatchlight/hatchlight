@@ -16,6 +16,7 @@ import {
 	type LocalModelDefaults,
 	type LocalModelSpec,
 	MAX_LORAS,
+	type ModelCapabilities,
 	type ModelSpec,
 } from "../types";
 import {
@@ -292,6 +293,41 @@ export function redrawSteps(steps: number, strength: number): number {
 }
 
 /**
+ * What of a picture model's sampling other apps may set. A model run with
+ * guidance (CFG above 1) reads a negative prompt, and takes up to twice its
+ * guidance and another sampler; a guidance-distilled one keeps both. Either
+ * takes up to twice its steps, and at least 8.
+ */
+export function sampling(
+	defaults: LocalModelDefaults,
+): Pick<ModelCapabilities, "negativePrompt" | "sampling"> {
+	const guided = defaults.cfgScale > 1;
+	return {
+		...(guided && { negativePrompt: true }),
+		sampling: {
+			steps: defaults.steps,
+			maxSteps: Math.min(200, Math.max(8, defaults.steps * 2)),
+			cfgScale: defaults.cfgScale,
+			maxCfgScale: guided
+				? Math.min(30, defaults.cfgScale * 2)
+				: defaults.cfgScale,
+			samplers: guided,
+		},
+	};
+}
+
+/** The negative prompt asked for, before the model's own if it has one. */
+export function negativePrompt(
+	defaults: LocalModelDefaults,
+	params: GenerationParams,
+): string | undefined {
+	const parts = [params.negativePrompt, defaults.negativePrompt].filter(
+		(part): part is string => !!part,
+	);
+	return parts.length > 0 ? parts.join(", ") : undefined;
+}
+
+/**
  * The size, steps and redrawing of a job, the same whether the engine runs
  * once or is kept loaded.
  */
@@ -315,10 +351,20 @@ export function shape(
 	const masked = redrawing && hasMask;
 	const strength =
 		params.strength ?? (masked ? DEFAULT_MASK_STRENGTH : DEFAULT_STRENGTH);
-	const steps = redrawing
-		? redrawSteps(defaults.steps, strength)
-		: defaults.steps;
-	return { width, height, redrawing, masked, strength, steps };
+	const asked = params.steps ?? defaults.steps;
+	const steps = redrawing ? redrawSteps(asked, strength) : asked;
+	const cfgScale = params.cfgScale ?? defaults.cfgScale;
+	const sampler = params.sampler ?? defaults.sampler;
+	return {
+		width,
+		height,
+		redrawing,
+		masked,
+		strength,
+		steps,
+		cfgScale,
+		sampler,
+	};
 }
 
 /**
@@ -367,14 +413,17 @@ export async function engineArguments(
 		return [...args, ...modelOptions(runtime)];
 	}
 	const video = runtime.model.media === "video";
-	const { width, height, redrawing, masked, strength, steps } = shape(
-		runtime,
-		defaults,
-		params,
-		references.length,
-		size,
-		mask != null,
-	);
+	const {
+		width,
+		height,
+		redrawing,
+		masked,
+		strength,
+		steps,
+		cfgScale,
+		sampler,
+	} = shape(runtime, defaults, params, references.length, size, mask != null);
+	const negative = negativePrompt(defaults, params);
 	const args = ["-M", video ? "vid_gen" : "img_gen"];
 	for (const [role, file] of Object.entries(runtime.files)) {
 		args.push(roleOption(role), await path(file));
@@ -385,7 +434,7 @@ export async function engineArguments(
 		"--steps",
 		String(steps),
 		"--cfg-scale",
-		String(defaults.cfgScale),
+		String(cfgScale),
 		"-W",
 		String(width),
 		"-H",
@@ -395,8 +444,8 @@ export async function engineArguments(
 		"-o",
 		await path(output),
 	);
-	if (defaults.sampler) args.push("--sampling-method", defaults.sampler);
-	if (defaults.negativePrompt) args.push("-n", defaults.negativePrompt);
+	if (sampler) args.push("--sampling-method", sampler);
+	if (negative) args.push("-n", negative);
 	if (defaults.flowShift != null) {
 		args.push("--flow-shift", String(defaults.flowShift));
 	}
@@ -742,6 +791,9 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 					...(model.englishPrompts && { englishPrompts: true }),
 					...(model.loraBase && { loraBase: model.loraBase }),
 					...(model.defaults.guide && { guide: model.defaults.guide }),
+					...(model.media === "image" &&
+						model.defaults.upscale == null &&
+						sampling(model.defaults)),
 				},
 				pricing: { usdPerOutput: 0 },
 				...(model.profile && { profile: model.profile }),
@@ -922,7 +974,16 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 			const pictures = (handle.pictures ?? []).map((p) =>
 				Buffer.from(p.data).toString("base64"),
 			);
-			const { width, height, redrawing, masked, strength, steps } = shape(
+			const {
+				width,
+				height,
+				redrawing,
+				masked,
+				strength,
+				steps,
+				cfgScale,
+				sampler,
+			} = shape(
 				runtime,
 				defaults,
 				handle.params,
@@ -948,7 +1009,7 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 					{
 						video: false,
 						prompt: loraPrompt(handle.params.prompt, []),
-						negativePrompt: defaults.negativePrompt,
+						negativePrompt: negativePrompt(defaults, handle.params),
 						width,
 						height,
 						seed: handle.params.seed ?? Math.floor(Math.random() * 2 ** 31),
@@ -968,8 +1029,8 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 									imagePreprocess: guided.preprocess,
 								}),
 							}),
-						cfgScale: defaults.cfgScale,
-						sampler: defaults.sampler,
+						cfgScale,
+						sampler,
 						flowShift: defaults.flowShift,
 						previewInterval: previews(defaults, pictures.length)
 							? (previewInterval(steps) ?? undefined)
@@ -1136,7 +1197,7 @@ export class LocalProvider implements ProviderAdapter<LocalHandle> {
 		const interval = video
 			? null
 			: previews(runtime.model.defaults, references.length)
-				? previewInterval(runtime.model.defaults.steps)
+				? previewInterval(handle.params.steps ?? runtime.model.defaults.steps)
 				: null;
 		const previewBase = output.replace(/\.png$/, "");
 		const previewFile = (index: number) =>

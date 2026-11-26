@@ -161,6 +161,25 @@ export function adaptParams(
 		// Only for models that take LoRAs, so one prompt can still go to
 		// models that do not; the provider checks each is of their family.
 		loras: caps.loraBase && params.loras?.length ? params.loras : undefined,
+		// Only for models that read one, so the stored parameters say whether
+		// it was used.
+		negativePrompt:
+			caps.negativePrompt && params.negativePrompt
+				? params.negativePrompt
+				: undefined,
+		// Within the model's limits, and kept as used.
+		steps:
+			caps.sampling && params.steps != null
+				? Math.min(params.steps, caps.sampling.maxSteps)
+				: undefined,
+		cfgScale:
+			caps.sampling && params.cfgScale != null
+				? Math.min(
+						Math.max(params.cfgScale, Math.min(1, caps.sampling.cfgScale)),
+						caps.sampling.maxCfgScale,
+					)
+				: undefined,
+		sampler: caps.sampling?.samplers ? params.sampler : undefined,
 		// Always said, like the strength: unasked, it is the model's own.
 		guide:
 			guide && caps.guide

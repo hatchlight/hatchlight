@@ -391,6 +391,18 @@ export interface TrainerEvent {
 	trainer: TrainerStatus;
 }
 
+/** The engine's samplers that a model's sampling may be set to. */
+export const SAMPLERS = [
+	"euler",
+	"euler_a",
+	"heun",
+	"dpm2",
+	"dpm++2s_a",
+	"dpm++2m",
+	"lcm",
+] as const;
+export type Sampler = (typeof SAMPLERS)[number];
+
 export const generationParamsSchema = z.object({
 	prompt: z.string().trim().min(1),
 	aspectRatio: z
@@ -446,6 +458,19 @@ export const generationParamsSchema = z.object({
 	 */
 	characterId: z.string().optional(),
 	styleId: z.string().optional(),
+	/**
+	 * What the picture should not have. Only for models that take one
+	 * (`capabilities.negativePrompt`); others leave it out.
+	 */
+	negativePrompt: z.string().trim().max(8000).optional(),
+	/**
+	 * Steps, guidance and sampler instead of the model's own, as other apps
+	 * may ask. Only for models whose sampling can be chosen
+	 * (`capabilities.sampling`), within its limits; others leave them out.
+	 */
+	steps: z.number().int().min(1).max(200).optional(),
+	cfgScale: z.number().min(0).max(30).optional(),
+	sampler: z.enum(SAMPLERS).optional(),
 	/** Model-specific parameters, passed through to the provider untouched. */
 	extras: z.record(z.string(), z.unknown()).default({}),
 });
@@ -502,6 +527,24 @@ export interface ModelCapabilities {
 	loraBase?: LoraBase;
 	/** Set for a model that follows a guide picture. */
 	guide?: GuideSupport;
+	/**
+	 * Set for a model that reads a negative prompt: one run with guidance
+	 * (CFG above 1). Guidance-distilled models (FLUX schnell, the turbo
+	 * ones) run without it, and a negative prompt would change nothing.
+	 */
+	negativePrompt?: boolean;
+	/**
+	 * Set for a model whose steps and guidance can be chosen: its own, and
+	 * the most it is run with. A guidance-distilled model keeps its CFG
+	 * (`maxCfgScale` is its own) and its sampler (`samplers` is false).
+	 */
+	sampling?: {
+		steps: number;
+		maxSteps: number;
+		cfgScale: number;
+		maxCfgScale: number;
+		samplers: boolean;
+	};
 	/**
 	 * Set for a model that makes nothing from words alone: it needs a
 	 * reference, e.g. the person to keep in a new picture.
@@ -1181,6 +1224,12 @@ export interface Settings {
 	 * through the AUTOMATIC1111 API; null for the best one installed.
 	 */
 	otherAppsModel: string | null;
+	/**
+	 * Whether other apps, through the AUTOMATIC1111 API, may set the steps,
+	 * CFG and sampler, within each model's limits. Off, each model runs with
+	 * its own.
+	 */
+	otherAppsSampling: boolean;
 	/** Hide which model made which result of a comparison until one is picked. */
 	blindPicks: boolean;
 	/**

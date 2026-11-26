@@ -299,6 +299,8 @@ export function demoTurn(
 		loras: _loras,
 		characterId: _characterId,
 		styleId: _styleId,
+		// More steps than the model's own make a job heavier.
+		steps: _steps,
 		...rest
 	} = body;
 	const clamp = (value: unknown, most: number) =>

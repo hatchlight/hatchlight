@@ -399,6 +399,72 @@ describe("turns", () => {
 		).toEqual([{ id: "porcelain", weight: 0.8 }]);
 	});
 
+	test("a negative prompt and sampling go only to models that take them, within limits", () => {
+		const params = {
+			prompt: "x",
+			count: 1,
+			referenceAssetIds: [],
+			extras: {},
+			negativePrompt: "extra fingers",
+			steps: 200,
+			cfgScale: 25,
+			sampler: "euler_a" as const,
+		};
+		const plain = adaptParams(CLIP, params);
+		expect([
+			plain.negativePrompt,
+			plain.steps,
+			plain.cfgScale,
+			plain.sampler,
+		]).toEqual([undefined, undefined, undefined, undefined]);
+		const guided = adaptParams(
+			{
+				...CLIP,
+				capabilities: {
+					...CLIP.capabilities,
+					negativePrompt: true,
+					sampling: {
+						steps: 30,
+						maxSteps: 60,
+						cfgScale: 7,
+						maxCfgScale: 14,
+						samplers: true,
+					},
+				},
+			},
+			params,
+		);
+		expect([
+			guided.negativePrompt,
+			guided.steps,
+			guided.cfgScale,
+			guided.sampler,
+		]).toEqual(["extra fingers", 60, 14, "euler_a"]);
+		// A distilled model keeps its CFG of 1 and its sampler.
+		const distilled = adaptParams(
+			{
+				...CLIP,
+				capabilities: {
+					...CLIP.capabilities,
+					sampling: {
+						steps: 1,
+						maxSteps: 8,
+						cfgScale: 1,
+						maxCfgScale: 1,
+						samplers: false,
+					},
+				},
+			},
+			{ ...params, steps: 4, cfgScale: 0 },
+		);
+		expect([
+			distilled.negativePrompt,
+			distilled.steps,
+			distilled.cfgScale,
+			distilled.sampler,
+		]).toEqual([undefined, 4, 1, undefined]);
+	});
+
 	test("a model that cannot take a mask is refused one", () => {
 		const params = {
 			prompt: "x",

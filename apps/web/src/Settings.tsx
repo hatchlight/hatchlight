@@ -745,6 +745,16 @@ function OtherApps() {
 						? t("settings.otherAppsPaidServer")
 						: t("settings.otherAppsPaid")}
 				</Label>
+				<Label className="min-h-10 gap-3 font-normal">
+					<Switch
+						checked={settings.data?.otherAppsSampling ?? false}
+						disabled={!settings.data || choose.isPending}
+						onCheckedChange={(checked) =>
+							choose.mutate({ otherAppsSampling: checked })
+						}
+					/>
+					{t("settings.otherAppsSampling")}
+				</Label>
 				<div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
 					<span className="text-dim">
 						{chosenName
